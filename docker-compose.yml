@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  db:
+    image: mariadb:latest
+    container_name: safehouse_mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-safehouse}
+      MYSQL_USER: ${DB_USER:-safehouse_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-safehouse_pass}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - safehouse_network
+    ports:
+      - "3306:3306"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: safehouse_backend
+    restart: unless-stopped
+    environment:
+      FLASK_APP: app.py
+      FLASK_ENV: ${FLASK_ENV:-development}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-safehouse}
+      DB_USER: ${DB_USER:-safehouse_user}
+      DB_PASSWORD: ${DB_PASSWORD:-safehouse_pass}
+    volumes:
+      - ./backend:/app
+    networks:
+      - safehouse_network
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: safehouse_frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      REACT_APP_API_URL: http://localhost:5000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - safehouse_network
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+networks:
+  safehouse_network:
+    driver: bridge
+
+volumes:
+  mariadb_data:
