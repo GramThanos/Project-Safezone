@@ -150,7 +150,7 @@ All services communicate through a private Docker bridge network (`safehouse_net
 
 Simple one-command deployment:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ## Container Isolation Benefits

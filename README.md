@@ -44,8 +44,10 @@ cp .env.example .env
 
 3. Build and start the services:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
+
+Note: Use `docker compose` (v2) not `docker-compose` (v1)
 
 4. Access the web interface:
 ```
@@ -145,11 +147,11 @@ npm start
 
 View logs for individual services:
 ```bash
-docker-compose logs -f steamcmd-manager  # SteamCMD and monitor
-docker-compose logs -f backend           # Flask API
-docker-compose logs -f frontend          # React frontend
-docker-compose logs -f db                # MariaDB
-docker-compose logs -f cache             # Redis
+docker compose logs -f steamcmd-manager  # SteamCMD and monitor
+docker compose logs -f backend           # Flask API
+docker compose logs -f frontend          # React frontend
+docker compose logs -f db                # MariaDB
+docker compose logs -f cache             # Redis
 ```
 
 ## Configuration
