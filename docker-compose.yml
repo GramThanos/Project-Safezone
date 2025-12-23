@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: safehouse_app
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_HOST=db
+      - DATABASE_NAME=safehouse
+      - DATABASE_USER=safehouse
+      - DATABASE_PASSWORD=safehouse
+      - REDIS_HOST=cache
+      - REDIS_PORT=6379
+      - STEAMCMD_PATH=/home/steam/steamcmd
+      - CHECK_INTERVAL=30
+    depends_on:
+      - db
+      - cache
+    volumes:
+      - steamcmd_data:/home/steam/steamcmd
+      - game_data:/home/steam/Steam
+    restart: unless-stopped
+    networks:
+      - safehouse_network
+
+  db:
+    image: postgres:16-alpine
+    container_name: safehouse_db
+    environment:
+      - POSTGRES_DB=safehouse
+      - POSTGRES_USER=safehouse
+      - POSTGRES_PASSWORD=safehouse
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - safehouse_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safehouse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cache:
+    image: redis:7-alpine
+    container_name: safehouse_cache
+    restart: unless-stopped
+    networks:
+      - safehouse_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
+  steamcmd_data:
+    driver: local
+  game_data:
+    driver: local
+
+networks:
+  safehouse_network:
+    driver: bridge
