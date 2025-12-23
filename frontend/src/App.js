@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-
 function App() {
   const [systemStatus, setSystemStatus] = useState(null);
   const [serverStatus, setServerStatus] = useState(null);
@@ -18,7 +16,7 @@ function App() {
 
   const loadSystemStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/health`);
+      const response = await fetch('/health');
       const data = await response.json();
       setSystemStatus(data);
     } catch (error) {
@@ -29,7 +27,7 @@ function App() {
 
   const loadServerStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/server/status`);
+      const response = await fetch('/api/server/status');
       const data = await response.json();
       setServerStatus(data);
     } catch (error) {
