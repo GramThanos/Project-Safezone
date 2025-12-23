@@ -1,7 +1,7 @@
 services:
-  # SteamCMD and Server Monitor
-  steamcmd-manager:
-    build: ./steamcmd-manager
+  # Game Server and Manager
+  game-server:
+    build: ./game-server
     container_name: safehouse_steamcmd_manager
     environment:
       - REDIS_HOST=cache
@@ -15,6 +15,7 @@ services:
       - game_data:/home/steam/Steam
     restart: unless-stopped
     networks:
+      - default
       - safehouse_network
 
   # Flask Backend API
@@ -50,6 +51,7 @@ services:
       - backend
     restart: unless-stopped
     networks:
+      - default
       - safehouse_network
 
   # MariaDB Database
@@ -94,5 +96,6 @@ volumes:
     driver: local
 
 networks:
+  default:
   safehouse_network:
-    driver: bridge
+    internal: true
