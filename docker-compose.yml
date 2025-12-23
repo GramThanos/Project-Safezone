@@ -1,8 +1,9 @@
+name: safehouse
 services:
   # Game Server and Manager
   game-server:
     build: ./game-server
-    container_name: safehouse_steamcmd_manager
+    container_name: game_server
     environment:
       - REDIS_HOST=cache
       - REDIS_PORT=6379
@@ -21,7 +22,7 @@ services:
   # Flask Backend API
   backend:
     build: ./backend
-    container_name: safehouse_backend
+    container_name: backend
     #ports:
     #  - "5000:5000"
     environment:
@@ -44,7 +45,7 @@ services:
       context: ./frontend
       args:
         - REACT_APP_API_URL=http://localhost:5000
-    container_name: safehouse_frontend
+    container_name: frontend
     ports:
       - "8080:80"
     depends_on:
@@ -57,7 +58,7 @@ services:
   # MariaDB Database
   db:
     image: mariadb:11
-    container_name: safehouse_db
+    container_name: db
     environment:
       - MYSQL_DATABASE=${DATABASE_NAME:-safehouse}
       - MYSQL_USER=${DATABASE_USER:-safehouse}
@@ -77,7 +78,7 @@ services:
   # Redis Cache
   cache:
     image: redis:7-alpine
-    container_name: safehouse_cache
+    container_name: cache
     restart: unless-stopped
     networks:
       - safehouse_network
