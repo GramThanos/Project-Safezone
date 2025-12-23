@@ -182,18 +182,24 @@
                 const response = await fetch('/health');
                 const data = await response.json();
                 
+                const escapeHtml = (text) => {
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                };
+                
                 const statusHtml = `
                     <div class="status-item">
                         <span class="status-label">Application</span>
-                        <span class="status-value ${getStatusClass(data.status)}">${data.status}</span>
+                        <span class="status-value ${getStatusClass(data.status)}">${escapeHtml(data.status)}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Database</span>
-                        <span class="status-value ${getStatusClass(data.database)}">${data.database}</span>
+                        <span class="status-value ${getStatusClass(data.database)}">${escapeHtml(data.database)}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Cache</span>
-                        <span class="status-value ${getStatusClass(data.cache)}">${data.cache}</span>
+                        <span class="status-value ${getStatusClass(data.cache)}">${escapeHtml(data.cache)}</span>
                     </div>
                 `;
                 
@@ -209,14 +215,20 @@
                 const response = await fetch('/api/server/status');
                 const data = await response.json();
                 
+                const escapeHtml = (text) => {
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                };
+                
                 const statusHtml = `
                     <div class="status-item">
                         <span class="status-label">Server Status</span>
-                        <span class="status-value ${getStatusClass(data.status)}">${data.status}</span>
+                        <span class="status-value ${getStatusClass(data.status)}">${escapeHtml(data.status)}</span>
                     </div>
                     <div class="status-item">
                         <span class="status-label">Last Update</span>
-                        <span class="status-value status-unknown">${data.last_update}</span>
+                        <span class="status-value status-unknown">${escapeHtml(data.last_update)}</span>
                     </div>
                 `;
                 

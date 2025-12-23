@@ -129,11 +129,14 @@ Environment variables can be set in `.env` or `docker-compose.yml`:
 - `DATABASE_HOST`: PostgreSQL host (default: db)
 - `DATABASE_NAME`: Database name (default: safehouse)
 - `DATABASE_USER`: Database user (default: safehouse)
-- `DATABASE_PASSWORD`: Database password (default: safehouse)
+- `DATABASE_PASSWORD`: Database password (default: safehouse) - **Change in production!**
 - `REDIS_HOST`: Redis host (default: cache)
 - `REDIS_PORT`: Redis port (default: 6379)
 - `STEAMCMD_PATH`: SteamCMD installation path
 - `CHECK_INTERVAL`: Server check interval in seconds (default: 30)
+- `FLASK_DEBUG`: Enable Flask debug mode (default: false) - **Keep false in production!**
+
+**Security Note**: Always change default passwords in production environments. Use `.env` file or Docker secrets for sensitive configuration.
 
 ## License
 

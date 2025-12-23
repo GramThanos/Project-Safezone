@@ -27,8 +27,9 @@ COPY app.py .
 COPY server_monitor.py .
 COPY templates ./templates/
 
-# Create necessary directories
-RUN mkdir -p /var/log/supervisor
+# Create necessary directories with proper permissions
+RUN mkdir -p /var/log/supervisor && \
+    chown -R steam:steam /var/log/supervisor
 
 # Copy supervisor configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
@@ -36,7 +37,7 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Expose Flask port
 EXPOSE 5000
 
-# Switch back to steam user for running applications
+# Switch to steam user for running applications
 USER steam
 
 # Start supervisord

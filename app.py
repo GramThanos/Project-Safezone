@@ -78,7 +78,8 @@ def health():
             game_status = r.get('game_server_status')
             if game_status:
                 status['game_server'] = game_status
-        except:
+        except redis.RedisError as e:
+            print(f"Redis error in health check: {e}")
             pass
     
     return jsonify(status)
@@ -102,4 +103,5 @@ def server_status():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
