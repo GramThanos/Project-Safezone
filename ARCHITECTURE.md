@@ -51,47 +51,54 @@
 
 ## Component Details
 
-### Flask Web Application (app.py)
-- **Purpose**: Web interface for server management
-- **Port**: 5000
+### React Frontend (frontend/)
+- **Purpose**: Web user interface
+- **Port**: 3000 (host) → 80 (container)
+- **Server**: Nginx
 - **Features**:
   - Beautiful responsive dashboard
   - Real-time status display
-  - Health monitoring endpoints
-  - REST API for server status
+  - Automatic refresh every 10 seconds
+  - API integration with backend
+  - Modern React 18 architecture
+- **Build**: Multi-stage Docker build (Node.js build → Nginx serve)
+
+### Flask Backend API (backend/)
+- **Purpose**: REST API backend
+- **Port**: 5000
+- **Server**: Gunicorn
+- **Features**:
+  - RESTful API endpoints
+  - Health monitoring
+  - CORS enabled for frontend
+  - Database integration
+  - Redis caching
 - **Connections**:
-  - PostgreSQL for persistent data
+  - MariaDB for persistent data
   - Redis for caching and real-time updates
 
-### Server Monitor Service (server_monitor.py)
-- **Purpose**: Continuous monitoring of game server
-- **Check Interval**: 30 seconds (configurable)
+### SteamCMD Manager (steamcmd-manager/)
+- **Purpose**: Game server monitoring
+- **Base Image**: cm2network/steamcmd:latest
+- **Process**: Single Python script (no supervisord needed)
 - **Features**:
-  - Process monitoring (checks if ProjectZomboid is running)
-  - SteamCMD installation verification
-  - Status updates to Redis cache
-  - Timestamp tracking
+  - Checks if ProjectZomboid process is running
+  - Verifies SteamCMD installation
+  - Updates status to Redis cache
+  - Configurable check interval (default: 30s)
 - **Statuses**:
   - `not_installed`: SteamCMD not found
   - `running`: Game server process active
   - `stopped`: SteamCMD installed but server not running
 
-### Supervisord
-- **Purpose**: Multi-process management
-- **Configuration**: `/etc/supervisor/conf.d/supervisord.conf`
-- **Features**:
-  - Auto-start both services
-  - Auto-restart on failure
-  - Log management
-  - Runs as non-root user (steam)
-
-### PostgreSQL Database
-- **Image**: postgres:16-alpine
+### MariaDB Database
+- **Image**: mariadb:11
 - **Purpose**: Persistent data storage
 - **Features**:
   - Volume-backed persistence
   - Health checks
   - Automatic initialization
+  - MySQL-compatible
 
 ### Redis Cache
 - **Image**: redis:7-alpine
@@ -99,41 +106,45 @@
 - **Features**:
   - Real-time status storage
   - Health checks
-  - Pub/sub capabilities (future use)
+  - Pub/sub capabilities
 
 ## Network Architecture
 
 All services communicate through a private Docker bridge network (`safehouse_network`):
 
-- **app → db**: PostgreSQL connection on port 5432
-- **app → cache**: Redis connection on port 6379
-- **host → app**: HTTP access on port 5000
+- **frontend → backend**: HTTP requests to API on port 5000
+- **backend → db**: MariaDB connection on port 3306
+- **backend → cache**: Redis connection on port 6379
+- **steamcmd-manager → cache**: Redis connection on port 6379
+- **host → frontend**: HTTP access on port 3000
+- **host → backend**: HTTP access on port 5000 (direct API access)
 
 ## Data Flow
 
 1. **Monitoring Loop**:
    ```
-   Server Monitor → Check Process → Update Redis → Flask reads cache
+   SteamCMD Manager → Check Process → Update Redis → Backend reads cache → Frontend displays
    ```
 
 2. **Web Request**:
    ```
-   Browser → Flask → Query Redis/PostgreSQL → Return JSON → Render UI
+   Browser → Frontend (React) → Backend API → Query Redis/MariaDB → Return JSON → Frontend renders
    ```
 
 3. **Health Check**:
    ```
-   /health endpoint → Check DB → Check Redis → Return status JSON
+   Frontend → /health endpoint → Backend checks DB & Redis → Return status JSON → Display in UI
    ```
 
 ## Security Features
 
 - ✅ No hardcoded passwords (environment variables)
-- ✅ XSS prevention with HTML escaping
-- ✅ Non-root user execution (steam user)
+- ✅ XSS prevention with React's built-in escaping
+- ✅ Non-root user execution (steam user in steamcmd-manager)
 - ✅ Specific exception handling
-- ✅ Debug mode disabled in production
-- ✅ CodeQL security scan passed
+- ✅ CORS properly configured
+- ✅ Separate frontend and backend for security isolation
+- ✅ Nginx for secure static file serving
 
 ## Deployment
 
@@ -141,5 +152,13 @@ Simple one-command deployment:
 ```bash
 docker-compose up -d
 ```
+
+## Container Isolation Benefits
+
+- **SteamCMD Manager**: Isolated environment for game server operations
+- **Backend**: Focused API service, easier to scale
+- **Frontend**: Static files served efficiently by Nginx
+- **Database**: Standard MariaDB container with persistent storage
+- **Cache**: Lightweight Redis container for fast caching
 
 Services start automatically with proper dependencies and health checks.
