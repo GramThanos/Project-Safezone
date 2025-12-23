@@ -1,9 +1,26 @@
-version: '3.8'
-
 services:
-  app:
-    build: .
-    container_name: safehouse_app
+  # SteamCMD and Server Monitor
+  steamcmd-manager:
+    build: ./steamcmd-manager
+    container_name: safehouse_steamcmd_manager
+    environment:
+      - REDIS_HOST=cache
+      - REDIS_PORT=6379
+      - CHECK_INTERVAL=30
+      - STEAMCMD_PATH=/home/steam/steamcmd
+    depends_on:
+      - cache
+    volumes:
+      - steamcmd_data:/home/steam/steamcmd
+      - game_data:/home/steam/Steam
+    restart: unless-stopped
+    networks:
+      - safehouse_network
+
+  # Flask Backend API
+  backend:
+    build: ./backend
+    container_name: safehouse_backend
     ports:
       - "5000:5000"
     environment:
@@ -13,36 +30,49 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safehouse}
       - REDIS_HOST=cache
       - REDIS_PORT=6379
-      - STEAMCMD_PATH=/home/steam/steamcmd
-      - CHECK_INTERVAL=30
     depends_on:
       - db
       - cache
-    volumes:
-      - steamcmd_data:/home/steam/steamcmd
-      - game_data:/home/steam/Steam
     restart: unless-stopped
     networks:
       - safehouse_network
 
+  # React Frontend
+  frontend:
+    build: 
+      context: ./frontend
+      args:
+        - REACT_APP_API_URL=http://localhost:5000
+    container_name: safehouse_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - safehouse_network
+
+  # MariaDB Database
   db:
-    image: postgres:16-alpine
+    image: mariadb:11
     container_name: safehouse_db
     environment:
-      - POSTGRES_DB=${DATABASE_NAME:-safehouse}
-      - POSTGRES_USER=${DATABASE_USER:-safehouse}
-      - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-safehouse}
+      - MYSQL_DATABASE=${DATABASE_NAME:-safehouse}
+      - MYSQL_USER=${DATABASE_USER:-safehouse}
+      - MYSQL_PASSWORD=${DATABASE_PASSWORD:-safehouse}
+      - MYSQL_ROOT_PASSWORD=${DATABASE_ROOT_PASSWORD:-safehouse_root}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - db_data:/var/lib/mysql
     restart: unless-stopped
     networks:
       - safehouse_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-safehouse}"]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # Redis Cache
   cache:
     image: redis:7-alpine
     container_name: safehouse_cache
@@ -56,7 +86,7 @@ services:
       retries: 5
 
 volumes:
-  postgres_data:
+  db_data:
     driver: local
   steamcmd_data:
     driver: local

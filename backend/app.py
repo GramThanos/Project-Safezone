@@ -1,12 +1,14 @@
 """
-Flask web application for Project Safehouse - Project Zomboid Server Manager
+Flask API backend for Project Safehouse - Project Zomboid Server Manager
 """
 import os
-from flask import Flask, render_template, jsonify
+from flask import Flask, jsonify
+from flask_cors import CORS
 import redis
-import psycopg2
+import mysql.connector
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for frontend requests
 
 # Configuration from environment variables
 app.config['DATABASE_HOST'] = os.getenv('DATABASE_HOST', 'db')
@@ -20,7 +22,7 @@ app.config['REDIS_PORT'] = int(os.getenv('REDIS_PORT', '6379'))
 def get_db_connection():
     """Get database connection"""
     try:
-        conn = psycopg2.connect(
+        conn = mysql.connector.connect(
             host=app.config['DATABASE_HOST'],
             database=app.config['DATABASE_NAME'],
             user=app.config['DATABASE_USER'],
@@ -48,8 +50,15 @@ def get_redis_connection():
 
 @app.route('/')
 def index():
-    """Main dashboard page"""
-    return render_template('index.html')
+    """API root endpoint"""
+    return jsonify({
+        'name': 'Project Safehouse API',
+        'version': '1.0.0',
+        'endpoints': {
+            'health': '/health',
+            'server_status': '/api/server/status'
+        }
+    })
 
 
 @app.route('/health')
