@@ -61,11 +61,15 @@ http://localhost:5000
 
 ## Services
 
-### SteamCMD Manager (steamcmd-manager)
-- Game server monitoring daemon
-- Runs SteamCMD for server management
+### Game Server (game-server)
+- Task management system with supervisord
+- Runs 2 services:
+  1. **Task Management API** - RESTful API on port 5001
+  2. **Task Processor** - Background worker for task processing
 - Based on SteamCMD image
-- No supervisord needed (single process)
+- Token-authenticated API endpoints
+- Database-backed task persistence
+- Supports task states: pending, processing, completed
 
 ### Backend API (backend)
 - Flask REST API
@@ -81,7 +85,7 @@ http://localhost:5000
 
 ### Database (db)
 - MariaDB 11
-- Stores persistent data
+- Stores persistent data (including tasks)
 - Automatic health checks
 
 ### Cache (cache)
@@ -91,9 +95,21 @@ http://localhost:5000
 
 ## API Endpoints
 
-Backend API (port 5000):
+### Backend API (port 5000):
 - `GET /` - API information
 - `GET /health` - System health check
+- `GET /api/server/status` - Game server status
+
+### Game Server Task API (port 5001):
+All endpoints require Authorization header with Bearer token.
+
+- `GET /api/tasks` - List all tasks (supports filtering by status, limit, offset)
+- `GET /api/tasks/:id` - Get specific task information
+- `POST /api/tasks` - Create new task
+- `DELETE /api/tasks/:id` - Delete a pending or completed task
+- `DELETE /api/tasks` - Clear all pending and completed tasks
+
+See [game-server/README.md](game-server/README.md) for detailed API documentation and examples.
 - `GET /api/server/status` - Game server status
 
 ## Development
@@ -147,11 +163,20 @@ npm start
 
 View logs for individual services:
 ```bash
-docker compose logs -f steamcmd-manager  # SteamCMD and monitor
-docker compose logs -f backend           # Flask API
-docker compose logs -f frontend          # React frontend
-docker compose logs -f db                # MariaDB
-docker compose logs -f cache             # Redis
+docker compose logs -f game-server         # Game server with task management
+docker compose logs -f backend             # Flask API
+docker compose logs -f frontend            # React frontend
+docker compose logs -f db                  # MariaDB
+docker compose logs -f cache               # Redis
+```
+
+View specific supervisord service logs in game-server:
+```bash
+# API service logs
+docker exec game_server tail -f /var/log/supervisor/api_service.out.log
+
+# Task processor logs
+docker exec game_server tail -f /var/log/supervisor/task_processor.out.log
 ```
 
 ## Configuration
@@ -167,6 +192,8 @@ Environment variables can be set in `.env` or `docker-compose.yml`:
 - `REDIS_PORT`: Redis port (default: 6379)
 - `STEAMCMD_PATH`: SteamCMD installation path
 - `CHECK_INTERVAL`: Server check interval in seconds (default: 30)
+- `API_TOKEN`: Game server task API authentication token - **Change in production!**
+- `PROCESS_INTERVAL`: Task processing check interval in seconds (default: 5)
 - `REACT_APP_API_URL`: Backend API URL for frontend (default: http://localhost:5000)
 
 **Security Note**: Always change default passwords in production environments. Use `.env` file or Docker secrets for sensitive configuration.
