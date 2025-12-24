@@ -38,13 +38,15 @@ def get_db_connection():
 
 
 def get_redis_connection():
-    """Get Redis connection"""
+    """Get Redis connection and validate it's working"""
     try:
         r = redis.Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
             decode_responses=True
         )
+        # Validate connection is working
+        r.ping()
         return r
     except Exception as e:
         print(f"Redis connection error: {e}")
@@ -188,8 +190,18 @@ def run_processor():
         return
     
     # Create pubsub for notifications
-    pubsub = r.pubsub()
-    pubsub.subscribe(REDIS_CHANNEL)
+    try:
+        pubsub = r.pubsub()
+        pubsub.subscribe(REDIS_CHANNEL)
+        
+        # Test subscription is working
+        test_message = pubsub.get_message(timeout=0.1)
+        print(f"Redis pub/sub subscription successful on channel '{REDIS_CHANNEL}'")
+    except Exception as e:
+        print(f"ERROR: Failed to setup Redis pub/sub: {e}")
+        print("Falling back to polling mode")
+        run_polling_mode()
+        return
     
     # Process any existing pending tasks on startup
     print("Checking for existing pending tasks on startup...")

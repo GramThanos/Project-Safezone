@@ -52,13 +52,15 @@ def get_db_connection():
 
 
 def get_redis_connection():
-    """Get Redis connection"""
+    """Get Redis connection and validate it's working"""
     try:
         r = redis.Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
             decode_responses=True
         )
+        # Validate connection is working
+        r.ping()
         return r
     except Exception as e:
         print(f"Redis connection error: {e}")
@@ -72,6 +74,8 @@ def notify_new_task():
         if r:
             r.publish(REDIS_CHANNEL, 'new_task')
             return True
+        else:
+            print("Warning: Redis unavailable, task will be processed via polling fallback")
     except Exception as e:
         print(f"Error notifying new task: {e}")
     return False
@@ -266,7 +270,9 @@ def create_task():
         cursor.close()
         
         # Notify task processor about new task
-        notify_new_task()
+        notification_sent = notify_new_task()
+        if not notification_sent:
+            print(f"Warning: Task {task_id} created but notification failed - will be processed via polling")
         
         return jsonify({
             'id': task_id,
