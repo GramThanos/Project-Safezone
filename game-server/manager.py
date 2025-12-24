@@ -5,28 +5,11 @@ Monitors the SteamCMD game server deployment and status
 import os
 import time
 import subprocess
-import redis
 from datetime import datetime
 
-# Configuration
-REDIS_HOST = os.getenv('REDIS_HOST', 'cache')
-REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
-CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '30'))  # seconds
-STEAMCMD_PATH = os.getenv('STEAMCMD_PATH', '/home/steam/steamcmd')
-
-
-def get_redis_connection():
-    """Get Redis connection"""
-    try:
-        r = redis.Redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-            decode_responses=True
-        )
-        return r
-    except Exception as e:
-        print(f"Redis connection error: {e}")
-        return None
+# Import configuration and modules
+from config import CHECK_INTERVAL, STEAMCMD_PATH
+from cache import get_redis_connection
 
 
 def check_game_server_process():
