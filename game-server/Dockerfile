@@ -14,7 +14,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN python3 -m pip install --no-cache-dir --break-system-packages -r requirements.txt
+RUN python3 -m pip install --no-cache-dir --break-system-packages --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org -r requirements.txt
 
 # Copy application files
 COPY config.py .
@@ -27,7 +27,7 @@ COPY task_processor.py .
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Create log directory
-RUN mkdir -p /var/log/supervisor
+RUN mkdir -p /var/log/supervisor && chown -R steam:steam /var/log/supervisor
 
 USER steam
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
