@@ -42,10 +42,19 @@ class Task(Base):
     
     def to_dict(self):
         """Convert task to dictionary"""
+        # Parse data field - handle both dict and JSON string
+        data = self.data
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return as-is wrapped in a dict
+                data = {'raw_data': data}
+        
         return {
             'id': self.id,
             'status': self.status,
-            'data': self.data if isinstance(self.data, dict) else json.loads(self.data),
+            'data': data,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

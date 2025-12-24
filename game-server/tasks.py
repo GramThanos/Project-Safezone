@@ -3,6 +3,7 @@ Task operations module
 Handles all task-related database operations
 """
 import json
+import time
 from datetime import datetime
 from database import get_db_session, close_db_session, Task
 
@@ -149,8 +150,6 @@ def clear_tasks():
 
 def process_task(task):
     """Process a single task"""
-    import time
-    
     task_id = task['id']
     print(f"[{datetime.now().isoformat()}] Processing task {task_id}")
     
