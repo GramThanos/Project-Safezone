@@ -1,12 +1,14 @@
 """
 Task Processor Service
 Processes tasks from the queue/database
+Uses Redis pub/sub for real-time notifications of new tasks
 """
 import os
 import json
 import time
 from datetime import datetime
 import mysql.connector
+import redis
 
 # Configuration
 # IMPORTANT: Change default credentials in production!
@@ -14,7 +16,10 @@ DATABASE_HOST = os.getenv('DATABASE_HOST', 'db')
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'safehouse')
 DATABASE_USER = os.getenv('DATABASE_USER', 'safehouse')
 DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD', 'safehouse')
+REDIS_HOST = os.getenv('REDIS_HOST', 'cache')
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 PROCESS_INTERVAL = int(os.getenv('PROCESS_INTERVAL', '5'))  # seconds
+REDIS_CHANNEL = 'task_notifications'
 
 
 def get_db_connection():
@@ -29,6 +34,20 @@ def get_db_connection():
         return conn
     except Exception as e:
         print(f"Database connection error: {e}")
+        return None
+
+
+def get_redis_connection():
+    """Get Redis connection"""
+    try:
+        r = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            decode_responses=True
+        )
+        return r
+    except Exception as e:
+        print(f"Redis connection error: {e}")
         return None
 
 
@@ -158,7 +177,66 @@ def process_task(task):
 def run_processor():
     """Main processor loop"""
     print("Starting Task Processor Service...")
-    print(f"Process interval: {PROCESS_INTERVAL} seconds")
+    print(f"Redis notification channel: {REDIS_CHANNEL}")
+    print(f"Fallback polling interval: {PROCESS_INTERVAL} seconds")
+    
+    # Connect to Redis
+    r = get_redis_connection()
+    if not r:
+        print("WARNING: Redis connection failed, falling back to polling mode")
+        run_polling_mode()
+        return
+    
+    # Create pubsub for notifications
+    pubsub = r.pubsub()
+    pubsub.subscribe(REDIS_CHANNEL)
+    
+    # Process any existing pending tasks on startup
+    print("Checking for existing pending tasks on startup...")
+    existing_tasks_processed = 0
+    while True:
+        task = get_pending_task()
+        if task:
+            process_task(task)
+            existing_tasks_processed += 1
+        else:
+            break
+    
+    print(f"Processed {existing_tasks_processed} existing tasks on startup")
+    print("Now listening for new task notifications...")
+    
+    # Main loop: listen for notifications
+    while True:
+        try:
+            # Check for messages with timeout
+            message = pubsub.get_message(timeout=PROCESS_INTERVAL)
+            
+            if message and message['type'] == 'message':
+                # New task notification received
+                print(f"[{datetime.now().isoformat()}] Received task notification")
+                
+                # Process all pending tasks (might be multiple)
+                while True:
+                    task = get_pending_task()
+                    if task:
+                        process_task(task)
+                    else:
+                        break
+            else:
+                # Timeout - check for any pending tasks (fallback)
+                task = get_pending_task()
+                if task:
+                    print(f"[{datetime.now().isoformat()}] Found pending task via polling fallback")
+                    process_task(task)
+                    
+        except Exception as e:
+            print(f"Error in processor loop: {e}")
+            time.sleep(PROCESS_INTERVAL)
+
+
+def run_polling_mode():
+    """Fallback polling mode when Redis is unavailable"""
+    print("Running in polling mode (Redis unavailable)")
     
     while True:
         try:

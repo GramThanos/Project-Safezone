@@ -8,6 +8,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import mysql.connector
+import redis
 from functools import wraps
 
 app = Flask(__name__)
@@ -19,6 +20,9 @@ DATABASE_HOST = os.getenv('DATABASE_HOST', 'db')
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'safehouse')
 DATABASE_USER = os.getenv('DATABASE_USER', 'safehouse')
 DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD', 'safehouse')
+REDIS_HOST = os.getenv('REDIS_HOST', 'cache')
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+REDIS_CHANNEL = 'task_notifications'
 
 # SECURITY WARNING: Change API_TOKEN in production!
 # Set via environment variable: API_TOKEN=your-secure-token
@@ -45,6 +49,32 @@ def get_db_connection():
     except Exception as e:
         print(f"Database connection error: {e}")
         return None
+
+
+def get_redis_connection():
+    """Get Redis connection"""
+    try:
+        r = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            decode_responses=True
+        )
+        return r
+    except Exception as e:
+        print(f"Redis connection error: {e}")
+        return None
+
+
+def notify_new_task():
+    """Notify task processor about new task via Redis pub/sub"""
+    try:
+        r = get_redis_connection()
+        if r:
+            r.publish(REDIS_CHANNEL, 'new_task')
+            return True
+    except Exception as e:
+        print(f"Error notifying new task: {e}")
+    return False
 
 
 def init_database():
@@ -234,6 +264,9 @@ def create_task():
         conn.commit()
         task_id = cursor.lastrowid
         cursor.close()
+        
+        # Notify task processor about new task
+        notify_new_task()
         
         return jsonify({
             'id': task_id,

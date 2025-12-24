@@ -11,6 +11,18 @@ The system uses supervisord to manage two Python services:
 - `api_service.py` - Flask REST API running on port 5001
 - `task_processor.py` - Background worker that processes tasks
 
+### Real-time Task Processing
+
+The task processor uses Redis pub/sub for instant notification of new tasks:
+- **On startup**: Immediately processes all existing pending tasks (no waiting)
+- **During operation**: Listens to Redis notifications for instant processing of new tasks
+- **Fallback**: Polls database every 5 seconds if Redis is unavailable
+
+This ensures:
+- Old/pending tasks are never missed on restart
+- New tasks are processed immediately (no polling delay)
+- System continues working even if Redis fails
+
 ## Task States
 
 Tasks can be in one of three states:
@@ -194,10 +206,14 @@ API_TOKEN=your-secure-random-token-here
 
 1. Client creates a new task via POST /api/tasks
 2. Task is stored in database with status='pending'
-3. Task processor picks up the task (oldest first)
-4. Task status changes to 'processing'
-5. Processor updates task data with progress information
-6. On completion, status changes to 'completed' with result data
+3. API publishes notification to Redis channel 'task_notifications'
+4. Task processor receives notification instantly (or finds task via polling)
+5. Task processor picks up the task (oldest first)
+6. Task status changes to 'processing'
+7. Processor updates task data with progress information
+8. On completion, status changes to 'completed' with result data
+
+**Note:** On startup, the processor immediately checks for and processes all existing pending tasks before waiting for notifications. This ensures old tasks are never missed.
 
 ## Example Task Lifecycle
 

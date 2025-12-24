@@ -34,19 +34,29 @@ Successfully implemented a task management system for the game-server container 
 - Cannot delete tasks being processed
 - Comprehensive error handling
 - Security warning for default token
+- **Redis pub/sub notifications**: Publishes to 'task_notifications' channel when task created
 
 ### 3. Task Processor Service
 - **File**: `game-server/task_processor.py`
 - **Purpose**: Background worker that processes tasks from database queue
 - **Processing**: FIFO (First In, First Out) order
-- **Interval**: Configurable (default: 5 seconds)
+- **Notification**: Redis pub/sub for instant task processing
+- **Fallback**: Polling every 5 seconds if Redis unavailable
 
 #### Processing Flow:
-1. Picks up oldest pending task
-2. Updates status to "processing"
-3. Simulates work with progress updates (25%, 50%, 75%, 100%)
-4. Updates status to "completed" with result data
-5. Handles errors and marks failed tasks
+1. **On startup**: Immediately processes all existing pending tasks (no waiting)
+2. **During operation**: Subscribes to Redis 'task_notifications' channel
+3. **When notified**: Picks up oldest pending task
+4. Updates status to "processing"
+5. Simulates work with progress updates (25%, 50%, 75%, 100%)
+6. Updates status to "completed" with result data
+7. Handles errors and marks failed tasks
+
+#### Key Features:
+- **No missed tasks**: On boot, processes all pending tasks before waiting for notifications
+- **Instant processing**: New tasks trigger immediate notification via Redis pub/sub
+- **Graceful fallback**: Continues polling if Redis connection fails
+- **Robust**: Handles disconnections and errors gracefully
 
 ### 4. Database Schema
 - **Table**: `tasks`
