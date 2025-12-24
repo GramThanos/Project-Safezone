@@ -17,6 +17,10 @@ COPY requirements.txt .
 RUN python3 -m pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Copy application files
+COPY config.py .
+COPY database.py .
+COPY cache.py .
+COPY tasks.py .
 COPY manager.py .
 COPY api_service.py .
 COPY task_processor.py .
