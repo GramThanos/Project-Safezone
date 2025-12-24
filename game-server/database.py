@@ -5,8 +5,7 @@ Handles all database connections and operations
 import json
 from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, JSON, TIMESTAMP, Index
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.sql import func
 from config import DATABASE_HOST, DATABASE_NAME, DATABASE_USER, DATABASE_PASSWORD
 
@@ -15,7 +14,8 @@ DATABASE_URL = f"mysql+pymysql://{DATABASE_USER}:{DATABASE_PASSWORD}@{DATABASE_H
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
 
 # Create base class for declarative models
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
