@@ -14,11 +14,22 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
+# IMPORTANT: Change default credentials in production!
 DATABASE_HOST = os.getenv('DATABASE_HOST', 'db')
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'safehouse')
 DATABASE_USER = os.getenv('DATABASE_USER', 'safehouse')
 DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD', 'safehouse')
+
+# SECURITY WARNING: Change API_TOKEN in production!
+# Set via environment variable: API_TOKEN=your-secure-token
 API_TOKEN = os.getenv('API_TOKEN', 'safehouse-api-token-change-me')
+
+# Warn if using default token
+if API_TOKEN == 'safehouse-api-token-change-me':
+    print("=" * 60)
+    print("WARNING: Using default API token!")
+    print("Change API_TOKEN environment variable in production!")
+    print("=" * 60)
 
 
 def get_db_connection():

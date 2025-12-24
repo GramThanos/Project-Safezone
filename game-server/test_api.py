@@ -4,6 +4,7 @@ Test script for Game Server Task Management API
 This script tests all API endpoints
 """
 
+import os
 import sys
 import json
 import time
@@ -11,8 +12,10 @@ import urllib.request
 import urllib.error
 
 # Configuration
-API_URL = "http://localhost:5001"
-API_TOKEN = "safehouse-api-token-change-me"
+# These defaults match the docker-compose defaults for testing
+# Change these if you have customized your environment variables
+API_URL = os.getenv('TEST_API_URL', 'http://localhost:5001')
+API_TOKEN = os.getenv('TEST_API_TOKEN', 'safehouse-api-token-change-me')
 
 def make_request(method, path, data=None):
     """Make HTTP request to API"""

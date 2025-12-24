@@ -9,6 +9,7 @@ from datetime import datetime
 import mysql.connector
 
 # Configuration
+# IMPORTANT: Change default credentials in production!
 DATABASE_HOST = os.getenv('DATABASE_HOST', 'db')
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'safehouse')
 DATABASE_USER = os.getenv('DATABASE_USER', 'safehouse')
