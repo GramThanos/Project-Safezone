@@ -77,19 +77,34 @@
   - MariaDB for persistent data
   - Redis for caching and real-time updates
 
-### SteamCMD Manager (steamcmd-manager/)
-- **Purpose**: Game server monitoring
+### Game Server (game-server/)
+- **Purpose**: Game server management with task processing system
 - **Base Image**: cm2network/steamcmd:latest
-- **Process**: Single Python script (no supervisord needed)
+- **Process Manager**: Supervisord (manages 2 services)
+- **Services**:
+  1. **Task Management API** (port 5001):
+     - RESTful API for task management
+     - Token-based authentication
+     - CRUD operations for tasks
+     - Task filtering and pagination
+  2. **Task Processor**:
+     - Background worker processing tasks
+     - Automatic status updates
+     - Progress tracking
 - **Features**:
-  - Checks if ProjectZomboid process is running
-  - Verifies SteamCMD installation
-  - Updates status to Redis cache
-  - Configurable check interval (default: 30s)
-- **Statuses**:
-  - `not_installed`: SteamCMD not found
-  - `running`: Game server process active
-  - `stopped`: SteamCMD installed but server not running
+  - Task queue with database persistence
+  - Three task states: pending, processing, completed
+  - JSON data storage for each task
+  - Real-time progress updates
+  - Protected API endpoints
+  - Configurable processing interval
+- **Database**: Uses MariaDB for task persistence
+- **API Endpoints**:
+  - `GET /api/tasks` - List all tasks (with filtering)
+  - `GET /api/tasks/:id` - Get specific task
+  - `POST /api/tasks` - Create new task
+  - `DELETE /api/tasks/:id` - Delete task
+  - `DELETE /api/tasks` - Clear all tasks
 
 ### MariaDB Database
 - **Image**: mariadb:11

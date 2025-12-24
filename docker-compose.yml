@@ -4,12 +4,21 @@ services:
   game-server:
     build: ./game-server
     container_name: game_server
+    ports:
+      - "5001:5001"
     environment:
       - REDIS_HOST=cache
       - REDIS_PORT=6379
       - CHECK_INTERVAL=30
       - STEAMCMD_PATH=/home/steam/steamcmd
+      - DATABASE_HOST=db
+      - DATABASE_NAME=${DATABASE_NAME:-safehouse}
+      - DATABASE_USER=${DATABASE_USER:-safehouse}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safehouse}
+      - API_TOKEN=${API_TOKEN:-safehouse-api-token-change-me}
+      - PROCESS_INTERVAL=5
     depends_on:
+      - db
       - cache
     volumes:
       - steamcmd_data:/home/steam/steamcmd
