@@ -1,215 +1,268 @@
 #!/usr/bin/env python3
-# Manager of the game server
-
-# Import necessary modules
 import time
 import socket
 import datetime
 import threading
 import subprocess
+import select
+import json
 
-# Import custom modules
+# Custom modules
 import config
 import cache
+import models
 import database
 
-
 class GameManager:
-    def __init__(self, server_name, server_ports):
-        self.server_script = '/opt/pzserver/start-server.sh'
+    commands_listener_interval_timeout = 5
+    commands_listener_on_error_timeout = 15
+    running_healthcheck_timeout = 15
+    game_server_quit_timeout = 60
+
+    def __init__(self, server_id, server_name, server_ports):
+        self.server_id = server_id
         self.server_name = server_name
-        self.server_log = f'/tmp/game_server_{server_name}.log'
+        self.server_script = '/opt/pzserver/start-server.sh'
+        self.server_log_path = f'/tmp/game_server_{server_name}.log'
         self.server_ports = server_ports
 
-        self.process = None
-        self.is_running = False
+        self.server_process = None
+        self.server_is_running = False
         self.lock = threading.Lock()
-        self.listener = None
+        self.server_log_handle = None
+        self._stop_event = threading.Event()
 
     def log(self, message):
-        print(f"[{datetime.datetime.now().isoformat()}][Game-Manager {self.server_name}] {message}")
+        ts = datetime.datetime.now().isoformat()
+        print(f"[{ts}][Manager {self.server_name}] {message}")
+
+    def _send_raw_command(self, cmd_string):
+        """Safely writes to the game server's stdin pipe."""
+        try:
+            if self.server_process and self.server_process.stdin and self.server_process.poll() is None:
+                self.server_process.stdin.write(f"{cmd_string}\n")
+                self.server_process.stdin.flush()
+        except Exception as e:
+            self.log(f"STDIN Error: {e}")
 
     def start_server(self):
+        """Starts the physical server process."""
         with self.lock:
-            if self.process and self.process.poll() is None:
-                self.log("Server is already running.")
+            if self.server_process and self.server_process.poll() is None:
                 return
 
-            self.log("Starting game server...")
-            log_handle = open(self.server_log, "a")
-            
-            cmd = [self.server_script, "-servername", self.server_name]
-            
-            self.process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-            self.is_running = True
-            self.log("Server process started.")
+            self.log("Starting game server process...")
+            try:
+                self.server_log_handle = open(self.server_log_path, "a")
+                cmd = [self.server_script, "-servername", self.server_name]
+                
+                self.server_process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=self.server_log_handle,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+                self.server_is_running = True
+            except Exception as e:
+                self.log(f"Process Spawn Error: {e}")
+                if self.server_log_handle:
+                    self.server_log_handle.close()
 
     def stop_server(self):
+        """Performs graceful shutdown of the game server."""
         with self.lock:
-            if not self.process or self.process.poll() is not None:
-                self.log("Server is not running.")
+            if not self.server_process or self.server_process.poll() is not None:
+                self.server_is_running = False
                 return
 
-            self.log("Stopping server (Save & Quit sequence)...")
-            
+            self.log("Shutting down game server (Save/Quit)...")
             try:
-                self.send_command("save")
-                time.sleep(15)
-                self.send_command("quit")
-            except Exception as e:
-                self.log(f"Error sending save/quit commands: {e}")
-
-            try:    
-                # Wait for process to exit naturally
-                self.process.wait(timeout=60)
+                self._send_raw_command("save")
+                time.sleep(10)
+                self._send_raw_command("quit")
+                self.server_process.wait(timeout=self.game_server_quit_timeout)
             except subprocess.TimeoutExpired:
-                self.log("Server took too long to quit. Forcing termination.")
-                self.process.kill()
-            
-            self.is_running = False
-            self.log("Server stopped.")
-
-    def send_command(self, cmd_string):
-        """Pipes a raw command string to the server stdin"""
-        if self.process and self.process.poll() is None:
-            self.log(f"Executing command: {cmd_string}")
-            self.process.stdin.write(f"{cmd_string}\n")
-            self.process.stdin.flush()
-        else:
-            self.log("Cannot send command: Server is offline.")
+                self.log("Server did not exit gracefully. Killing...")
+                self.server_process.kill()
+            finally:
+                if self.server_log_handle:
+                    self.server_log_handle.close()
+                    self.server_log_handle = None
+                self.server_is_running = False
 
     def onwake(self):
-        """Binds to ports and waits for any packet to trigger start"""
+        """UDP loop that checks for wake-up packets and the stop event."""
         sockets = []
         for port in self.server_ports:
             try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.bind(("0.0.0.0", port))
-                s.settimeout(1.0)
+                s.setblocking(False)
                 sockets.append(s)
             except Exception as e:
-                self.log(f"Could not bind to port {port}: {e}")
+                self.log(f"Port Bind Error {port}: {e}")
 
-        self.log("Sleep mode active. Listening for traffic on game ports...")
-        
-        triggered = False
-        while not self.is_running and not triggered:
+        try:
+            while not self.server_is_running and not self._stop_event.is_set():
+                # Efficient wait for 1 second across all sockets
+                readable, _, _ = select.select(sockets, [], [], 1.0)
+                if readable:
+                    for s in readable:
+                        data, addr = s.recvfrom(1024)
+                        if data:
+                            self.log(f"Wake-up packet detected from {addr}")
+                            self.start_server()
+                            return 
+        finally:
             for s in sockets:
-                try:
-                    data, addr = s.recvfrom(1024)
-                    if data:
-                        self.log(f"Wake-up packet received from {addr} on port {s.getsockname()[1]}")
-                        triggered = True
-                        break
-                except socket.timeout:
-                    continue
-            
-            # Check if someone started the server via commands listener while we were waiting
-            if self.is_running: break
-
-        # Cleanup sockets before starting server
-        for s in sockets:
-            s.close()
-        
-        if triggered:
-            self.start_server()
+                s.close()
 
     def commands_listener(self):
-        """Listens for commands on a cache channel"""
-        self.commands_channel = cache.subscribe_to_channel(config.MANAGER_GAME_COMMANDS_CHANNEL)
-        self.log(f"Subscribed to commands channel")
+        """Individual cache listener for this specific server."""
+        while not self._stop_event.is_set():
+            pubsub = cache.subscribe_to_channel(config.MANAGE_GAME_SERVERS_CHANNEL)
+            if not pubsub:
+                time.sleep(self.commands_listener_interval_timeout)
+                continue
+            
+            try:
+                for message in pubsub.listen():
+                    if self._stop_event.is_set(): 
+                        break
+                    if message['type'] != 'message': 
+                        continue
+                    
+                    try:
+                        # Decode message and check if it targets this server
+                        data = json.loads(message['data']) if isinstance(message['data'], str) else message['data']
+                        if str(data.get('server')) != str(self.server_name):
+                            continue
 
-        for message in cache.listen_to_channel(self.commands_channel):
-            if 'type' in message and message['type'] == 'message' and 'server' in message and int(message['server']) == self.server_name:
-                command = message['command']
-                
-                if command == "server-start":
-                    self.start_server()
-                elif command == "server-stop":
-                    self.stop_server()
-                elif command == "server-command":
-                    if 'data' in message:
-                        self.send_command(message['data'])
-                    else:
-                        self.log("No command data provided in server-command message.")
-                else:
-                    self.log(f"Unknown command received: {command}")
+                        cmd = data.get('command')
+                        if cmd == "server-start":
+                            self.start_server()
+                        elif cmd == "server-stop":
+                            self.stop_server()
+                        elif cmd == "server-command":
+                            self._send_raw_command(data.get('data', ''))
+                    except Exception as e:
+                        self.log(f"JSON/Command Error: {e}")
+            except Exception as e:
+                self.log(f"Command Listener Error: {e}")
+                # Cooldown on error
+                self._stop_event.wait(timeout=self.commands_listener_on_error_timeout)
 
     def run(self):
-        # Start commands listener in a separate thread
+        """Main Manager thread loop."""
         self.listener = threading.Thread(target=self.commands_listener, daemon=True)
         self.listener.start()
 
-        self.log("Manager initialized. Starting in Sleep Mode.")
-        
-        while True:
-            if not self.is_running:
-                # This blocks until a packet is received or server starts via commands listener
+        self.log("Manager thread active.")
+        while not self._stop_event.is_set():
+            if not self.server_is_running:
                 self.onwake()
             
-            # Keep the main thread alive while server is running
-            while self.is_running:
-                if self.process.poll() is not None:
-                    self.log("Server process exited unexpectedly.")
-                    self.is_running = False
-                time.sleep(15)
-    
+            # Health check while running
+            while self.server_is_running and not self._stop_event.is_set():
+                if self.server_process.poll() is not None:
+                    self.log("Detected server exit.")
+                    self.server_is_running = False
+                self._stop_event.wait(timeout=self.running_healthcheck_timeout)
+
     def terminate(self):
-        self.listener.join(timeout=5)
+        """Stop loops and kill process."""
+        self._stop_event.set()
         self.stop_server()
 
 
+class Orchestrator:
+    channel_listener_error_timeout = 5
+    managers_shutdown_timeout = 60
 
-def update_managers(managers):
-    """Update managers based on database servers"""
-    session = database.get_session()
-    servers = session.query(database.Server).all()
-    servers = [s.to_dict() for s in servers]
+    def __init__(self):
+        self.managers = []
+        self.commands_channel = config.MANAGE_GAME_SERVERS_CHANNEL
 
-    next_server_names = {s['name'] for s in servers}
-    previous_server_names = {m['name'] for m in managers}
+    def log(self, message):
+        ts = datetime.datetime.now().isoformat()
+        print(f"[{ts}][Orchestrator] {message}")
 
-    # Managers to stop
-    to_stop = previous_server_names - next_server_names
-    for manager in managers:
-        if manager['name'] in to_stop:
+    def update_managers(self):
+        """Synchronizes database list with running threads."""
+        try:
+            with database.get_context_session() as session:
+                db_servers = session.query(models.Server).all()
+                servers_data = [
+                    {'id': s.id, 'name': s.name, 'ports': s.ports} 
+                    for s in db_servers
+                ]
+        except Exception as e:
+            self.log(f"DB Sync Error: {e}")
+            return
+
+        next_server_names = {s['name'] for s in servers_data}
+        
+        # Terminate managers from removed servers
+        active_list = []
+        for m_entry in self.managers:
+            if m_entry['name'] in next_server_names:
+                active_list.append(m_entry)
+            else:
+                self.log(f"Removing manager: {m_entry['name']}")
+                m_entry['object'].terminate()
+        
+        # Start managers for new servers
+        current_names = {m['name'] for m in active_list}
+        for server_data in servers_data:
+            if server_data['name'] not in current_names:
+                self.log(f"Creating manager: {server_data['name']}")
+                game_manager_object = GameManager(server_data['id'], server_data['name'], server_data['ports'])
+                thread = threading.Thread(target=game_manager_object.run, name=f"GameManager-{server_data['name']}", daemon=False)
+                thread.start()
+                active_list.append({
+                    'name': server_data['name'],
+                    'object': game_manager_object,
+                    'thread': thread
+                })
+        
+        self.managers = active_list
+
+    def start(self):
+        """Main Orchestrator blocking loop."""
+        self.log("Starting Orchestrator lifecycle...")
+        self.update_managers()
+
+        while True:
+            try:
+                pubsub = cache.subscribe_to_channel(self.commands_channel)
+                for msg in pubsub.listen():
+                    if msg['type'] != 'message': continue
+                    try:
+                        data = json.loads(msg['data']) if isinstance(msg['data'], str) else msg['data']
+                        if data.get('command') == 'update-managers':
+                            self.log("Managers update triggered")
+                            self.update_managers()
+                    except: continue
+            except Exception as e:
+                self.log(f"Cache link dropped: {e}")
+                time.sleep(self.channel_listener_error_timeout)
+
+    def shutdown(self):
+        """Clean shutdown of all children."""
+        self.log(f"System shutdown. Stopping {len(self.managers)} managers...")
+        for manager in self.managers:
             manager['object'].terminate()
-            manager['thread'].join(timeout=30)
-            
-    managers = [m for m in managers if m['name'] not in to_stop]
-    
-    # Managers to start
-    to_start = next_server_names - previous_server_names
-    for server in servers:
-        if server['name'] in to_start:
-            name = server['name']
-            ports = server['ports']
-            obj = GameManager(name, ports)
-            thread = threading.Thread(target=obj.run, daemon=False)
-            thread.start()
-            managers.append({
-                'name': name,
-                'object': obj,
-                'thread': thread
-            })
-    
-    return managers
-
+        for manager in self.managers:
+            manager['thread'].join(timeout=self.managers_shutdown_timeout)
+        self.log("Shutdown complete.")
 
 if __name__ == "__main__":
-    # Load initial servers from database
-    managers = update_managers([])
-
-    # Montior for update command
-    channel = cache.subscribe_to_channel(config.MANAGER_GAME_COMMANDS_CHANNEL)
-    for message in cache.listen_to_channel(channel):
-        if ('type' in message and message['type'] == 'message') and ('command' in message and message['command'] == 'update-managers'):
-            # Update managers
-            managers = update_managers(managers)
+    orchestrator = Orchestrator()
+    try:
+        orchestrator.start()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        orchestrator.shutdown()

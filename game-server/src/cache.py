@@ -1,53 +1,76 @@
 #!/usr/bin/env python3
-# Redis cache module
-
 import redis
-from config import CACHE_HOST, CACHE_PORT
+import datetime
+import config
+
+# Global pool configuration
+_REDIS_POOL = redis.ConnectionPool(
+    host=config.CACHE_HOST,
+    port=config.CACHE_PORT,
+    decode_responses=True,
+    max_connections=config.CACHE_MAX_CONNECTIONS,
+    health_check_interval=config.CACHE_HEALTH_CHECK_INTERVAL
+)
+
+def _log(message):
+    ts = datetime.datetime.now().isoformat()
+    print(f"[{ts}][Redis Cache] {message}")
 
 def get_instance():
-    """Get Redis connection"""
+    """Get a client from the pool. This is fast and thread-safe."""
     try:
-        r = redis.Redis(
-            host=CACHE_HOST,
-            port=CACHE_PORT,
-            decode_responses=True
-        )
-        # Validate connection is working
-        r.ping()
-        return r
+        return redis.Redis(connection_pool=_REDIS_POOL)
     except Exception as e:
-        print(f"[CACHE] ERROR: Failed to connect to Redis: {e}")
+        _log(f"ERROR: Failed to connect to Redis: {e}")
         return None
 
-
 def broadcast_to_channel(channel, message):
-    """Broaccase a message to channel"""
+    """Short-lived connection: Use pool to avoid 3-way handshake overhead."""
     try:
         r = get_instance()
         if r:
             r.publish(channel, message)
             return True
-        else:
-            raise("Redis not available")
     except Exception as e:
-        print(f"[CACHE] ERROR: Failed to broadcast to channel: {e}")
+        _log(f"ERROR: Broadcast failed: {e}")
     return False
 
-
 def subscribe_to_channel(channel):
-    """Subscribe to channel"""
+    """
+    Long-lived connection: The pool provides a dedicated socket 
+    for this PubSub object.
+    """
     r = get_instance()
-    if not r:
-        return None
+    if not r: return None
     
     try:
-        pubsub = r.pubsub()
+        pubsub = r.pubsub(ignore_subscribe_messages=True)
         pubsub.subscribe(channel)
+        #_log(f"Subscribed to {channel}")
         return pubsub
     except Exception as e:
-        print(f"[CACHE] ERROR: Failed to setup Redis pub/sub: {e}")
+        #_log(f"ERROR: Subscription failed: {e}")
         return None
 
-def listen_to_channel(channel):
-    """Liste to channel"""
-    return channel.listen()
+def listen_to_channel(pubsub_instance):
+    """
+    Generator to consume events.
+    The finally block ensures the connection returns to the pool 
+    when the dynamic thread exits.
+    """
+    if not pubsub_instance:
+        return
+
+    try:
+        # This loop blocks and waits for events (Long-lived)
+        for message in pubsub_instance.listen():
+            if message['type'] == 'message':
+                yield message['data']
+    except redis.ConnectionError:
+        _log("NOTICE: Redis connection lost while listening.")
+    except Exception as e:
+        _log(f"ERROR: Listener exception: {e}")
+    finally:
+        # CRITICAL: Returns the connection to the pool so it's not leaked
+        pubsub_instance.close()
+        _log("PubSub connection closed and returned to pool.")

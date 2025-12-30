@@ -2,13 +2,15 @@
 # Game Server Configuration
 import os
 
-
 # Database Configuration
 DATABASE_URL = os.getenv('DATABASE_URL', 'mysql+pymysql://safehouse:safehouse@db/safehouse')
+DATABASE_POOL_SIZE = int(os.getenv('DATABASE_POOL_SIZE', '64'))
 
 # Cache Configuration
 CACHE_HOST = os.getenv('CACHE_HOST', 'cache')
 CACHE_PORT = int(os.getenv('CACHE_PORT', '6379'))
+CACHE_MAX_CONNECTIONS = int(os.getenv('CACHE_MAX_CONNECTIONS', '64'))
+CACHE_HEALTH_CHECK_INTERVAL = int(os.getenv('CACHE_HEALTH_CHECK_INTERVAL', '30'))
 
 # Manager for API Configuration
 MANAGER_API_PORT = int(os.getenv('MANAGER_API_PORT', '5000'))
@@ -23,8 +25,7 @@ STEAM_APP_BETA = STEAM_APP_BETA if STEAM_APP_BETA else None
 STEAM_INSTALL_DIR = os.getenv('STEAM_INSTALL_DIR', '/opt/steam-apps')
 
 # Manager for Game Server Configuration
-MANAGER_GAME_SERVERS = int(os.getenv('MANAGER_GAME_SERVERS', '1'))
-MANAGER_GAME_COMMANDS_CHANNEL = os.getenv('MANAGER_GAME_COMMANDS_CHANNEL', 'game_commands')
+MANAGE_GAME_SERVERS_CHANNEL = os.getenv('MANAGE_GAME_SERVERS_CHANNEL', 'game_server_managers')
 
 '''
 # Events
