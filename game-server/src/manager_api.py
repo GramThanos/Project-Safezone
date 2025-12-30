@@ -1,38 +1,33 @@
-"""
-Game Server Task Management API Service
-RESTful API for managing tasks with authentication
-"""
+#!/usr/bin/env python3
+# Manager with a RESTful API
+
 from flask import Flask, jsonify, request
-from flask_cors import CORS
 from functools import wraps
 
 # Import configuration and modules
-from config import API_TOKEN, warn_default_token
-from database import init_database
-from cache import notify_new_task
+import config
+import database
+import cache
 import tasks
 
+
 app = Flask(__name__)
-CORS(app)
 
-# Warn if using default token
-warn_default_token()
-
-
+# Protect endpoints with token authentication
 def require_auth(f):
     """Decorator to require authentication token"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # If no API_TOKEN is set, skip authentication
+        if not config.MANAGER_API_TOKEN:
+            return f(*args, **kwargs)
+        
+        # Get token from Authorization header
         token = request.headers.get('Authorization')
+        token = token[7:] if token and token.startswith('Bearer ') else token
         
-        if not token:
-            return jsonify({'error': 'No authorization token provided'}), 401
-        
-        # Support both "Bearer <token>" and plain token
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        if token != API_TOKEN:
+        # Validate token
+        if not token or token != config.MANAGER_API_TOKEN:
             return jsonify({'error': 'Invalid authorization token'}), 403
         
         return f(*args, **kwargs)
@@ -62,12 +57,12 @@ def list_tasks():
     """List all tasks with optional filtering"""
     try:
         # Get filter parameters
-        status_filter = request.args.get('status')
-        limit = request.args.get('limit', type=int)
+        status_filter = request.args.get('status', type=str, default=None)
+        limit = request.args.get('limit', type=int, default=None)
         offset = request.args.get('offset', type=int, default=0)
         
         # Get tasks from database
-        task_list = tasks.list_tasks(status_filter, limit, offset)
+        task_list = tasks.get_all(status_filter, limit, offset)
         
         return jsonify({
             'tasks': task_list,
@@ -166,8 +161,8 @@ def clear_tasks():
 if __name__ == '__main__':
     # Initialize database on startup
     print("Initializing database...")
-    init_database()
+    database.init()
     
     # Start Flask app
     print("Starting Task Management API Service...")
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    app.run(host=config.MANAGER_API_HOST, port=config.MANAGER_API_PORT, debug=False)
