@@ -12,20 +12,13 @@ class Task(Base):
     __tablename__ = 'tasks'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    status = Column(String(64), nullable=False, default='pending')
+    status = Column(String(64), nullable=False, default='pending', index=True)
     # FIXED: Removed the double Column() wrapper
     action = Column(String(64), nullable=False, default='none') 
     data = Column(JSON, nullable=False)
     
-    created_at = Column(
-        TIMESTAMP,
-        server_default=sqlalchemy.func.now()
-    )
-    updated_at = Column(
-        TIMESTAMP, 
-        server_default=sqlalchemy.func.now(), 
-        onupdate=sqlalchemy.func.now()
-    )
+    created_at = Column(TIMESTAMP, server_default=sqlalchemy.func.now(), index=True)
+    updated_at = Column(TIMESTAMP, server_default=sqlalchemy.func.now(), onupdate=sqlalchemy.func.now())
     
     __table_args__ = (
         Index('idx_status', 'status'),
@@ -55,26 +48,30 @@ class Task(Base):
         }
 
 class Server(Base):
-    """Server model for tracking active resources"""
-    __tablename__ = 'server'
+    """Server model for tracking game servers"""
+    __tablename__ = 'servers'
     
+    # Columns
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(256), nullable=False, unique=True)
+    name = Column(String(128), unique=True, nullable=False, index=True)
     ports = Column(JSON, nullable=False)
+    rcon_port = Column(Integer)
+    rcon_password = Column(String(255))
     default_state = Column(String(64), nullable=False, default='stopped') # stopped, running, sleeping
-    created_at = Column(
-        TIMESTAMP, 
-        server_default=sqlalchemy.func.now()
-    )
+    created_at = Column(TIMESTAMP, server_default=sqlalchemy.func.now(), index=True)
     
-    __table_args__ = (
-        Index('idx_name', 'name'),
-    )
+    def __repr__(self):
+        return f"<Server(id={self.id}, name='{self.name}', status='{self.status}')>"
     
-    def to_dict(self):
-        return {
+    def to_dict(self, include_sensitive=False):
+        """Convert server to dictionary"""
+        data = {
             'id': self.id,
             'name': self.name,
             'ports': self.ports,
+            'rcon_port': self.rcon_port,
+            'rcon_password': self.rcon_password if include_sensitive else None,
+            'default_state': self.default_state,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+        return data

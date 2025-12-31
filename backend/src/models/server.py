@@ -10,17 +10,12 @@ class Server(Base):
     
     # Columns
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), unique=True, nullable=False, index=True)
-    host = Column(String(255), nullable=False)
-    port = Column(Integer, nullable=False)
+    name = Column(String(128), unique=True, nullable=False, index=True)
+    ports = Column(JSON, nullable=False)
     rcon_port = Column(Integer)
     rcon_password = Column(String(255))
-    status = Column(String(50), default='offline', index=True)
-    active_players = Column(Integer, default=0)
-    max_players = Column(Integer, default=0)
-    game_day = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    default_state = Column(String(64), nullable=False, default='stopped') # stopped, running, sleeping
+    created_at = Column(TIMESTAMP, server_default=sqlalchemy.func.now(), index=True)
     
     def __repr__(self):
         return f"<Server(id={self.id}, name='{self.name}', status='{self.status}')>"
@@ -30,16 +25,10 @@ class Server(Base):
         data = {
             'id': self.id,
             'name': self.name,
-            'host': self.host,
-            'port': self.port,
-            'status': self.status,
-            'active_players': self.active_players,
-            'max_players': self.max_players,
-            'game_day': self.game_day,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'ports': self.ports,
+            'rcon_port': self.rcon_port,
+            'rcon_password': self.rcon_password if include_sensitive else None,
+            'default_state': self.default_state,
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }
-        if include_sensitive:
-            data['rcon_port'] = self.rcon_port
-            data['rcon_password'] = self.rcon_password
         return data
