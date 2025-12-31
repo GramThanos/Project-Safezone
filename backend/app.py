@@ -3,9 +3,9 @@ Flask API backend for Project Safezone - Project Zomboid Server Manager
 """
 import os
 import logging
+import redis
 from flask import Flask, jsonify
 from flask_cors import CORS
-import redis
 
 # Import routes
 from src.routes.auth import auth_bp
@@ -13,6 +13,7 @@ from src.routes.players import players_bp
 from src.routes.servers import servers_bp
 from src.routes.admin import admin_bp
 from src.database import db
+from src.utils.redis_utils import get_redis_connection
 
 # Configure logging
 logging.basicConfig(
@@ -24,39 +25,11 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend requests
 
-# Configuration from environment variables
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['DATABASE_HOST'] = os.getenv('DATABASE_HOST', 'db')
-app.config['DATABASE_NAME'] = os.getenv('DATABASE_NAME', 'safezone')
-app.config['DATABASE_USER'] = os.getenv('DATABASE_USER', 'safezone')
-app.config['DATABASE_PASSWORD'] = os.getenv('DATABASE_PASSWORD', 'safezone')
-app.config['REDIS_HOST'] = os.getenv('REDIS_HOST', 'cache')
-app.config['REDIS_PORT'] = int(os.getenv('REDIS_PORT', '6379'))
-
 # Register blueprints
 app.register_blueprint(auth_bp)
 app.register_blueprint(players_bp)
 app.register_blueprint(servers_bp)
 app.register_blueprint(admin_bp)
-
-# Redis connection pool for better performance
-_redis_pool = None
-
-def get_redis_connection():
-    """Get Redis connection from pool"""
-    global _redis_pool
-    try:
-        if _redis_pool is None:
-            _redis_pool = redis.ConnectionPool(
-                host=app.config['REDIS_HOST'],
-                port=app.config['REDIS_PORT'],
-                decode_responses=True,
-                max_connections=10
-            )
-        return redis.Redis(connection_pool=_redis_pool)
-    except Exception as e:
-        logger.error(f"Redis connection error: {e}")
-        return None
 
 
 @app.route('/')

@@ -2,13 +2,9 @@
 """
 Database initialization script
 Creates tables and optionally seeds with an admin user
+Run this from the backend directory: python -m init_db
 """
-import os
 import sys
-
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from src.database import db
 from src.models.user import User
 

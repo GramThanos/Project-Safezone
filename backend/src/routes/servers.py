@@ -3,25 +3,10 @@ import logging
 from flask import Blueprint, jsonify
 from src.database import db
 from src.models.server import Server
-import redis
-import os
+from src.utils.redis_utils import get_redis_connection
 
 logger = logging.getLogger(__name__)
 servers_bp = Blueprint('servers', __name__, url_prefix='/api/servers')
-
-
-def get_redis_connection():
-    """Get Redis connection"""
-    try:
-        r = redis.Redis(
-            host=os.getenv('REDIS_HOST', 'cache'),
-            port=int(os.getenv('REDIS_PORT', '6379')),
-            decode_responses=True
-        )
-        return r
-    except Exception as e:
-        logger.error(f"Redis connection error: {e}")
-        return None
 
 
 @servers_bp.route('', methods=['GET'])
