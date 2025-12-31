@@ -143,4 +143,3 @@ class Server:
             return [Server(**row) for row in rows]
         finally:
             cursor.close()
-        return [Server(**row) for row in rows]
