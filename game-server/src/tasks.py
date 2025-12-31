@@ -82,7 +82,7 @@ def create(data=None):
         session.add(task)
         session.commit()
         session.refresh(task)
-        return task.id
+        return task.to_dict()
 
 def get(task_id):
     """Get specific task by ID"""
