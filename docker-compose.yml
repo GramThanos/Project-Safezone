@@ -7,22 +7,20 @@ services:
     ports:
       - "5001:5001"
     environment:
+      - DATABASE_URL=mysql+pymysql://safezone:S4feZone_D4tabas3_Pas5w0rd@db/safezone
       - REDIS_HOST=cache
       - REDIS_PORT=6379
-      - CHECK_INTERVAL=30
-      - STEAMCMD_PATH=/home/steam/steamcmd
-      - DATABASE_HOST=db
-      - DATABASE_NAME=${DATABASE_NAME:-safezone}
-      - DATABASE_USER=${DATABASE_USER:-safezone}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safezone}
-      - API_TOKEN=${API_TOKEN:-safezone-api-token-change-me}
-      - PROCESS_INTERVAL=5
+      - MANAGER_API_PORT=5000
+      - MANAGER_API_TOKEN=S4feZone_API_T0k3n
+      - STEAM_APP_BETA=42.13.1
+      - STEAM_INSTALL_DIR=/opt/steam-apps
     depends_on:
       - db
       - cache
     volumes:
-      - steamcmd_data:/home/steam/steamcmd
-      - game_data:/home/steam/Steam
+      - game_data:/opt/steam-apps
+    #  - steamcmd_data:/home/steam/steamcmd
+    #  - game_data:/home/steam/Steam
     restart: unless-stopped
     networks:
       - default
@@ -36,15 +34,15 @@ services:
     #  - "5000:5000"
     environment:
       - DATABASE_HOST=db
-      - DATABASE_NAME=${DATABASE_NAME:-safezone}
-      - DATABASE_USER=${DATABASE_USER:-safezone}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safezone}
+      - DATABASE_NAME=safezone
+      - DATABASE_USER=safezone
+      - DATABASE_PASSWORD=S4feZone_D4tabas3_Pas5w0rd
       - REDIS_HOST=cache
       - REDIS_PORT=6379
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - SECRET_KEY=S4feZone_W3bApp_S3cr3t_K3y
       - TOKEN_EXPIRY_HOURS=${TOKEN_EXPIRY_HOURS:-24}
-      - GAME_SERVER_API_URL=http://game-server:5001
-      - API_TOKEN=${API_TOKEN:-safezone-api-token-change-me}
+      - API_TOKEN=S4feZone_API_T0k3n
+      - GAME_SERVER_API_URL=http://game-server:5000
     depends_on:
       - db
       - cache
@@ -70,10 +68,10 @@ services:
     image: mariadb:11
     container_name: db
     environment:
-      - MYSQL_DATABASE=${DATABASE_NAME:-safezone}
-      - MYSQL_USER=${DATABASE_USER:-safezone}
-      - MYSQL_PASSWORD=${DATABASE_PASSWORD:-safezone}
-      - MYSQL_ROOT_PASSWORD=${DATABASE_ROOT_PASSWORD:-safezone_root}
+      - MYSQL_DATABASE=safezone
+      - MYSQL_USER=safezone
+      - MYSQL_PASSWORD=S4feZone_D4tabas3_Pas5w0rd
+      - MYSQL_ROOT_PASSWORD=S4feZone_D4tabas3_Pas5w0rd
     volumes:
       - db_data:/var/lib/mysql
     restart: unless-stopped
