@@ -1,0 +1,154 @@
+:root{
+	--bg:#0b0d0f;
+	--card:#111214;
+	--muted:#9aa0a6;
+	--accent:#e32020; /* red accent */
+	--accent-dim: rgba(227,32,32,0.12);
+}
+
+html,body{
+	height:100%;
+	background: linear-gradient(180deg,#060607 0%, #0d0f10 100%);
+	color:#e6e6e6;
+	font-family: "Roboto", sans-serif;
+	-webkit-font-smoothing:antialiased;
+	-moz-osx-font-smoothing:grayscale;
+}
+
+/* top nav */
+.navbar-dark .navbar-nav .nav-link{ color: #cfcfcf; font-weight:500; }
+.navbar-brand{ font-family: "Oswald", sans-serif; font-weight:700; color:#fffbfb; }
+.btn-danger-ghost{ background:transparent; border:2px solid var(--accent); color:var(--accent); }
+
+/* hero */
+.hero {
+	position:relative;
+	min-height: 76vh;
+	display:flex;
+	align-items:center;
+	justify-content:center;
+	text-align:center;
+	overflow:hidden;
+	color:#fff;
+}
+.hero::before{
+	content:'';
+	position:absolute;
+	inset:0;
+	background: linear-gradient(180deg, rgba(3,3,3,0.55) 0%, rgba(3,3,3,0.85) 70%);
+	z-index:1;
+}
+.hero-bg{
+	position:absolute;
+	inset:0;
+	background-image: url("./images/safezone-banner-8.png");
+	background-size: cover;
+	background-position:center;
+	z-index:0;
+	filter:contrast(110%) saturate(70%);
+}
+.hero-inner{
+	position:relative;
+	z-index:2;
+	max-width:1100px;
+	padding: 4rem 1rem;
+}
+.hero h1{
+	font-family: "Oswald", sans-serif;
+	font-size: clamp(28px, 5vw, 48px);
+	letter-spacing:1px;
+	color: #ffefef;
+	text-transform:uppercase;
+	margin-bottom:0.5rem;
+}
+.hero p.lead{
+	color:var(--muted);
+	max-width:780px;
+	margin:0 auto 1.5rem;
+	font-size:1.05rem;
+}
+
+/* cards area */
+.character-card{
+	background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.14));
+	border: 1px solid rgba(255,255,255,0.04);
+	padding:1.2rem;
+	border-radius:8px;
+	transition: transform .18s ease, box-shadow .18s ease;
+	min-height: 360px;
+	display:flex;
+	flex-direction:column;
+	justify-content:space-between;
+}
+.character-card:hover{ transform: translateY(-6px); box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+
+.character-card .avatar{
+	height:200px;
+	background-size:cover;
+	background-position:center;
+	border-radius:6px;
+	margin-bottom:1rem;
+	position:relative;
+	overflow:hidden;
+}
+.ribbon {
+	position:absolute;
+	right:12px;
+	top:12px;
+	font-weight:700;
+	background: var(--accent);
+	color:white;
+	padding:4px 8px;
+	border-radius:4px;
+	font-size:.8rem;
+}
+.character-title{
+	font-family:"Oswald", sans-serif;
+	font-size:1.05rem;
+	margin-bottom:6px;
+}
+.character-desc{ color:var(--muted); font-size:.92rem; min-height:82px; }
+
+/* gallery */
+.gallery-card{
+	position:relative;
+	overflow:hidden;
+	border-radius:8px;
+	border:1px solid rgba(255,255,255,0.03);
+	min-height:320px;
+	display:flex;
+	flex-direction:column;
+	justify-content:flex-end;
+	padding:1rem;
+	background-size:cover;
+	background-position:center;
+	background-repeat: no-repeat;
+}
+.gallery-card .overlay{
+	background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(3,3,3,0.72) 60%);
+	padding:1rem;
+	border-radius:8px;
+}
+.btn-accent{
+	background:var(--accent);
+	border:0;
+	color:#fff;
+	font-weight:600;
+	padding:0.6rem 1.1rem;
+	border-radius:6px;
+}
+
+/* footer */
+footer{
+	background:linear-gradient(180deg,#050506 0%, #0b0d0f 100%);
+	color: #9ea4a8;
+	padding:4rem 0 2rem;
+	font-size:.92rem;
+}
+.small-muted{ color:var(--muted); }
+
+/* small screens adjust */
+@media (max-width:575px){
+	.hero{ min-height:58vh; padding-top:2rem; padding-bottom:2rem; }
+	.character-card{ min-height: auto; }
+}
