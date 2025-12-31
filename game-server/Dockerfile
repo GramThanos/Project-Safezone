@@ -17,16 +17,10 @@ RUN python3 -m pip install --upgrade pip --break-system-packages && \
 
 # Copy Supervisor configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-RUN mkdir -p /var/log/supervisor && chown -R steam:steam /var/log/supervisor
+RUN mkdir -p /var/log/supervisor && \
+    chown -R steam:steam /var/log/supervisor
 
 # Copy application files
-COPY config.py .
-COPY database.py .
-COPY cache.py .
-COPY tasks.py .
-COPY manager.py .
-COPY api_service.py .
-COPY task_processor.py .
+COPY ./src /app/
 
-USER steam
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
