@@ -257,7 +257,7 @@ export REDIS_HOST=localhost
 export SECRET_KEY=dev-secret-key
 
 # Initialize database
-python init_db.py
+python -m init_db
 
 # Run the app
 python app.py

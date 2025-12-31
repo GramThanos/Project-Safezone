@@ -129,7 +129,8 @@ API_TOKEN=your-api-token            # Game server API token
 Run the initialization script to create tables and default admin user:
 
 ```bash
-python init_db.py
+cd backend
+python -m init_db
 ```
 
 Default admin credentials:
@@ -142,6 +143,7 @@ Default admin credentials:
 
 ```bash
 # Install dependencies
+cd backend
 pip install -r requirements.txt
 
 # Set environment variables
@@ -149,7 +151,7 @@ export DATABASE_HOST=localhost
 export REDIS_HOST=localhost
 
 # Initialize database
-python init_db.py
+python -m init_db
 
 # Run the application
 python app.py
