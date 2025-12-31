@@ -38,7 +38,7 @@ class Task(Base):
     def to_dict(self):
         """Convert task to dictionary with safe JSON parsing"""
         data_payload = self.data
-        
+
         if isinstance(data_payload, str):
             try:
                 data_payload = json.loads(data_payload)
@@ -61,6 +61,7 @@ class Server(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(256), nullable=False, unique=True)
     ports = Column(JSON, nullable=False)
+    default_state = Column(String(64), nullable=False, default='stopped') # stopped, running, sleeping
     created_at = Column(
         TIMESTAMP, 
         server_default=sqlalchemy.func.now()

@@ -27,6 +27,9 @@ STEAM_INSTALL_DIR = os.getenv('STEAM_INSTALL_DIR', '/opt/steam-apps')
 # Manager for Game Server Configuration
 MANAGE_GAME_SERVERS_CHANNEL = os.getenv('MANAGE_GAME_SERVERS_CHANNEL', 'game_server_managers')
 
+# Manager for Tasks Configuration
+MANAGE_TASKS_CHANNEL = os.getenv('MANAGE_TASKS_CHANNEL', 'task_manage')
+
 '''
 # Events
 EVENTS_CHANNEL = 'events_channel'

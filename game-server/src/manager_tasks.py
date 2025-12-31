@@ -1,70 +1,134 @@
-"""
-Task Processor Service
-Processes tasks from the queue/database
-Uses Redis pub/sub for real-time notifications of new tasks (event-driven)
-"""
-from datetime import datetime
+#!/usr/bin/env python3
+import datetime
+import time
 
-# Import configuration and modules
-from config import PROCESS_INTERVAL, REDIS_CHANNEL
-from cache import get_redis_connection, subscribe_to_channel
+# Custom modules
+import config
+import database
+import models
+import cache
 import tasks
 
 
-def run_processor():
-    """Main processor loop - event-driven only"""
-    print("Starting Task Processor Service...")
-    print(f"Redis notification channel: {REDIS_CHANNEL}")
-    print("Mode: Event-driven (Redis pub/sub only)")
+# Logging
+
+def _log(message):
+    ts = datetime.datetime.now().isoformat()
+    print(f"[{ts}][Tasks Manager] {message}")
+
+
+# Task Processing
+
+def process(task_id):
+    """
+    Process a single task. 
+    Uses a single session context for the entire lifecycle of the action.
+    """
+    with database.get_context_session() as session:
+        task = session.query(models.Task).filter(models.Task.id == task_id).first()
+        
+        if not task:
+            _log(f"Task {task_id} not found")
+            return False
+
+        # Initial transition to processing
+        _log(f"Processing task {task_id}")
+        task.status = 'processing'
+        
+        # Prepare data and action
+        data = task.data if isinstance(task.data, dict) else {}
+        action_name = data.get('action')
+        task_action_func = tasks.ACTIONS.get(action_name)
+
+        if not task_action_func:
+            _log(f"Unknown action: {action_name}")
+            task.status = 'completed' # or 'failed' depending on your preference
+            data.update({"message": "Unknown action", "result": "failure"})
+            task.data = data
+            session.commit()
+            return False
+
+        # Execute the action
+        data['started_at'] = datetime.datetime.now().isoformat()
+        session.commit() # Checkpoint: mark as started in DB
+
+        try:
+            # We pass the data to the external action function
+            success = task_action_func(data)
+            
+            data['result'] = 'success' if success else 'failure'
+            data['message'] = 'Task completed' if success else 'Action returned False'
+            _log(f"Action {action_name} result: {data['result']}")
+            
+        except Exception as e:
+            _log(f"Execution error on task {task_id}: {e}")
+            data['result'] = 'failure'
+            data['message'] = f"Error: {str(e)}"
+
+        # Finalize status and data
+        data['ended_at'] = datetime.datetime.now().isoformat()
+        task.status = 'completed'
+        task.data = data
+        session.commit()
+        
+        return data['result'] == 'success'
+
+def process_pending_tasks():
+    tasks_processed = 0
+    try:
+        pending_tasks = tasks.get_pending()
+        if not pending_tasks:
+            return 0
+
+        for task in pending_tasks:
+            # Added a basic safety check for task structure
+            task_id = task.get('id')
+            if task_id:
+                res = process(task_id)
+                tasks_processed += 1 if res else 0
+    except Exception as e:
+        _log(f"Critical error fetching/processing tasks: {e}")
     
-    # Subscribe to Redis pub/sub channel
-    pubsub = subscribe_to_channel()
-    if not pubsub:
-        print("ERROR: Cannot start processor without Redis pub/sub")
-        print("Please ensure Redis is running and accessible")
-        return
+    return tasks_processed
+
+def manage_tasks():
+    """Main manager loop with improved stability and error recovery"""
+    _log("Starting Task Manager Service...")
     
-    # Process any existing pending tasks on startup
-    print("Checking for existing pending tasks on startup...")
-    existing_tasks_processed = 0
-    while True:
-        task = tasks.get_pending_task()
-        if task:
-            tasks.process_task(task)
-            existing_tasks_processed += 1
-        else:
-            break
-    
-    print(f"Processed {existing_tasks_processed} existing tasks on startup")
-    print("Now listening for new task notifications...")
-    
-    # Main loop: listen for notifications (event-driven)
+    # 1. Initial backlog processing
+    _log("Checking for existing pending tasks on startup...")
+    initial_count = process_pending_tasks()
+    _log(f"Processed {initial_count} existing tasks on startup")
+
     while True:
         try:
-            # Wait for messages (blocking with timeout)
-            message = pubsub.get_message(timeout=PROCESS_INTERVAL)
+            _log(f"Subscribing to channel: {config.MANAGE_TASKS_CHANNEL}")
+            pubsub = cache.subscribe_to_channel(config.MANAGE_TASKS_CHANNEL)
             
-            if message and message['type'] == 'message':
-                # New task notification received
-                print(f"[{datetime.now().isoformat()}] Received task notification")
-                
-                # Process all pending tasks (might be multiple)
-                while True:
-                    task = tasks.get_pending_task()
-                    if task:
-                        tasks.process_task(task)
-                    else:
-                        break
-                    
-        except Exception as e:
-            print(f"Error in processor loop: {e}")
-            # Try to reconnect
-            print("Attempting to reconnect to Redis...")
-            pubsub = subscribe_to_channel()
             if not pubsub:
-                print("ERROR: Failed to reconnect to Redis. Exiting.")
-                return
+                _log("ERROR: Failed to subscribe. Retrying in 5s...")
+                time.sleep(5)
+                continue
 
+            _log("System online. Listening for new task notifications...")
+            
+            # Listen for messages
+            for message in pubsub.listen():
+                # Ignore internal Redis subscription messages
+                if message['type'] != 'message':
+                    continue
+
+                # Process tasks
+                count = process_pending_tasks()
+                if count > 0:
+                    _log(f"Processed {count} tasks in response to event")
+
+        except Exception as e:
+            _log(f"Connection lost or loop error: {e}. Reconnecting...")
+            time.sleep(5)
 
 if __name__ == '__main__':
-    run_processor()
+    try:
+        manage_tasks()
+    except KeyboardInterrupt:
+        _log("Service stopped")
