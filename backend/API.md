@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Project Safezone backend is a Flask-based REST API with JWT authentication, user management, player profiles, and server monitoring capabilities.
+The Project Safezone backend is a Flask-based REST API with SQLAlchemy ORM, JWT authentication, user management, player profiles, and server monitoring capabilities.
 
 ## Architecture
 
@@ -12,10 +12,10 @@ The backend is organized into multiple modules for clean code structure:
 backend/
 ├── app.py                 # Main Flask application
 ├── init_db.py            # Database initialization script
-├── requirements.txt      # Python dependencies
+├── requirements.txt      # Python dependencies (SQLAlchemy, PyMySQL)
 └── src/
-    ├── database.py       # Database connection management
-    ├── models/           # Data models
+    ├── database.py       # SQLAlchemy database configuration and session management
+    ├── models/           # SQLAlchemy ORM models
     │   ├── user.py       # User model
     │   ├── player.py     # Player (character) model
     │   └── server.py     # Server model
@@ -24,9 +24,20 @@ backend/
     │   ├── players.py    # Player management routes
     │   ├── servers.py    # Server status routes
     │   └── admin.py      # Admin panel routes
-    └── middleware/       # Middleware
-        └── auth.py       # JWT authentication middleware
+    ├── middleware/       # Middleware
+    │   └── auth.py       # JWT authentication middleware
+    └── utils/            # Utility modules
+        └── redis_utils.py # Redis connection pooling
 ```
+
+## Technology Stack
+
+- **Flask 3.0**: Web framework
+- **SQLAlchemy 2.0.23**: ORM for database operations
+- **PyMySQL 1.1.0**: MySQL database driver
+- **JWT**: Token-based authentication
+- **Redis**: Caching layer
+
 
 ## Features
 
@@ -212,3 +223,31 @@ Authorization: Bearer <token>
 - JWT tokens expire after 24 hours (configurable)
 - Role-based access control for sensitive endpoints
 - CORS enabled for frontend communication
+- SQLAlchemy ORM protects against SQL injection
+- Connection pooling with automatic reconnection
+
+## Database Management
+
+The backend uses SQLAlchemy ORM for database operations:
+
+**Session Management:**
+- Automatic session creation and cleanup via context managers
+- Transaction support with automatic commit/rollback
+- Connection pooling for better performance
+
+**Migrations:**
+- Tables are automatically created based on model definitions
+- Use `python -m init_db` to initialize the database
+
+**Query Examples:**
+```python
+# Get user by username
+user = session.query(User).filter_by(username='admin').first()
+
+# Get all players for a user
+players = session.query(Player).filter_by(user_id=user_id).all()
+
+# Update user role
+user.role = 'admin'
+# Session automatically commits on context exit
+```
