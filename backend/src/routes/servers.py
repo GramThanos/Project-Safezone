@@ -13,8 +13,8 @@ servers_bp = Blueprint('servers', __name__, url_prefix='/api/servers')
 def get_all_servers():
     """Get all servers with status (public endpoint)"""
     try:
-        with db.get_db() as conn:
-            servers = Server.get_all(conn)
+        with db.get_db() as session:
+            servers = session.query(Server).all()
             return jsonify({
                 'servers': [s.to_dict() for s in servers]
             }), 200
@@ -27,8 +27,8 @@ def get_all_servers():
 def get_server(server_id):
     """Get specific server (public endpoint)"""
     try:
-        with db.get_db() as conn:
-            server = Server.find_by_id(conn, server_id)
+        with db.get_db() as session:
+            server = session.query(Server).filter_by(id=server_id).first()
             
             if not server:
                 return jsonify({'error': 'Server not found'}), 404
@@ -44,8 +44,8 @@ def get_servers_status():
     """Get all servers status from cache and database"""
     try:
         r = get_redis_connection()
-        with db.get_db() as conn:
-            servers = Server.get_all(conn)
+        with db.get_db() as session:
+            servers = session.query(Server).all()
             
             servers_data = []
             for server in servers:

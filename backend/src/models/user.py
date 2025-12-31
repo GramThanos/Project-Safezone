@@ -1,11 +1,15 @@
-"""User model"""
+"""User model with SQLAlchemy"""
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import Column, Integer, String, DateTime, Index
+from src.database import Base
 
 
-class User:
+class User(Base):
     """User model for authentication and authorization"""
+    __tablename__ = 'users'
     
+    # Role constants
     ROLE_BANNED = 'banned'
     ROLE_PLAYER = 'player'
     ROLE_MODERATOR = 'moderator'
@@ -13,14 +17,16 @@ class User:
     
     ROLES = [ROLE_BANNED, ROLE_PLAYER, ROLE_MODERATOR, ROLE_ADMIN]
     
-    def __init__(self, id=None, username=None, email=None, password_hash=None, 
-                 role=ROLE_PLAYER, created_at=None):
-        self.id = id
-        self.username = username
-        self.email = email
-        self.password_hash = password_hash
-        self.role = role
-        self.created_at = created_at or datetime.utcnow()
+    # Columns
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(80), unique=True, nullable=False, index=True)
+    email = Column(String(120), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, default=ROLE_PLAYER, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    def __repr__(self):
+        return f"<User(id={self.id}, username='{self.username}', role='{self.role}')>"
     
     def set_password(self, password):
         """Hash and set user password"""
@@ -54,92 +60,3 @@ class User:
         if include_sensitive:
             data['password_hash'] = self.password_hash
         return data
-    
-    @staticmethod
-    def create_table(conn):
-        """Create users table"""
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                username VARCHAR(80) UNIQUE NOT NULL,
-                email VARCHAR(120) UNIQUE NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
-                role VARCHAR(20) NOT NULL DEFAULT 'player',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_username (username),
-                INDEX idx_email (email),
-                INDEX idx_role (role)
-            )
-        ''')
-        conn.commit()
-    
-    @staticmethod
-    def find_by_id(conn, user_id):
-        """Find user by ID"""
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))
-        row = cursor.fetchone()
-        if row:
-            return User(**row)
-        return None
-    
-    @staticmethod
-    def find_by_username(conn, username):
-        """Find user by username"""
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM users WHERE username = %s', (username,))
-        row = cursor.fetchone()
-        if row:
-            return User(**row)
-        return None
-    
-    @staticmethod
-    def find_by_email(conn, email):
-        """Find user by email"""
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM users WHERE email = %s', (email,))
-        row = cursor.fetchone()
-        if row:
-            return User(**row)
-        return None
-    
-    def save(self, conn):
-        """Save user to database"""
-        cursor = conn.cursor()
-        try:
-            if self.id:
-                # Update existing user
-                cursor.execute('''
-                    UPDATE users 
-                    SET username = %s, email = %s, password_hash = %s, role = %s
-                    WHERE id = %s
-                ''', (self.username, self.email, self.password_hash, self.role, self.id))
-            else:
-                # Insert new user
-                cursor.execute('''
-                    INSERT INTO users (username, email, password_hash, role)
-                    VALUES (%s, %s, %s, %s)
-                ''', (self.username, self.email, self.password_hash, self.role))
-                self.id = cursor.lastrowid
-            conn.commit()
-            return self
-        finally:
-            cursor.close()
-    
-    @staticmethod
-    def get_all(conn, role=None, limit=100, offset=0):
-        """Get all users with optional role filter"""
-        cursor = conn.cursor(dictionary=True)
-        try:
-            if role:
-                cursor.execute(
-                    'SELECT * FROM users WHERE role = %s LIMIT %s OFFSET %s',
-                    (role, limit, offset)
-                )
-            else:
-                cursor.execute('SELECT * FROM users LIMIT %s OFFSET %s', (limit, offset))
-            rows = cursor.fetchall()
-            return [User(**row) for row in rows]
-        finally:
-            cursor.close()

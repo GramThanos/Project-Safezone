@@ -14,8 +14,8 @@ players_bp = Blueprint('players', __name__, url_prefix='/api/players')
 def get_players(current_user):
     """Get all players for current user"""
     try:
-        with db.get_db() as conn:
-            players = Player.find_by_user(conn, current_user['user_id'])
+        with db.get_db() as session:
+            players = session.query(Player).filter_by(user_id=current_user['user_id']).all()
             return jsonify({
                 'players': [p.to_dict() for p in players]
             }), 200
@@ -29,8 +29,8 @@ def get_players(current_user):
 def get_player(current_user, player_id):
     """Get specific player"""
     try:
-        with db.get_db() as conn:
-            player = Player.find_by_id(conn, player_id)
+        with db.get_db() as session:
+            player = session.query(Player).filter_by(id=player_id).first()
             
             if not player:
                 return jsonify({'error': 'Player not found'}), 404
@@ -55,15 +55,18 @@ def create_player(current_user):
         return jsonify({'error': 'Player name is required'}), 400
     
     try:
-        with db.get_db() as conn:
+        with db.get_db() as session:
             player = Player(
                 user_id=current_user['user_id'],
                 name=data['name'],
                 description=data.get('description', ''),
-                avatar=data.get('avatar', ''),
-                stats=data.get('stats', {})
+                avatar=data.get('avatar', '')
             )
-            player.save(conn)
+            if 'stats' in data:
+                player.set_stats(data['stats'])
+            
+            session.add(player)
+            session.flush()  # Flush to get player ID
             
             return jsonify({
                 'message': 'Player created successfully',
@@ -81,8 +84,8 @@ def update_player(current_user, player_id):
     data = request.get_json()
     
     try:
-        with db.get_db() as conn:
-            player = Player.find_by_id(conn, player_id)
+        with db.get_db() as session:
+            player = session.query(Player).filter_by(id=player_id).first()
             
             if not player:
                 return jsonify({'error': 'Player not found'}), 404
@@ -99,9 +102,7 @@ def update_player(current_user, player_id):
             if 'avatar' in data:
                 player.avatar = data['avatar']
             if 'stats' in data:
-                player.stats = data['stats']
-            
-            player.save(conn)
+                player.set_stats(data['stats'])
             
             return jsonify({
                 'message': 'Player updated successfully',
@@ -117,8 +118,8 @@ def update_player(current_user, player_id):
 def delete_player(current_user, player_id):
     """Delete player"""
     try:
-        with db.get_db() as conn:
-            player = Player.find_by_id(conn, player_id)
+        with db.get_db() as session:
+            player = session.query(Player).filter_by(id=player_id).first()
             
             if not player:
                 return jsonify({'error': 'Player not found'}), 404
@@ -127,7 +128,7 @@ def delete_player(current_user, player_id):
             if player.user_id != current_user['user_id']:
                 return jsonify({'error': 'Access denied'}), 403
             
-            player.delete(conn)
+            session.delete(player)
             
             return jsonify({'message': 'Player deleted successfully'}), 200
     except Exception as e:

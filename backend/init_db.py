@@ -24,9 +24,9 @@ def create_admin_user():
     """Create a default admin user if none exists"""
     print("\nChecking for admin user...")
     try:
-        with db.get_db() as conn:
+        with db.get_db() as session:
             # Check if admin user already exists
-            admin = User.find_by_username(conn, 'admin')
+            admin = session.query(User).filter_by(username='admin').first()
             if admin:
                 print("✓ Admin user already exists")
                 return True
@@ -38,7 +38,9 @@ def create_admin_user():
                 role=User.ROLE_ADMIN
             )
             admin.set_password('admin')  # CHANGE THIS IN PRODUCTION!
-            admin.save(conn)
+            session.add(admin)
+            session.flush()  # Flush to get user ID
+            
             print("✓ Admin user created successfully")
             print("  Username: admin")
             print("  Password: admin")

@@ -1,6 +1,7 @@
 """Authentication routes"""
 import logging
 from flask import Blueprint, request, jsonify
+from sqlalchemy.exc import IntegrityError
 from src.database import db
 from src.models.user import User
 from src.middleware.auth import generate_token
@@ -21,8 +22,8 @@ def signin():
     password = data['password']
     
     try:
-        with db.get_db() as conn:
-            user = User.find_by_username(conn, username)
+        with db.get_db() as session:
+            user = session.query(User).filter_by(username=username).first()
             
             if not user or not user.check_password(password):
                 return jsonify({'error': 'Invalid username or password'}), 401
@@ -56,18 +57,19 @@ def signup():
     password = data['password']
     
     try:
-        with db.get_db() as conn:
+        with db.get_db() as session:
             # Check if username or email already exists
-            if User.find_by_username(conn, username):
+            if session.query(User).filter_by(username=username).first():
                 return jsonify({'error': 'Username already exists'}), 400
             
-            if User.find_by_email(conn, email):
+            if session.query(User).filter_by(email=email).first():
                 return jsonify({'error': 'Email already exists'}), 400
             
             # Create new user
             user = User(username=username, email=email, role=User.ROLE_PLAYER)
             user.set_password(password)
-            user.save(conn)
+            session.add(user)
+            session.flush()  # Flush to get the user ID
             
             # Generate token
             token = generate_token(user.id, user.username, user.role)
@@ -90,8 +92,8 @@ def get_current_user():
     @token_required
     def _get_user(current_user):
         try:
-            with db.get_db() as conn:
-                user = User.find_by_id(conn, current_user['user_id'])
+            with db.get_db() as session:
+                user = session.query(User).filter_by(id=current_user['user_id']).first()
                 if user:
                     return jsonify({'user': user.to_dict()}), 200
                 return jsonify({'error': 'User not found'}), 404
