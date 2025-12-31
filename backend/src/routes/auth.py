@@ -12,7 +12,15 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
 @auth_bp.route('/signin', methods=['POST'])
 def signin():
-    """User sign in endpoint"""
+    """User sign in endpoint - rate limited"""
+    from flask_limiter import Limiter
+    from flask import current_app
+    
+    # Apply strict rate limiting on sign-in to prevent brute force
+    limiter = getattr(current_app, 'limiter', None)
+    if limiter:
+        limiter.limit("5 per minute")(lambda: None)()
+    
     data = request.get_json()
     
     if not data or not data.get('username') or not data.get('password'):
@@ -26,7 +34,8 @@ def signin():
             user = session.query(User).filter_by(username=username).first()
             
             if not user or not user.check_password(password):
-                return jsonify({'error': 'Invalid username or password'}), 401
+                # Don't reveal whether user exists
+                return jsonify({'error': 'Invalid credentials'}), 401
             
             if user.is_banned():
                 return jsonify({'error': 'Account is banned'}), 403
@@ -46,7 +55,15 @@ def signin():
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
-    """User sign up endpoint"""
+    """User sign up endpoint - rate limited"""
+    from flask_limiter import Limiter
+    from flask import current_app
+    
+    # Apply rate limiting on sign-up to prevent spam
+    limiter = getattr(current_app, 'limiter', None)
+    if limiter:
+        limiter.limit("3 per hour")(lambda: None)()
+    
     data = request.get_json()
     
     if not data or not data.get('username') or not data.get('email') or not data.get('password'):
@@ -55,6 +72,13 @@ def signup():
     username = data['username']
     email = data['email']
     password = data['password']
+    
+    # Basic input validation
+    if len(username) < 3 or len(username) > 80:
+        return jsonify({'error': 'Username must be between 3 and 80 characters'}), 400
+    
+    if len(password) < 8:
+        return jsonify({'error': 'Password must be at least 8 characters'}), 400
     
     try:
         with db.get_db() as session:

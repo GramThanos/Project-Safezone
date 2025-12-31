@@ -6,6 +6,8 @@ import logging
 import redis
 from flask import Flask, jsonify
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Import routes
 from src.routes.auth import auth_bp
@@ -23,7 +25,45 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend requests
+
+# CORS Configuration - restrict to specific origins
+allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+CORS(app, 
+     origins=allowed_origins,
+     supports_credentials=True,
+     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+     allow_headers=['Content-Type', 'Authorization'])
+
+# Rate Limiting - using Redis as storage
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    storage_uri=f"redis://{os.getenv('REDIS_HOST', 'cache')}:{os.getenv('REDIS_PORT', '6379')}",
+    default_limits=["200 per day", "50 per hour"],
+    storage_options={"socket_connect_timeout": 30},
+    strategy="fixed-window"
+)
+
+# Security Headers Middleware
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses"""
+    # Prevent clickjacking
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Prevent MIME sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Enable XSS protection
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    # Content Security Policy
+    response.headers['Content-Security-Policy'] = "default-src 'self'"
+    # Strict Transport Security (HTTPS only)
+    if os.getenv('HTTPS_ENABLED', 'false').lower() == 'true':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    # Referrer Policy
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    # Permissions Policy
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    return response
 
 # Register blueprints
 app.register_blueprint(auth_bp)

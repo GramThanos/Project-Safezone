@@ -1,6 +1,7 @@
 """Authentication utilities"""
 import os
 import jwt
+import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import request, jsonify
@@ -8,24 +9,42 @@ from flask import request, jsonify
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 TOKEN_EXPIRY_HOURS = int(os.getenv('TOKEN_EXPIRY_HOURS', '24'))
+TOKEN_ISSUER = os.getenv('TOKEN_ISSUER', 'safezone-api')
+TOKEN_AUDIENCE = os.getenv('TOKEN_AUDIENCE', 'safezone-frontend')
 
 
 def generate_token(user_id, username, role):
-    """Generate JWT token for user"""
+    """Generate lightweight JWT token for user with security claims"""
     payload = {
         'user_id': user_id,
         'username': username,
         'role': role,
-        'exp': datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)
+        'exp': datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS),
+        'iat': datetime.utcnow(),  # Issued at
+        'iss': TOKEN_ISSUER,  # Issuer
+        'aud': TOKEN_AUDIENCE,  # Audience
+        'jti': str(uuid.uuid4())  # JWT ID for token revocation
     }
     token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
     return token
 
 
 def decode_token(token):
-    """Decode and verify JWT token"""
+    """Decode and verify JWT token with security validations"""
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        payload = jwt.decode(
+            token, 
+            SECRET_KEY, 
+            algorithms=['HS256'],
+            audience=TOKEN_AUDIENCE,
+            issuer=TOKEN_ISSUER,
+            options={
+                'verify_exp': True,
+                'verify_iat': True,
+                'verify_iss': True,
+                'verify_aud': True
+            }
+        )
         return payload
     except jwt.ExpiredSignatureError:
         return None
@@ -43,8 +62,12 @@ def token_required(f):
         if 'Authorization' in request.headers:
             auth_header = request.headers['Authorization']
             try:
-                token = auth_header.split(' ')[1]  # Bearer <token>
-            except IndexError:
+                # Expect format: Bearer <token>
+                parts = auth_header.split(' ')
+                if len(parts) != 2 or parts[0].lower() != 'bearer':
+                    return jsonify({'error': 'Invalid token format'}), 401
+                token = parts[1]
+            except (IndexError, AttributeError):
                 return jsonify({'error': 'Invalid token format'}), 401
         
         if not token:
@@ -54,6 +77,10 @@ def token_required(f):
         payload = decode_token(token)
         if not payload:
             return jsonify({'error': 'Token is invalid or expired'}), 401
+        
+        # Verify required claims
+        if not all(k in payload for k in ['user_id', 'username', 'role']):
+            return jsonify({'error': 'Invalid token payload'}), 401
         
         # Pass user info to the route
         return f(current_user=payload, *args, **kwargs)
