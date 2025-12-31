@@ -1,6 +1,15 @@
 // API service for backend communication
 const API_URL = process.env.REACT_APP_API_URL || '';
 
+// Helper function to handle API responses
+const handleResponse = async (response) => {
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Request failed');
+  }
+  return data;
+};
+
 export const api = {
   // Auth endpoints
   auth: {
@@ -10,7 +19,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
       });
-      return response.json();
+      return handleResponse(response);
     },
     signup: async (username, email, password) => {
       const response = await fetch(`${API_URL}/api/auth/signup`, {
@@ -18,13 +27,13 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password })
       });
-      return response.json();
+      return handleResponse(response);
     },
     me: async (token) => {
       const response = await fetch(`${API_URL}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      return response.json();
+      return handleResponse(response);
     }
   },
 
@@ -34,13 +43,13 @@ export const api = {
       const response = await fetch(`${API_URL}/api/players`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      return response.json();
+      return handleResponse(response);
     },
     get: async (token, id) => {
       const response = await fetch(`${API_URL}/api/players/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      return response.json();
+      return handleResponse(response);
     },
     create: async (token, data) => {
       const response = await fetch(`${API_URL}/api/players`, {
@@ -51,7 +60,7 @@ export const api = {
         },
         body: JSON.stringify(data)
       });
-      return response.json();
+      return handleResponse(response);
     },
     update: async (token, id, data) => {
       const response = await fetch(`${API_URL}/api/players/${id}`, {
@@ -62,14 +71,14 @@ export const api = {
         },
         body: JSON.stringify(data)
       });
-      return response.json();
+      return handleResponse(response);
     },
     delete: async (token, id) => {
       const response = await fetch(`${API_URL}/api/players/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      return response.json();
+      return handleResponse(response);
     }
   },
 
@@ -77,11 +86,11 @@ export const api = {
   servers: {
     getAll: async () => {
       const response = await fetch(`${API_URL}/api/servers`);
-      return response.json();
+      return handleResponse(response);
     },
     getStatus: async () => {
       const response = await fetch(`${API_URL}/api/servers/status`);
-      return response.json();
+      return handleResponse(response);
     }
   },
 
@@ -93,7 +102,7 @@ export const api = {
         const response = await fetch(url, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        return response.json();
+        return handleResponse(response);
       },
       updateRole: async (token, userId, role) => {
         const response = await fetch(`${API_URL}/api/admin/users/${userId}`, {
@@ -104,7 +113,7 @@ export const api = {
           },
           body: JSON.stringify({ role })
         });
-        return response.json();
+        return handleResponse(response);
       }
     },
     servers: {
@@ -112,7 +121,7 @@ export const api = {
         const response = await fetch(`${API_URL}/api/admin/servers`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        return response.json();
+        return handleResponse(response);
       },
       create: async (token, data) => {
         const response = await fetch(`${API_URL}/api/admin/servers`, {
@@ -123,7 +132,7 @@ export const api = {
           },
           body: JSON.stringify(data)
         });
-        return response.json();
+        return handleResponse(response);
       },
       update: async (token, id, data) => {
         const response = await fetch(`${API_URL}/api/admin/servers/${id}`, {
@@ -134,14 +143,14 @@ export const api = {
           },
           body: JSON.stringify(data)
         });
-        return response.json();
+        return handleResponse(response);
       },
       delete: async (token, id) => {
         const response = await fetch(`${API_URL}/api/admin/servers/${id}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        return response.json();
+        return handleResponse(response);
       }
     },
     tasks: {
@@ -149,7 +158,7 @@ export const api = {
         const response = await fetch(`${API_URL}/api/admin/tasks`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        return response.json();
+        return handleResponse(response);
       },
       create: async (token, data) => {
         const response = await fetch(`${API_URL}/api/admin/tasks`, {
@@ -160,7 +169,7 @@ export const api = {
           },
           body: JSON.stringify(data)
         });
-        return response.json();
+        return handleResponse(response);
       }
     }
   }

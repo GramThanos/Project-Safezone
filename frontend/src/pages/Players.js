@@ -131,8 +131,8 @@ function Players() {
                     <div 
                       className="avatar" 
                       style={{ 
-                        backgroundImage: player.avatar 
-                          ? `url(${player.avatar})` 
+                        backgroundImage: player.avatar && player.avatar.startsWith('http') 
+                          ? `url(${player.avatar.replace(/['"]/g, '')})` 
                           : "url('./assets/images/safezone-banner-1.png')" 
                       }}
                     ></div>

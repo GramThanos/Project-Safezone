@@ -73,6 +73,7 @@ class Player:
     
     def save(self, conn):
         """Save player to database"""
+        import json
         cursor = conn.cursor()
         if self.id:
             # Update existing player
@@ -81,14 +82,14 @@ class Player:
                 SET name = %s, description = %s, avatar = %s, stats = %s
                 WHERE id = %s
             ''', (self.name, self.description, self.avatar, 
-                  str(self.stats) if self.stats else '{}', self.id))
+                  json.dumps(self.stats) if self.stats else '{}', self.id))
         else:
             # Insert new player
             cursor.execute('''
                 INSERT INTO players (user_id, name, description, avatar, stats)
                 VALUES (%s, %s, %s, %s, %s)
             ''', (self.user_id, self.name, self.description, self.avatar,
-                  str(self.stats) if self.stats else '{}'))
+                  json.dumps(self.stats) if self.stats else '{}'))
             self.id = cursor.lastrowid
         conn.commit()
         return self
