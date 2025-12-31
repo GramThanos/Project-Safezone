@@ -1,0 +1,100 @@
+"""Authentication routes"""
+from flask import Blueprint, request, jsonify
+from src.database import db
+from src.models.user import User
+from src.middleware.auth import generate_token
+
+auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+
+
+@auth_bp.route('/signin', methods=['POST'])
+def signin():
+    """User sign in endpoint"""
+    data = request.get_json()
+    
+    if not data or not data.get('username') or not data.get('password'):
+        return jsonify({'error': 'Username and password required'}), 400
+    
+    username = data['username']
+    password = data['password']
+    
+    try:
+        with db.get_db() as conn:
+            user = User.find_by_username(conn, username)
+            
+            if not user or not user.check_password(password):
+                return jsonify({'error': 'Invalid username or password'}), 401
+            
+            if user.is_banned():
+                return jsonify({'error': 'Account is banned'}), 403
+            
+            # Generate token
+            token = generate_token(user.id, user.username, user.role)
+            
+            return jsonify({
+                'token': token,
+                'user': user.to_dict()
+            }), 200
+    
+    except Exception as e:
+        print(f"Sign in error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@auth_bp.route('/signup', methods=['POST'])
+def signup():
+    """User sign up endpoint"""
+    data = request.get_json()
+    
+    if not data or not data.get('username') or not data.get('email') or not data.get('password'):
+        return jsonify({'error': 'Username, email, and password required'}), 400
+    
+    username = data['username']
+    email = data['email']
+    password = data['password']
+    
+    try:
+        with db.get_db() as conn:
+            # Check if username or email already exists
+            if User.find_by_username(conn, username):
+                return jsonify({'error': 'Username already exists'}), 400
+            
+            if User.find_by_email(conn, email):
+                return jsonify({'error': 'Email already exists'}), 400
+            
+            # Create new user
+            user = User(username=username, email=email, role=User.ROLE_PLAYER)
+            user.set_password(password)
+            user.save(conn)
+            
+            # Generate token
+            token = generate_token(user.id, user.username, user.role)
+            
+            return jsonify({
+                'token': token,
+                'user': user.to_dict()
+            }), 201
+    
+    except Exception as e:
+        print(f"Sign up error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@auth_bp.route('/me', methods=['GET'])
+def get_current_user():
+    """Get current user info from token"""
+    from src.middleware.auth import token_required
+    
+    @token_required
+    def _get_user(current_user):
+        try:
+            with db.get_db() as conn:
+                user = User.find_by_id(conn, current_user['user_id'])
+                if user:
+                    return jsonify({'user': user.to_dict()}), 200
+                return jsonify({'error': 'User not found'}), 404
+        except Exception as e:
+            print(f"Get user error: {e}")
+            return jsonify({'error': 'Internal server error'}), 500
+    
+    return _get_user()
