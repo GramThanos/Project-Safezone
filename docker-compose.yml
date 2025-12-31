@@ -1,4 +1,4 @@
-name: safehouse
+name: safezone
 services:
   # Game Server and Manager
   game-server:
@@ -12,10 +12,10 @@ services:
       - CHECK_INTERVAL=30
       - STEAMCMD_PATH=/home/steam/steamcmd
       - DATABASE_HOST=db
-      - DATABASE_NAME=${DATABASE_NAME:-safehouse}
-      - DATABASE_USER=${DATABASE_USER:-safehouse}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safehouse}
-      - API_TOKEN=${API_TOKEN:-safehouse-api-token-change-me}
+      - DATABASE_NAME=${DATABASE_NAME:-safezone}
+      - DATABASE_USER=${DATABASE_USER:-safezone}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safezone}
+      - API_TOKEN=${API_TOKEN:-safezone-api-token-change-me}
       - PROCESS_INTERVAL=5
     depends_on:
       - db
@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     networks:
       - default
-      - safehouse_network
+      - safezone_network
 
   # Flask Backend API
   backend:
@@ -36,9 +36,9 @@ services:
     #  - "5000:5000"
     environment:
       - DATABASE_HOST=db
-      - DATABASE_NAME=${DATABASE_NAME:-safehouse}
-      - DATABASE_USER=${DATABASE_USER:-safehouse}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safehouse}
+      - DATABASE_NAME=${DATABASE_NAME:-safezone}
+      - DATABASE_USER=${DATABASE_USER:-safezone}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safezone}
       - REDIS_HOST=cache
       - REDIS_PORT=6379
     depends_on:
@@ -46,12 +46,12 @@ services:
       - cache
     restart: unless-stopped
     networks:
-      - safehouse_network
+      - safezone_network
 
   # React Frontend
   frontend:
     build: ./frontend
-    container_name: safehouse_frontend
+    container_name: safezone_frontend
     ports:
       - "8080:80"
     depends_on:
@@ -59,22 +59,22 @@ services:
     restart: unless-stopped
     networks:
       - default
-      - safehouse_network
+      - safezone_network
 
   # MariaDB Database
   db:
     image: mariadb:11
     container_name: db
     environment:
-      - MYSQL_DATABASE=${DATABASE_NAME:-safehouse}
-      - MYSQL_USER=${DATABASE_USER:-safehouse}
-      - MYSQL_PASSWORD=${DATABASE_PASSWORD:-safehouse}
-      - MYSQL_ROOT_PASSWORD=${DATABASE_ROOT_PASSWORD:-safehouse_root}
+      - MYSQL_DATABASE=${DATABASE_NAME:-safezone}
+      - MYSQL_USER=${DATABASE_USER:-safezone}
+      - MYSQL_PASSWORD=${DATABASE_PASSWORD:-safezone}
+      - MYSQL_ROOT_PASSWORD=${DATABASE_ROOT_PASSWORD:-safezone_root}
     volumes:
       - db_data:/var/lib/mysql
     restart: unless-stopped
     networks:
-      - safehouse_network
+      - safezone_network
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
@@ -87,7 +87,7 @@ services:
     container_name: cache
     restart: unless-stopped
     networks:
-      - safehouse_network
+      - safezone_network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -104,5 +104,5 @@ volumes:
 
 networks:
   default:
-  safehouse_network:
+  safezone_network:
     internal: true

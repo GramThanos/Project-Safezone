@@ -75,7 +75,7 @@ Optional query parameters:
 
 Example:
 ```bash
-curl -H "Authorization: Bearer safehouse-api-token-change-me" \
+curl -H "Authorization: Bearer safezone-api-token-change-me" \
   http://localhost:5001/api/tasks?status=pending&limit=10
 ```
 
@@ -86,7 +86,7 @@ GET /api/tasks/:id
 
 Example:
 ```bash
-curl -H "Authorization: Bearer safehouse-api-token-change-me" \
+curl -H "Authorization: Bearer safezone-api-token-change-me" \
   http://localhost:5001/api/tasks/1
 ```
 
@@ -107,7 +107,7 @@ Body (optional):
 Example:
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer safehouse-api-token-change-me" \
+  -H "Authorization: Bearer safezone-api-token-change-me" \
   -H "Content-Type: application/json" \
   -d '{"message": "My custom task"}' \
   http://localhost:5001/api/tasks
@@ -123,7 +123,7 @@ Note: Cannot delete tasks that are currently processing.
 Example:
 ```bash
 curl -X DELETE \
-  -H "Authorization: Bearer safehouse-api-token-change-me" \
+  -H "Authorization: Bearer safezone-api-token-change-me" \
   http://localhost:5001/api/tasks/1
 ```
 
@@ -137,7 +137,7 @@ Deletes all pending and completed tasks (not processing tasks).
 Example:
 ```bash
 curl -X DELETE \
-  -H "Authorization: Bearer safehouse-api-token-change-me" \
+  -H "Authorization: Bearer safezone-api-token-change-me" \
   http://localhost:5001/api/tasks
 ```
 
@@ -147,16 +147,16 @@ Environment variables:
 
 ### API Service
 - `DATABASE_HOST` - MariaDB host (default: db)
-- `DATABASE_NAME` - Database name (default: safehouse)
-- `DATABASE_USER` - Database user (default: safehouse)
-- `DATABASE_PASSWORD` - Database password (default: safehouse)
-- `API_TOKEN` - Authentication token (default: safehouse-api-token-change-me)
+- `DATABASE_NAME` - Database name (default: safezone)
+- `DATABASE_USER` - Database user (default: safezone)
+- `DATABASE_PASSWORD` - Database password (default: safezone)
+- `API_TOKEN` - Authentication token (default: safezone-api-token-change-me)
 
 ### Task Processor
 - `DATABASE_HOST` - MariaDB host (default: db)
-- `DATABASE_NAME` - Database name (default: safehouse)
-- `DATABASE_USER` - Database user (default: safehouse)
-- `DATABASE_PASSWORD` - Database password (default: safehouse)
+- `DATABASE_NAME` - Database name (default: safezone)
+- `DATABASE_USER` - Database user (default: safezone)
+- `DATABASE_PASSWORD` - Database password (default: safezone)
 - `PROCESS_INTERVAL` - Seconds between checks for pending tasks (default: 5)
 
 ## Database Schema
@@ -220,7 +220,7 @@ API_TOKEN=your-secure-random-token-here
 ### 1. Create Task
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer safehouse-api-token-change-me" \
+  -H "Authorization: Bearer safezone-api-token-change-me" \
   -H "Content-Type: application/json" \
   -d '{"message": "Process game data"}' \
   http://localhost:5001/api/tasks
@@ -240,7 +240,7 @@ Response:
 
 ### 2. Check Task Status (Pending)
 ```bash
-curl -H "Authorization: Bearer safehouse-api-token-change-me" \
+curl -H "Authorization: Bearer safezone-api-token-change-me" \
   http://localhost:5001/api/tasks/1
 ```
 
@@ -259,7 +259,7 @@ Response:
 
 ### 3. Check Task Status (Processing)
 ```bash
-curl -H "Authorization: Bearer safehouse-api-token-change-me" \
+curl -H "Authorization: Bearer safezone-api-token-change-me" \
   http://localhost:5001/api/tasks/1
 ```
 
@@ -283,7 +283,7 @@ Response:
 
 ### 4. Check Task Status (Completed)
 ```bash
-curl -H "Authorization: Bearer safehouse-api-token-change-me" \
+curl -H "Authorization: Bearer safezone-api-token-change-me" \
   http://localhost:5001/api/tasks/1
 ```
 

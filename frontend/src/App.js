@@ -52,7 +52,7 @@ function App() {
   return (
     <div className="container">
       <header>
-        <h1>🏠 Project Safehouse</h1>
+        <h1>🏠 Project Safezone</h1>
         <p className="subtitle">Project Zomboid Dedicated Server Manager</p>
       </header>
 

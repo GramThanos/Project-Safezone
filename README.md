@@ -1,9 +1,9 @@
-# Project-Safehouse
+# Project-Safezone
 A Project Zomboid dedicated server web manager with microservices architecture
 
 ## Overview
 
-Project Safehouse is a modern web application for managing Project Zomboid dedicated servers. It uses a microservices architecture with separate containers for each service.
+Project Safezone is a modern web application for managing Project Zomboid dedicated servers. It uses a microservices architecture with separate containers for each service.
 
 ## Architecture
 
@@ -32,8 +32,8 @@ The application is split into 5 separate containers:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/GramThanos/Project-Safehouse.git
-cd Project-Safehouse
+git clone https://github.com/GramThanos/Project-Safezone.git
+cd Project-Safezone
 ```
 
 2. (Optional) Create and configure environment variables:
@@ -184,9 +184,9 @@ docker exec game_server tail -f /var/log/supervisor/task_processor.out.log
 Environment variables can be set in `.env` or `docker-compose.yml`:
 
 - `DATABASE_HOST`: MariaDB host (default: db)
-- `DATABASE_NAME`: Database name (default: safehouse)
-- `DATABASE_USER`: Database user (default: safehouse)
-- `DATABASE_PASSWORD`: Database password (default: safehouse) - **Change in production!**
+- `DATABASE_NAME`: Database name (default: safezone)
+- `DATABASE_USER`: Database user (default: safezone)
+- `DATABASE_PASSWORD`: Database password (default: safezone) - **Change in production!**
 - `DATABASE_ROOT_PASSWORD`: MariaDB root password - **Change in production!**
 - `REDIS_HOST`: Redis host (default: cache)
 - `REDIS_PORT`: Redis port (default: 6379)

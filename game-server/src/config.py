@@ -3,7 +3,7 @@
 import os
 
 # Database Configuration
-DATABASE_URL = os.getenv('DATABASE_URL', 'mysql+pymysql://safehouse:safehouse@db/safehouse')
+DATABASE_URL = os.getenv('DATABASE_URL', 'mysql+pymysql://safezone:safezone@db/safezone')
 DATABASE_POOL_SIZE = int(os.getenv('DATABASE_POOL_SIZE', '64'))
 
 # Cache Configuration

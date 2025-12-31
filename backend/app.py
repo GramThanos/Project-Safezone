@@ -1,5 +1,5 @@
 """
-Flask API backend for Project Safehouse - Project Zomboid Server Manager
+Flask API backend for Project Safezone - Project Zomboid Server Manager
 """
 import os
 from flask import Flask, jsonify
@@ -12,9 +12,9 @@ CORS(app)  # Enable CORS for frontend requests
 
 # Configuration from environment variables
 app.config['DATABASE_HOST'] = os.getenv('DATABASE_HOST', 'db')
-app.config['DATABASE_NAME'] = os.getenv('DATABASE_NAME', 'safehouse')
-app.config['DATABASE_USER'] = os.getenv('DATABASE_USER', 'safehouse')
-app.config['DATABASE_PASSWORD'] = os.getenv('DATABASE_PASSWORD', 'safehouse')
+app.config['DATABASE_NAME'] = os.getenv('DATABASE_NAME', 'safezone')
+app.config['DATABASE_USER'] = os.getenv('DATABASE_USER', 'safezone')
+app.config['DATABASE_PASSWORD'] = os.getenv('DATABASE_PASSWORD', 'safezone')
 app.config['REDIS_HOST'] = os.getenv('REDIS_HOST', 'cache')
 app.config['REDIS_PORT'] = int(os.getenv('REDIS_PORT', '6379'))
 
@@ -52,7 +52,7 @@ def get_redis_connection():
 def index():
     """API root endpoint"""
     return jsonify({
-        'name': 'Project Safehouse API',
+        'name': 'Project Safezone API',
         'version': '1.0.0',
         'endpoints': {
             'health': '/health',
