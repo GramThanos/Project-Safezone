@@ -29,15 +29,3 @@ MANAGE_GAME_SERVERS_CHANNEL = os.getenv('MANAGE_GAME_SERVERS_CHANNEL', 'game_ser
 
 # Manager for Tasks Configuration
 MANAGE_TASKS_CHANNEL = os.getenv('MANAGE_TASKS_CHANNEL', 'task_manage')
-
-'''
-# Events
-EVENTS_CHANNEL = 'events_channel'
-
-# Task Processing Configuration
-PROCESS_INTERVAL = int(os.getenv('PROCESS_INTERVAL', '5'))  # seconds
-
-# Monitoring Configuration (for manager.py)
-CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '30'))  # seconds
-STEAMCMD_PATH = os.getenv('STEAMCMD_PATH', '/home/steam/steamcmd')
-'''
