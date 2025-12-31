@@ -1,7 +1,10 @@
 """Database configuration and connection management"""
 import os
+import logging
 import mysql.connector
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -22,7 +25,7 @@ class Database:
             conn = mysql.connector.connect(**self.config)
             return conn
         except Exception as e:
-            print(f"Database connection error: {e}")
+            logger.error(f"Database connection error: {e}")
             raise
     
     @contextmanager
@@ -42,7 +45,7 @@ class Database:
             User.create_table(conn)
             Player.create_table(conn)
             Server.create_table(conn)
-            print("Database tables initialized successfully")
+            logger.info("Database tables initialized successfully")
 
 
 # Global database instance

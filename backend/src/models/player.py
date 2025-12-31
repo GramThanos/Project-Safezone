@@ -1,5 +1,6 @@
 """Player (game character) model"""
 from datetime import datetime
+import json
 
 
 class Player:
@@ -73,40 +74,48 @@ class Player:
     
     def save(self, conn):
         """Save player to database"""
-        import json
         cursor = conn.cursor()
-        if self.id:
-            # Update existing player
-            cursor.execute('''
-                UPDATE players 
-                SET name = %s, description = %s, avatar = %s, stats = %s
-                WHERE id = %s
-            ''', (self.name, self.description, self.avatar, 
-                  json.dumps(self.stats) if self.stats else '{}', self.id))
-        else:
-            # Insert new player
-            cursor.execute('''
-                INSERT INTO players (user_id, name, description, avatar, stats)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (self.user_id, self.name, self.description, self.avatar,
-                  json.dumps(self.stats) if self.stats else '{}'))
-            self.id = cursor.lastrowid
-        conn.commit()
-        return self
+        try:
+            if self.id:
+                # Update existing player
+                cursor.execute('''
+                    UPDATE players 
+                    SET name = %s, description = %s, avatar = %s, stats = %s
+                    WHERE id = %s
+                ''', (self.name, self.description, self.avatar, 
+                      json.dumps(self.stats) if self.stats else '{}', self.id))
+            else:
+                # Insert new player
+                cursor.execute('''
+                    INSERT INTO players (user_id, name, description, avatar, stats)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (self.user_id, self.name, self.description, self.avatar,
+                      json.dumps(self.stats) if self.stats else '{}'))
+                self.id = cursor.lastrowid
+            conn.commit()
+            return self
+        finally:
+            cursor.close()
     
     def delete(self, conn):
         """Delete player from database"""
         if self.id:
             cursor = conn.cursor()
-            cursor.execute('DELETE FROM players WHERE id = %s', (self.id,))
-            conn.commit()
-            return True
+            try:
+                cursor.execute('DELETE FROM players WHERE id = %s', (self.id,))
+                conn.commit()
+                return True
+            finally:
+                cursor.close()
         return False
     
     @staticmethod
     def get_all(conn, limit=100, offset=0):
         """Get all players"""
         cursor = conn.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM players LIMIT %s OFFSET %s', (limit, offset))
-        rows = cursor.fetchall()
-        return [Player(**row) for row in rows]
+        try:
+            cursor.execute('SELECT * FROM players LIMIT %s OFFSET %s', (limit, offset))
+            rows = cursor.fetchall()
+            return [Player(**row) for row in rows]
+        finally:
+            cursor.close()

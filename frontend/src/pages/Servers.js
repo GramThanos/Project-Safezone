@@ -12,6 +12,7 @@ function Servers() {
     // Refresh every 30 seconds
     const interval = setInterval(loadServers, 30000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadServers = async () => {

@@ -1,9 +1,11 @@
 """Authentication routes"""
+import logging
 from flask import Blueprint, request, jsonify
 from src.database import db
 from src.models.user import User
 from src.middleware.auth import generate_token
 
+logger = logging.getLogger(__name__)
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
 
@@ -37,7 +39,7 @@ def signin():
             }), 200
     
     except Exception as e:
-        print(f"Sign in error: {e}")
+        logger.error(f"Sign in error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -76,7 +78,7 @@ def signup():
             }), 201
     
     except Exception as e:
-        print(f"Sign up error: {e}")
+        logger.error(f"Sign up error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -94,7 +96,7 @@ def get_current_user():
                     return jsonify({'user': user.to_dict()}), 200
                 return jsonify({'error': 'User not found'}), 404
         except Exception as e:
-            print(f"Get user error: {e}")
+            logger.error(f"Get user error: {e}")
             return jsonify({'error': 'Internal server error'}), 500
     
     return _get_user()

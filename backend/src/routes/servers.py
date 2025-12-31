@@ -1,10 +1,12 @@
 """Server status routes"""
+import logging
 from flask import Blueprint, jsonify
 from src.database import db
 from src.models.server import Server
 import redis
 import os
 
+logger = logging.getLogger(__name__)
 servers_bp = Blueprint('servers', __name__, url_prefix='/api/servers')
 
 
@@ -18,7 +20,7 @@ def get_redis_connection():
         )
         return r
     except Exception as e:
-        print(f"Redis connection error: {e}")
+        logger.error(f"Redis connection error: {e}")
         return None
 
 
@@ -32,7 +34,7 @@ def get_all_servers():
                 'servers': [s.to_dict() for s in servers]
             }), 200
     except Exception as e:
-        print(f"Get servers error: {e}")
+        logger.error(f"Get servers error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -48,7 +50,7 @@ def get_server(server_id):
             
             return jsonify({'server': server.to_dict()}), 200
     except Exception as e:
-        print(f"Get server error: {e}")
+        logger.error(f"Get server error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -82,7 +84,7 @@ def get_servers_status():
                         if cached_day:
                             server_dict['game_day'] = int(cached_day)
                     except Exception as e:
-                        print(f"Redis cache read error: {e}")
+                        logger.error(f"Redis cache read error: {e}")
                 
                 servers_data.append(server_dict)
             
@@ -90,5 +92,5 @@ def get_servers_status():
                 'servers': servers_data
             }), 200
     except Exception as e:
-        print(f"Get servers status error: {e}")
+        logger.error(f"Get servers status error: {e}")
         return jsonify({'error': 'Internal server error'}), 500

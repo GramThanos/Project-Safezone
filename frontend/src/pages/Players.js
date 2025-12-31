@@ -18,6 +18,7 @@ function Players() {
 
   useEffect(() => {
     loadPlayers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadPlayers = async () => {

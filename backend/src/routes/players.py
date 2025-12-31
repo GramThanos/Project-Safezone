@@ -1,9 +1,11 @@
 """Player management routes"""
+import logging
 from flask import Blueprint, request, jsonify
 from src.database import db
 from src.models.player import Player
 from src.middleware.auth import token_required
 
+logger = logging.getLogger(__name__)
 players_bp = Blueprint('players', __name__, url_prefix='/api/players')
 
 
@@ -18,7 +20,7 @@ def get_players(current_user):
                 'players': [p.to_dict() for p in players]
             }), 200
     except Exception as e:
-        print(f"Get players error: {e}")
+        logger.error(f"Get players error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -39,7 +41,7 @@ def get_player(current_user, player_id):
             
             return jsonify({'player': player.to_dict()}), 200
     except Exception as e:
-        print(f"Get player error: {e}")
+        logger.error(f"Get player error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -68,7 +70,7 @@ def create_player(current_user):
                 'player': player.to_dict()
             }), 201
     except Exception as e:
-        print(f"Create player error: {e}")
+        logger.error(f"Create player error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -106,7 +108,7 @@ def update_player(current_user, player_id):
                 'player': player.to_dict()
             }), 200
     except Exception as e:
-        print(f"Update player error: {e}")
+        logger.error(f"Update player error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -129,5 +131,5 @@ def delete_player(current_user, player_id):
             
             return jsonify({'message': 'Player deleted successfully'}), 200
     except Exception as e:
-        print(f"Delete player error: {e}")
+        logger.error(f"Delete player error: {e}")
         return jsonify({'error': 'Internal server error'}), 500

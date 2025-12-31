@@ -107,33 +107,39 @@ class User:
     def save(self, conn):
         """Save user to database"""
         cursor = conn.cursor()
-        if self.id:
-            # Update existing user
-            cursor.execute('''
-                UPDATE users 
-                SET username = %s, email = %s, password_hash = %s, role = %s
-                WHERE id = %s
-            ''', (self.username, self.email, self.password_hash, self.role, self.id))
-        else:
-            # Insert new user
-            cursor.execute('''
-                INSERT INTO users (username, email, password_hash, role)
-                VALUES (%s, %s, %s, %s)
-            ''', (self.username, self.email, self.password_hash, self.role))
-            self.id = cursor.lastrowid
-        conn.commit()
-        return self
+        try:
+            if self.id:
+                # Update existing user
+                cursor.execute('''
+                    UPDATE users 
+                    SET username = %s, email = %s, password_hash = %s, role = %s
+                    WHERE id = %s
+                ''', (self.username, self.email, self.password_hash, self.role, self.id))
+            else:
+                # Insert new user
+                cursor.execute('''
+                    INSERT INTO users (username, email, password_hash, role)
+                    VALUES (%s, %s, %s, %s)
+                ''', (self.username, self.email, self.password_hash, self.role))
+                self.id = cursor.lastrowid
+            conn.commit()
+            return self
+        finally:
+            cursor.close()
     
     @staticmethod
     def get_all(conn, role=None, limit=100, offset=0):
         """Get all users with optional role filter"""
         cursor = conn.cursor(dictionary=True)
-        if role:
-            cursor.execute(
-                'SELECT * FROM users WHERE role = %s LIMIT %s OFFSET %s',
-                (role, limit, offset)
-            )
-        else:
-            cursor.execute('SELECT * FROM users LIMIT %s OFFSET %s', (limit, offset))
-        rows = cursor.fetchall()
-        return [User(**row) for row in rows]
+        try:
+            if role:
+                cursor.execute(
+                    'SELECT * FROM users WHERE role = %s LIMIT %s OFFSET %s',
+                    (role, limit, offset)
+                )
+            else:
+                cursor.execute('SELECT * FROM users LIMIT %s OFFSET %s', (limit, offset))
+            rows = cursor.fetchall()
+            return [User(**row) for row in rows]
+        finally:
+            cursor.close()

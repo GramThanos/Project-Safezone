@@ -88,49 +88,59 @@ class Server:
     def save(self, conn):
         """Save server to database"""
         cursor = conn.cursor()
-        if self.id:
-            # Update existing server
-            cursor.execute('''
-                UPDATE servers 
-                SET name = %s, host = %s, port = %s, rcon_port = %s, 
-                    rcon_password = %s, status = %s, active_players = %s,
-                    max_players = %s, game_day = %s
-                WHERE id = %s
-            ''', (self.name, self.host, self.port, self.rcon_port,
-                  self.rcon_password, self.status, self.active_players,
-                  self.max_players, self.game_day, self.id))
-        else:
-            # Insert new server
-            cursor.execute('''
-                INSERT INTO servers (name, host, port, rcon_port, rcon_password,
-                                   status, active_players, max_players, game_day)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (self.name, self.host, self.port, self.rcon_port,
-                  self.rcon_password, self.status, self.active_players,
-                  self.max_players, self.game_day))
-            self.id = cursor.lastrowid
-        conn.commit()
-        return self
+        try:
+            if self.id:
+                # Update existing server
+                cursor.execute('''
+                    UPDATE servers 
+                    SET name = %s, host = %s, port = %s, rcon_port = %s, 
+                        rcon_password = %s, status = %s, active_players = %s,
+                        max_players = %s, game_day = %s
+                    WHERE id = %s
+                ''', (self.name, self.host, self.port, self.rcon_port,
+                      self.rcon_password, self.status, self.active_players,
+                      self.max_players, self.game_day, self.id))
+            else:
+                # Insert new server
+                cursor.execute('''
+                    INSERT INTO servers (name, host, port, rcon_port, rcon_password,
+                                       status, active_players, max_players, game_day)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (self.name, self.host, self.port, self.rcon_port,
+                      self.rcon_password, self.status, self.active_players,
+                      self.max_players, self.game_day))
+                self.id = cursor.lastrowid
+            conn.commit()
+            return self
+        finally:
+            cursor.close()
     
     def delete(self, conn):
         """Delete server from database"""
         if self.id:
             cursor = conn.cursor()
-            cursor.execute('DELETE FROM servers WHERE id = %s', (self.id,))
-            conn.commit()
-            return True
+            try:
+                cursor.execute('DELETE FROM servers WHERE id = %s', (self.id,))
+                conn.commit()
+                return True
+            finally:
+                cursor.close()
         return False
     
     @staticmethod
     def get_all(conn, status=None, limit=100, offset=0):
         """Get all servers with optional status filter"""
         cursor = conn.cursor(dictionary=True)
-        if status:
-            cursor.execute(
-                'SELECT * FROM servers WHERE status = %s LIMIT %s OFFSET %s',
-                (status, limit, offset)
-            )
-        else:
-            cursor.execute('SELECT * FROM servers LIMIT %s OFFSET %s', (limit, offset))
-        rows = cursor.fetchall()
+        try:
+            if status:
+                cursor.execute(
+                    'SELECT * FROM servers WHERE status = %s LIMIT %s OFFSET %s',
+                    (status, limit, offset)
+                )
+            else:
+                cursor.execute('SELECT * FROM servers LIMIT %s OFFSET %s', (limit, offset))
+            rows = cursor.fetchall()
+            return [Server(**row) for row in rows]
+        finally:
+            cursor.close()
         return [Server(**row) for row in rows]

@@ -2,6 +2,7 @@
 Flask API backend for Project Safezone - Project Zomboid Server Manager
 """
 import os
+import logging
 from flask import Flask, jsonify
 from flask_cors import CORS
 import redis
@@ -12,6 +13,13 @@ from src.routes.players import players_bp
 from src.routes.servers import servers_bp
 from src.routes.admin import admin_bp
 from src.database import db
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend requests
@@ -31,18 +39,23 @@ app.register_blueprint(players_bp)
 app.register_blueprint(servers_bp)
 app.register_blueprint(admin_bp)
 
+# Redis connection pool for better performance
+_redis_pool = None
 
 def get_redis_connection():
-    """Get Redis connection"""
+    """Get Redis connection from pool"""
+    global _redis_pool
     try:
-        r = redis.Redis(
-            host=app.config['REDIS_HOST'],
-            port=app.config['REDIS_PORT'],
-            decode_responses=True
-        )
-        return r
+        if _redis_pool is None:
+            _redis_pool = redis.ConnectionPool(
+                host=app.config['REDIS_HOST'],
+                port=app.config['REDIS_PORT'],
+                decode_responses=True,
+                max_connections=10
+            )
+        return redis.Redis(connection_pool=_redis_pool)
     except Exception as e:
-        print(f"Redis connection error: {e}")
+        logger.error(f"Redis connection error: {e}")
         return None
 
 
@@ -84,11 +97,14 @@ def health():
     try:
         with db.get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT 1')
-            cursor.fetchone()
-            status['database'] = 'connected'
+            try:
+                cursor.execute('SELECT 1')
+                cursor.fetchone()
+                status['database'] = 'connected'
+            finally:
+                cursor.close()
     except Exception as e:
-        print(f"Database health check error: {e}")
+        logger.error(f"Database health check error: {e}")
         status['database'] = 'disconnected'
     
     # Check Redis
@@ -102,7 +118,7 @@ def health():
             if game_status:
                 status['game_server'] = game_status
         except redis.RedisError as e:
-            print(f"Redis error in health check: {e}")
+            logger.error(f"Redis error in health check: {e}")
             pass
     
     return jsonify(status)
@@ -113,7 +129,7 @@ if __name__ == '__main__':
     try:
         db.init_db()
     except Exception as e:
-        print(f"Database initialization error: {e}")
+        logger.error(f"Database initialization error: {e}")
     
     debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     app.run(host='0.0.0.0', port=5000, debug=debug_mode)

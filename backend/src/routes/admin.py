@@ -1,4 +1,5 @@
 """Admin panel routes"""
+import logging
 from flask import Blueprint, request, jsonify
 from src.database import db
 from src.models.user import User
@@ -7,6 +8,7 @@ from src.middleware.auth import moderator_required, admin_required
 import requests
 import os
 
+logger = logging.getLogger(__name__)
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
 
@@ -25,7 +27,7 @@ def get_users(current_user):
                 'users': [u.to_dict() for u in users]
             }), 200
     except Exception as e:
-        print(f"Get users error: {e}")
+        logger.error(f"Get users error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -56,7 +58,7 @@ def update_user_role(current_user, user_id):
                 'user': user.to_dict()
             }), 200
     except Exception as e:
-        print(f"Update user role error: {e}")
+        logger.error(f"Update user role error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -75,7 +77,7 @@ def get_servers(current_user):
                 'servers': [s.to_dict() for s in servers]
             }), 200
     except Exception as e:
-        print(f"Get servers error: {e}")
+        logger.error(f"Get servers error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -105,7 +107,7 @@ def create_server(current_user):
                 'server': server.to_dict()
             }), 201
     except Exception as e:
-        print(f"Create server error: {e}")
+        logger.error(f"Create server error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -143,7 +145,7 @@ def update_server(current_user, server_id):
                 'server': server.to_dict(include_sensitive=True)
             }), 200
     except Exception as e:
-        print(f"Update server error: {e}")
+        logger.error(f"Update server error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -162,7 +164,7 @@ def delete_server(current_user, server_id):
             
             return jsonify({'message': 'Server deleted successfully'}), 200
     except Exception as e:
-        print(f"Delete server error: {e}")
+        logger.error(f"Delete server error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -184,7 +186,7 @@ def get_tasks(current_user):
         else:
             return jsonify({'error': 'Failed to fetch tasks'}), response.status_code
     except Exception as e:
-        print(f"Get tasks error: {e}")
+        logger.error(f"Get tasks error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -208,5 +210,5 @@ def create_task(current_user):
         else:
             return jsonify({'error': 'Failed to create task'}), response.status_code
     except Exception as e:
-        print(f"Create task error: {e}")
+        logger.error(f"Create task error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
