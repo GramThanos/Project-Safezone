@@ -108,17 +108,6 @@ def health():
     return jsonify(status)
 
 
-# Initialize database tables on startup
-@app.before_first_request
-def initialize_database():
-    """Initialize database tables"""
-    try:
-        db.init_db()
-        print("Database initialized successfully")
-    except Exception as e:
-        print(f"Database initialization error: {e}")
-
-
 if __name__ == '__main__':
     # Initialize database
     try:
