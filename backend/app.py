@@ -34,6 +34,10 @@ configure_app(app)
 # Initialize database with app configuration
 db.init_app(app)
 
+# Initialize Redis connection pool
+from src.utils.redis_utils import init_redis_pool
+init_redis_pool(app)
+
 # CORS Configuration - restrict to specific origins
 CORS(app, 
      origins=app.config['ALLOWED_ORIGINS'],

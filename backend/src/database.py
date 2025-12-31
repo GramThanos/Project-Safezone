@@ -15,6 +15,7 @@ class Database:
     """Database connection manager using SQLAlchemy"""
     
     def __init__(self):
+        # These will be initialized in init_app() when Flask app is available
         self.engine = None
         self.session_factory = None
         self.Session = None

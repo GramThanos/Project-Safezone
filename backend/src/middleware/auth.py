@@ -7,7 +7,10 @@ from flask import request, jsonify, current_app
 
 
 def generate_token(user_id, username, role):
-    """Generate lightweight JWT token for user with security claims"""
+    """
+    Generate lightweight JWT token for user with security claims.
+    Must be called within Flask application context (e.g., request handler).
+    """
     payload = {
         'user_id': user_id,
         'username': username,
@@ -23,7 +26,10 @@ def generate_token(user_id, username, role):
 
 
 def decode_token(token):
-    """Decode and verify JWT token with security validations"""
+    """
+    Decode and verify JWT token with security validations.
+    Must be called within Flask application context (e.g., request handler).
+    """
     try:
         payload = jwt.decode(
             token, 
