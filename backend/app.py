@@ -1,13 +1,15 @@
 """
 Flask API backend for Project Safezone - Project Zomboid Server Manager
 """
-import os
 import logging
 import redis
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+
+# Import configuration
+from src.config import configure_app
 
 # Import routes
 from src.routes.auth import auth_bp
@@ -26,10 +28,15 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Apply centralized configuration
+configure_app(app)
+
+# Initialize database with app configuration
+db.init_app(app)
+
 # CORS Configuration - restrict to specific origins
-allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
 CORS(app, 
-     origins=allowed_origins,
+     origins=app.config['ALLOWED_ORIGINS'],
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
      allow_headers=['Content-Type', 'Authorization'])
@@ -38,8 +45,8 @@ CORS(app,
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    storage_uri=f"redis://{os.getenv('REDIS_HOST', 'cache')}:{os.getenv('REDIS_PORT', '6379')}",
-    default_limits=["200 per day", "50 per hour"],
+    storage_uri=app.config['RATELIMIT_STORAGE_URI'],
+    default_limits=app.config['RATELIMIT_DEFAULT_LIMITS'],
     storage_options={"socket_connect_timeout": 30},
     strategy="fixed-window"
 )
@@ -57,7 +64,7 @@ def add_security_headers(response):
     # Content Security Policy
     response.headers['Content-Security-Policy'] = "default-src 'self'"
     # Strict Transport Security (HTTPS only)
-    if os.getenv('HTTPS_ENABLED', 'false').lower() == 'true':
+    if app.config['HTTPS_ENABLED']:
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     # Referrer Policy
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
@@ -144,5 +151,4 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
     
-    debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
+    app.run(host='0.0.0.0', port=5000, debug=app.config['FLASK_DEBUG'])

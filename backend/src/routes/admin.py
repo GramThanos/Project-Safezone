@@ -1,12 +1,11 @@
 """Admin panel routes with SQLAlchemy"""
 import logging
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from src.database import db
 from src.models.user import User
 from src.models.server import Server
 from src.middleware.auth import moderator_required, admin_required
 import requests
-import os
 
 logger = logging.getLogger(__name__)
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -181,8 +180,8 @@ def delete_server(current_user, server_id):
 def get_tasks(current_user):
     """Get all tasks from game server (moderator/admin only)"""
     try:
-        api_url = os.getenv('GAME_SERVER_API_URL', 'http://game-server:5001')
-        api_token = os.getenv('API_TOKEN', '')
+        api_url = current_app.config['GAME_SERVER_API_URL']
+        api_token = current_app.config['API_TOKEN']
         
         response = requests.get(
             f'{api_url}/api/tasks',
@@ -214,8 +213,8 @@ def create_task(current_user):
         return jsonify({'error': 'Task action is required'}), 400
     
     try:
-        api_url = os.getenv('GAME_SERVER_API_URL', 'http://game-server:5001')
-        api_token = os.getenv('API_TOKEN', '')
+        api_url = current_app.config['GAME_SERVER_API_URL']
+        api_token = current_app.config['API_TOKEN']
         
         response = requests.post(
             f'{api_url}/api/tasks',

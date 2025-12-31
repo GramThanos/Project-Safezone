@@ -14,6 +14,7 @@ backend/
 ├── init_db.py            # Database initialization script
 ├── requirements.txt      # Python dependencies (SQLAlchemy, PyMySQL)
 └── src/
+    ├── config.py         # Centralized configuration (single source of truth)
     ├── database.py       # SQLAlchemy database configuration and session management
     ├── models/           # SQLAlchemy ORM models
     │   ├── user.py       # User model
@@ -29,6 +30,19 @@ backend/
     └── utils/            # Utility modules
         └── redis_utils.py # Redis connection pooling
 ```
+
+## Configuration
+
+All application configuration is centralized in `src/config.py`. This provides a single source of truth for all environment variables and their default values. The configuration is loaded into Flask's `app.config` at startup and accessed throughout the application using `current_app.config`.
+
+**Key Configuration Values:**
+- Database connection settings (host, name, user, password)
+- JWT token settings (secret key, expiry, issuer, audience)
+- Redis connection settings (host, port)
+- CORS allowed origins
+- Security settings (HTTPS enabled)
+- Game server API URL and token
+- Rate limiting configuration
 
 ## Technology Stack
 

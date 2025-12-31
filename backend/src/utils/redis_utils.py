@@ -1,7 +1,7 @@
 """Redis connection utilities"""
-import os
 import logging
 import redis
+from flask import current_app
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +15,8 @@ def get_redis_connection():
     try:
         if _redis_pool is None:
             _redis_pool = redis.ConnectionPool(
-                host=os.getenv('REDIS_HOST', 'cache'),
-                port=int(os.getenv('REDIS_PORT', '6379')),
+                host=current_app.config['REDIS_HOST'],
+                port=current_app.config['REDIS_PORT'],
                 decode_responses=True,
                 max_connections=10
             )

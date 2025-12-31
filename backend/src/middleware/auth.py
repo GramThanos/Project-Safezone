@@ -1,16 +1,9 @@
 """Authentication utilities"""
-import os
 import jwt
 import uuid
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import request, jsonify
-
-
-SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-TOKEN_EXPIRY_HOURS = int(os.getenv('TOKEN_EXPIRY_HOURS', '24'))
-TOKEN_ISSUER = os.getenv('TOKEN_ISSUER', 'safezone-api')
-TOKEN_AUDIENCE = os.getenv('TOKEN_AUDIENCE', 'safezone-frontend')
+from flask import request, jsonify, current_app
 
 
 def generate_token(user_id, username, role):
@@ -19,13 +12,13 @@ def generate_token(user_id, username, role):
         'user_id': user_id,
         'username': username,
         'role': role,
-        'exp': datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS),
+        'exp': datetime.utcnow() + timedelta(hours=current_app.config['TOKEN_EXPIRY_HOURS']),
         'iat': datetime.utcnow(),  # Issued at
-        'iss': TOKEN_ISSUER,  # Issuer
-        'aud': TOKEN_AUDIENCE,  # Audience
+        'iss': current_app.config['TOKEN_ISSUER'],  # Issuer
+        'aud': current_app.config['TOKEN_AUDIENCE'],  # Audience
         'jti': str(uuid.uuid4())  # JWT ID for token revocation
     }
-    token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+    token = jwt.encode(payload, current_app.config['SECRET_KEY'], algorithm='HS256')
     return token
 
 
@@ -34,10 +27,10 @@ def decode_token(token):
     try:
         payload = jwt.decode(
             token, 
-            SECRET_KEY, 
+            current_app.config['SECRET_KEY'], 
             algorithms=['HS256'],
-            audience=TOKEN_AUDIENCE,
-            issuer=TOKEN_ISSUER,
+            audience=current_app.config['TOKEN_AUDIENCE'],
+            issuer=current_app.config['TOKEN_ISSUER'],
             options={
                 'verify_exp': True,
                 'verify_iat': True,

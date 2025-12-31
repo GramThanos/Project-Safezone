@@ -1,9 +1,9 @@
 """Database configuration and connection management with SQLAlchemy"""
-import os
 import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session, declarative_base
 from contextlib import contextmanager
+from flask import current_app
 
 logger = logging.getLogger(__name__)
 
@@ -15,20 +15,21 @@ class Database:
     """Database connection manager using SQLAlchemy"""
     
     def __init__(self):
-        # Build database URL
-        host = os.getenv('DATABASE_HOST', 'db')
-        database = os.getenv('DATABASE_NAME', 'safezone')
-        user = os.getenv('DATABASE_USER', 'safezone')
-        password = os.getenv('DATABASE_PASSWORD', 'safezone')
-        
-        self.database_url = f"mysql+pymysql://{user}:{password}@{host}/{database}"
+        self.engine = None
+        self.session_factory = None
+        self.Session = None
+    
+    def init_app(self, app):
+        """Initialize database with Flask app configuration"""
+        # Build database URL from Flask config
+        self.database_url = app.config['SQLALCHEMY_DATABASE_URI']
         
         # Create engine with connection pooling
         self.engine = create_engine(
             self.database_url,
-            pool_pre_ping=True,  # Verify connections before using
-            pool_recycle=3600,   # Recycle connections after 1 hour
-            echo=False           # Set to True for SQL logging during development
+            pool_pre_ping=app.config['SQLALCHEMY_POOL_PRE_PING'],
+            pool_recycle=app.config['SQLALCHEMY_POOL_RECYCLE'],
+            echo=app.config['SQLALCHEMY_ECHO']
         )
         
         # Create session factory

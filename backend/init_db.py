@@ -5,8 +5,17 @@ Creates tables and optionally seeds with an admin user
 Run this from the backend directory: python -m init_db
 """
 import sys
+from flask import Flask
+from src.config import configure_app
 from src.database import db
 from src.models.user import User
+
+def create_app():
+    """Create Flask app for database initialization"""
+    app = Flask(__name__)
+    configure_app(app)
+    db.init_app(app)
+    return app
 
 def init_database():
     """Initialize database tables"""
@@ -55,13 +64,18 @@ if __name__ == '__main__':
     print("Project Safezone - Database Initialization")
     print("=" * 60)
     
-    # Initialize database
-    if not init_database():
-        sys.exit(1)
+    # Create Flask app with configuration
+    app = create_app()
     
-    # Create admin user
-    if not create_admin_user():
-        sys.exit(1)
+    # Run database operations within app context
+    with app.app_context():
+        # Initialize database
+        if not init_database():
+            sys.exit(1)
+        
+        # Create admin user
+        if not create_admin_user():
+            sys.exit(1)
     
     print("\n" + "=" * 60)
     print("Database initialization complete!")
