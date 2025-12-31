@@ -41,6 +41,10 @@ services:
       - DATABASE_PASSWORD=${DATABASE_PASSWORD:-safezone}
       - REDIS_HOST=cache
       - REDIS_PORT=6379
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - TOKEN_EXPIRY_HOURS=${TOKEN_EXPIRY_HOURS:-24}
+      - GAME_SERVER_API_URL=http://game-server:5001
+      - API_TOKEN=${API_TOKEN:-safezone-api-token-change-me}
     depends_on:
       - db
       - cache
