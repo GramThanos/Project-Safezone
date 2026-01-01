@@ -1,8 +1,0 @@
-vdf
-redis==5.0.8
-Flask==3.0.0
-Flask-CORS==4.0.0
-SQLAlchemy==2.0.23
-PyMySQL==1.1.0
-gunicorn==21.2.0
-supervisor==4.2.5

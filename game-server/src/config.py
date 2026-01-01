@@ -7,8 +7,7 @@ DATABASE_URL = os.getenv('DATABASE_URL', 'mysql+pymysql://safezone:safezone@db/s
 DATABASE_POOL_SIZE = int(os.getenv('DATABASE_POOL_SIZE', '64'))
 
 # Cache Configuration
-CACHE_HOST = os.getenv('CACHE_HOST', 'cache')
-CACHE_PORT = int(os.getenv('CACHE_PORT', '6379'))
+CACHE_URL = os.getenv('CACHE_URL', 'redis://cache:6379/0')
 CACHE_MAX_CONNECTIONS = int(os.getenv('CACHE_MAX_CONNECTIONS', '64'))
 CACHE_HEALTH_CHECK_INTERVAL = int(os.getenv('CACHE_HEALTH_CHECK_INTERVAL', '30'))
 

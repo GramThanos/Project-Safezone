@@ -5,6 +5,7 @@ from flask import Flask, jsonify, request
 from functools import wraps
 import random
 import string
+import datetime
 
 # Import configuration and modules
 import config
@@ -15,6 +16,11 @@ import servers
 
 
 app = Flask(__name__)
+
+# Logging
+def _log(message):
+    ts = datetime.datetime.now().isoformat()
+    print(f"[{ts}][API Manager] {message}")
 
 # Protect endpoints with token authentication
 def require_auth(f):
@@ -76,7 +82,7 @@ def list_tasks():
             'message': 'Tasks retrieved successfully'
         })
     except Exception as e:
-        print(f"Error listing tasks: {e}")
+        _log(f"Error listing tasks: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -95,7 +101,7 @@ def get_task(task_id):
             'message': 'Task retrieved successfully'
         })
     except Exception as e:
-        print(f"Error getting task: {e}")
+        _log(f"Error getting task: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -119,14 +125,14 @@ def create_task():
         # Notify task processor about new task
         notification_sent = cache.broadcast_to_channel(config.MANAGE_TASKS_CHANNEL, {'action': 'new_task', 'task_id': task['id']})
         if not notification_sent:
-            print(f"Warning: Task {task['id']} created but notification failed")
+            _log(f"Warning: Task {task['id']} created but notification failed")
         
         return jsonify({
             'data': task,
             'message': 'Task created successfully'
         }), 201
     except Exception as e:
-        print(f"Error creating task: {e}")
+        _log(f"Error creating task: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -148,7 +154,7 @@ def delete_task(task_id):
             'message': f'Task deleted successfully'
         })
     except Exception as e:
-        print(f"Error deleting task: {e}")
+        _log(f"Error deleting task: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -165,7 +171,7 @@ def clear_tasks():
             'count': deleted_count
         })
     except Exception as e:
-        print(f"Error clearing tasks: {e}")
+        _log(f"Error clearing tasks: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -189,7 +195,7 @@ def list_servers():
             'message': 'Servers retrieved successfully'
         })
     except Exception as e:
-        print(f"Error listing servers: {e}")
+        _log(f"Error listing servers: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/servers/<int:server_id>', methods=['GET'])
@@ -207,7 +213,7 @@ def get_server(server_id):
             'message': 'Server retrieved successfully'
         })
     except Exception as e:
-        print(f"Error getting server: {e}")
+        _log(f"Error getting server: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/servers', methods=['POST'])
@@ -244,14 +250,14 @@ def create_server():
         # Notify task processor about new task
         notification_sent = cache.broadcast_to_channel(config.MANAGE_GAME_SERVERS_CHANNEL, {'command': 'update-managers'})
         if not notification_sent:
-            print(f"Warning: Server {server['id']} created but notification failed")
+            _log(f"Warning: Server {server['id']} created but notification failed")
         
         return jsonify({
             'data': server,
             'message': 'Server created successfully'
         }), 201
     except Exception as e:
-        print(f"Error creating server: {e}")
+        _log(f"Error creating server: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/servers/<int:server_id>', methods=['PUT'])
@@ -291,7 +297,7 @@ def update_server(server_id):
             'message': 'Server updated successfully'
         }), 200
     except Exception as e:
-        print(f"Error updating server: {e}")
+        _log(f"Error updating server: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/servers/<int:server_id>', methods=['DELETE'])
@@ -307,23 +313,25 @@ def delete_server(server_id):
         # Notify task processor about new task
         notification_sent = cache.broadcast_to_channel(config.MANAGE_GAME_SERVERS_CHANNEL, {'command': 'update-managers'})
         if not notification_sent:
-            print(f"Warning: Server {server_id} deleted but notification failed")
+            _log(f"Warning: Server {server_id} deleted but notification failed")
         
         return jsonify({
             'data': {'id': server_id},
             'message': f'Server deleted successfully'
         })
     except Exception as e:
-        print(f"Error deleting server: {e}")
+        _log(f"Error deleting server: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 
 if __name__ == '__main__':
     # Initialize database on startup
-    print("Initializing database...")
+    _log("Initializing database...")
     database.init()
+    _log("Checking cache availability...")
+    cache.wait()
     
     # Start Flask app
-    print("Starting Task Management API Service...")
+    _log("Starting Task Management API Service...")
     app.run(host=config.MANAGER_API_HOST, port=config.MANAGER_API_PORT, debug=False)

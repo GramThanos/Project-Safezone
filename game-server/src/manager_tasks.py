@@ -128,6 +128,14 @@ def manage_tasks():
             time.sleep(5)
 
 if __name__ == '__main__':
+    # Wait for DB
+    _log("Checking database availability...")
+    database.wait_table(models.Task, timeout=60*5)
+    # Wait for Cache
+    _log("Checking cache availability...")
+    cache.wait()
+
+    # Manage Tasks
     try:
         manage_tasks()
     except KeyboardInterrupt:

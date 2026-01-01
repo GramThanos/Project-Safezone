@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
+import json
 import redis
 import datetime
+import time
+
+# Custom modules
 import config
 
 # Global pool configuration
-_REDIS_POOL = redis.ConnectionPool(
-    host=config.CACHE_HOST,
-    port=config.CACHE_PORT,
+_REDIS_POOL = redis.ConnectionPool.from_url(
+    config.CACHE_URL,
     decode_responses=True,
     max_connections=config.CACHE_MAX_CONNECTIONS,
     health_check_interval=config.CACHE_HEALTH_CHECK_INTERVAL
@@ -15,6 +18,24 @@ _REDIS_POOL = redis.ConnectionPool(
 def _log(message):
     ts = datetime.datetime.now().isoformat()
     print(f"[{ts}][Redis Cache] {message}")
+
+def wait(timeout=30):
+    """Wait for Cache to become available"""
+    _log(f"Checking cache availability...")
+    start_time = datetime.datetime.now()
+    while True:
+        try:
+            r = redis.Redis(connection_pool=_REDIS_POOL)
+            r.ping()
+            _log("Cache is available")
+            return True
+        except Exception as e:
+            elapsed = (datetime.datetime.now() - start_time).total_seconds()
+            if elapsed > timeout:
+                _log(f"Timeout reached while waiting for Cache: {e}")
+                return False
+            #_log(f"Waiting for Cache... ({e})")
+            time.sleep(2)
 
 def get_instance():
     """Get a client from the pool. This is fast and thread-safe."""
@@ -27,6 +48,8 @@ def get_instance():
 def broadcast_to_channel(channel, message):
     """Short-lived connection: Use pool to avoid 3-way handshake overhead."""
     try:
+        
+        message = message if isinstance(message, str) else (json.dumps(message) if isinstance(message, (dict, list)) else str(message))
         r = get_instance()
         if r:
             r.publish(channel, message)

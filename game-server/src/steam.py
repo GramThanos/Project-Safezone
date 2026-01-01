@@ -126,4 +126,4 @@ if __name__ == "__main__":
     if info:
         print(f"Fetched info for: {info.get('common', {}).get('name')}")
     # Example update/install
-    # success = app_update(380870, beta="42.13.1", install_dir="/opt/steam-apps/")
+    #success = app_update(380870, beta="42.13.1", install_dir="/opt/steam-apps/")

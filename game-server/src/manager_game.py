@@ -37,6 +37,8 @@ class GameManager:
         self.game_server_quit_timeout = 60
         self.running_healthcheck_timeout = 5
 
+        self.log(f"Initialized GameManager for server '{self.server_name}' with initial state '{self._state}'")
+
     @property
     def state(self):
         """Thread-safe getter for the desired server state."""
@@ -216,6 +218,7 @@ class Orchestrator:
     def __init__(self):
         self.managers = []
         self.commands_channel = config.MANAGE_GAME_SERVERS_CHANNEL
+        self.log("Orchestrator initialized.")
 
     def log(self, message):
         ts = datetime.datetime.now().isoformat()
@@ -299,7 +302,20 @@ class Orchestrator:
             manager['thread'].join(timeout=self.managers_shutdown_timeout)
         self.log("Shutdown complete.")
 
+# Logging
+def _log(message):
+    ts = datetime.datetime.now().isoformat()
+    print(f"[{ts}][Game Manager] {message}")
+
 if __name__ == "__main__":
+    # Wait for DB
+    _log("Checking database availability...")
+    database.wait_table(models.Server, timeout=60*5)
+    # Wait for Cache
+    _log("Checking cache availability...")
+    cache.wait()
+    
+    # Start Orchestrator
     orchestrator = Orchestrator()
     try:
         orchestrator.start()
