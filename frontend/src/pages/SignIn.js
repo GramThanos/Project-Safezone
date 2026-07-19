@@ -46,8 +46,9 @@ function SignIn() {
       <div className="container">
         <div className="row justify-content-center">
           <div className="col-md-6 col-lg-5">
-            <div className="character-card">
-              <h2 className="character-title text-center mb-4">
+            <div className="card">
+              <div className="card-body p-4">
+              <h2 className="card-title font-display text-center mb-4">
                 {isSignUp ? 'Create Account' : 'Sign In'}
               </h2>
 
@@ -96,9 +97,9 @@ function SignIn() {
                   />
                 </div>
 
-                <button 
-                  type="submit" 
-                  className="btn btn-accent w-100 mb-3"
+                <button
+                  type="submit"
+                  className="btn btn-danger w-100 mb-3"
                   disabled={loading}
                 >
                   {loading ? 'Loading...' : (isSignUp ? 'Sign Up' : 'Sign In')}
@@ -115,6 +116,7 @@ function SignIn() {
                 >
                   {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
                 </button>
+              </div>
               </div>
             </div>
           </div>

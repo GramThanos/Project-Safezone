@@ -15,6 +15,10 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN mkdir -p /var/log/supervisor && \
     chown -R steam:steam /var/log/supervisor
 
+# Configure folders 
+RUN mkdir -p /opt/steam-apps && \
+    chown -R steam:steam /opt/steam-apps
+
 USER steam
 # Install Python dependencies
 COPY requirements.txt .

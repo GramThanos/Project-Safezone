@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 import socket
 import datetime
@@ -12,13 +13,35 @@ import config
 import cache
 import models
 import database
+import roster
+
+# TODO:
+
+# Manage Game Launch parameters: /opt/steam-apps/ProjectZomboid32.json
+# Manage Game Launch parameters: /opt/steam-apps/ProjectZomboid64.json
+
+# Manage Mods: 
+# Manage: creating server spawnregions file "/home/steam/Zomboid/Server/Alpha_spawnregions.lua"
+# Manage: writing /home/steam/Zomboid/Server/Alpha.ini
+# Manage: Start making backup to: /home/steam/Zomboid/backups/startup
+# Manage: Start making backup to: /home/steam/Zomboid/backups/version
+# Manage: user database "/home/steam/Zomboid/db/Alpha.db"
+# Manage Admin: User 'admin' not found, creating it 
+# Manage Admin: Command line admin password: null
+
+# Option NoSteam: start-server.sh -nosteam
 
 class GameManager:
     def __init__(self, server_id, server_name, server_ports, initial_state="sleeping"):
         self.server_id = server_id
         self.server_name = server_name
         self.server_ports = server_ports
-        self.server_script = '/opt/pzserver/start-server.sh'
+        # The PZ dedicated server install (via SteamCMD) places start-server.sh
+        # at the install root, so derive the path from the configured install dir.
+        
+        # TODO: fix this bug, this points to the wrong server
+        self.server_script = os.path.join(config.STEAM_INSTALL_DIR, 'start-server.sh')
+        #self.server_script = os.path.join('/home/steam/Steam/steamapps/common/Project Zomboid Dedicated Server/', 'start-server.sh')
         self.server_log_path = f'/tmp/game_server_{server_name}.log'
 
         # Thread-safe State Management
@@ -33,7 +56,14 @@ class GameManager:
         self.resource_lock = threading.Lock() # Guards ports and process spawning
         self.server_log_handle = None
         self._stop_event = threading.Event()
-        
+        self.stdin_lock = threading.Lock()  # Serializes console writes to the server
+
+        # Online-player roster tracking
+        self.roster_interval = 30
+        self.online_players = []
+        self.roster_thread = None
+        self._roster_stop_event = threading.Event()
+
         self.game_server_quit_timeout = 60
         self.running_healthcheck_timeout = 5
 
@@ -65,6 +95,64 @@ class GameManager:
     def _is_onwake_running(self):
         """Polls the on-wake thread status."""
         return self.onwake_thread is not None and self.onwake_thread.is_alive()
+
+    def _publish_live_state(self):
+        """Publish the actual runtime state to the cache for the web UI to read."""
+        if self._is_game_server_running():
+            actual = "running"
+        elif self._is_onwake_running():
+            actual = "sleeping"
+        else:
+            actual = "stopped"
+        # TTL well above the reconcile interval so the key survives between loops
+        # but expires if this manager dies.
+        cache.set_value(f"server:{self.server_id}:state", actual, ttl=30)
+
+    def _send_console(self, text):
+        """Write a single console command to the running server's stdin."""
+        with self.stdin_lock:
+            if self._is_game_server_running() and self.server_process.stdin:
+                try:
+                    self.server_process.stdin.write(f"{text}\n")
+                    self.server_process.stdin.flush()
+                    return True
+                except Exception as e:
+                    self.log(f"Console write failed: {e}")
+        return False
+
+    def _roster_worker(self):
+        """Periodically query online players and publish them to the cache.
+
+        Tails the server log, issues the `players` command each interval, and
+        parses the response so the website can validate identity claims and
+        deliveries against who is actually online.
+        """
+        roster_key = f"server:{self.server_id}:online_players"
+        try:
+            with open(self.server_log_path, "r") as reader:
+                reader.seek(0, 2)  # Tail from the end of the log
+                while not self._roster_stop_event.is_set() and self._is_game_server_running():
+                    self._send_console("players")
+                    # Wait for the server to print the response before reading.
+                    if self._roster_stop_event.wait(timeout=self.roster_interval):
+                        break
+                    try:
+                        new_text = reader.read()
+                    except Exception as e:
+                        self.log(f"Roster log read error: {e}")
+                        new_text = ""
+                    parsed = roster.parse_online_players(new_text)
+                    if parsed is not None:
+                        self.online_players = parsed
+                    cache.set_value(roster_key, json.dumps(self.online_players), ttl=self.roster_interval * 3)
+        except FileNotFoundError:
+            self.log("Roster worker: server log not found.")
+        except Exception as e:
+            self.log(f"Roster worker error: {e}")
+        finally:
+            self.online_players = []
+            cache.set_value(roster_key, json.dumps([]), ttl=self.roster_interval * 3)
+            self.log("Roster worker stopped.")
 
     # --- Action Methods ---
 
@@ -133,12 +221,18 @@ class GameManager:
                         cmd, stdin=subprocess.PIPE, stdout=self.server_log_handle,
                         stderr=subprocess.STDOUT, text=True, bufsize=1
                     )
+                    # Start polling the online-player roster for this server.
+                    self._roster_stop_event.clear()
+                    self.roster_thread = threading.Thread(target=self._roster_worker, daemon=True)
+                    self.roster_thread.start()
                 except Exception as e:
                     self.log(f"Spawn Error: {e}")
                     self.state = "stopped"
             
             elif not start and is_running:
                 self.log("Shutting down game server...")
+                # Stop roster polling before the process goes away.
+                self._roster_stop_event.set()
                 try:
                     if self.server_process.stdin:
                         self.server_process.stdin.write("save\nquit\n")
@@ -150,6 +244,7 @@ class GameManager:
                     if self.server_log_handle:
                         self.server_log_handle.close()
                         self.server_log_handle = None
+                    cache.set_value(f"server:{self.server_id}:online_players", json.dumps([]), ttl=self.roster_interval * 3)
 
     def run(self):
         """Reconciliation loop: compares desired state with polled truth."""
@@ -159,6 +254,9 @@ class GameManager:
             current_goal = self.state
             game_alive = self._is_game_server_running()
             wake_alive = self._is_onwake_running()
+
+            # Publish the observed runtime state so the web UI reflects reality.
+            self._publish_live_state()
 
             if current_goal == "sleeping":
                 if game_alive:
@@ -197,18 +295,18 @@ class GameManager:
                     elif cmd == "server-stop": self.state = "stopped"
                     elif cmd == "server-sleep": self.state = "sleeping"
                     elif cmd == "server-command":
-                        if self._is_game_server_running():
-                            self.server_process.stdin.write(f"{data.get('data','')}\n")
-                            self.server_process.stdin.flush()
+                        self._send_console(data.get('data', ''))
             except:
                 time.sleep(5)
 
     def terminate(self):
         """Full system shutdown."""
         self._stop_event.set()
+        self._roster_stop_event.set()
         self.state = "stopped"
         self.manage_onwake(start=False)
         self.manage_server_process(start=False)
+        cache.set_value(f"server:{self.server_id}:online_players", json.dumps([]), ttl=self.roster_interval * 3)
 
 
 class Orchestrator:

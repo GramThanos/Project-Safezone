@@ -3,15 +3,20 @@ services:
   # Game Server and Manager
   game-server:
     build: ./game-server
-    container_name: game_server
+    container_name: safezone_game_server
+    # The manager API listens on MANAGER_API_PORT (5000) inside the container;
+    # publish it on host port 5001.
     ports:
-      - "5001:5001"
+      - "16261:16261/udp"
+      - "16262:16262/udp"
+      - "5001:5000"
     environment:
+      - TZ=Athens/Europe
       - DATABASE_URL=mysql+pymysql://safezone:S4feZone_D4tabas3_Pas5w0rd@db/safezone
       - CACHE_URL=redis://cache:6379
       - MANAGER_API_PORT=5000
       - MANAGER_API_TOKEN=S4feZone_API_T0k3n
-      - STEAM_APP_BETA=42.13.1
+      #- STEAM_APP_BETA=42.13.1
       - STEAM_INSTALL_DIR=/opt/steam-apps
     depends_on:
       - db
@@ -28,10 +33,11 @@ services:
   # Flask Backend API
   backend:
     build: ./backend
-    container_name: backend
+    container_name: safezone_web_backend
     #ports:
     #  - "5000:5000"
     environment:
+      - TZ=Athens/Europe
       - DATABASE_HOST=db
       - DATABASE_NAME=safezone
       - DATABASE_USER=safezone
@@ -52,9 +58,11 @@ services:
   # React Frontend
   frontend:
     build: ./frontend
-    container_name: safezone_frontend
+    container_name: safezone_web_frontend
     ports:
       - "8080:80"
+    environment:
+      - TZ=Athens/Europe
     depends_on:
       - backend
     restart: unless-stopped
@@ -65,8 +73,9 @@ services:
   # MariaDB Database
   db:
     image: mariadb:11
-    container_name: db
+    container_name: safezone_db
     environment:
+      - TZ=Athens/Europe
       - MYSQL_DATABASE=safezone
       - MYSQL_USER=safezone
       - MYSQL_PASSWORD=S4feZone_D4tabas3_Pas5w0rd
@@ -85,7 +94,9 @@ services:
   # Redis Cache
   cache:
     image: redis:7-alpine
-    container_name: cache
+    container_name: safezone_cache
+    environment:
+      - TZ=Athens/Europe
     restart: unless-stopped
     networks:
       - safezone_network

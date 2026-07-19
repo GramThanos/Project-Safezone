@@ -55,10 +55,13 @@ def process(task_id):
         try:
             # We pass the data to the external action function
             success = task_action_func(data)
-            
+
             data['result'] = 'success' if success else 'failure'
-            data['message'] = 'Task completed' if success else 'Action returned False'
-            _log(f"Action {action_name} result: {data['result']}")
+            # Preserve a message the action provided (e.g. the failure reason);
+            # otherwise fall back to a generic one.
+            default_message = 'Task completed' if success else 'Action returned False'
+            data['message'] = data.get('message') or default_message
+            _log(f"Action {action_name} result: {data['result']} - {data['message']}")
             
         except Exception as e:
             _log(f"Execution error on task {task_id}: {e}")

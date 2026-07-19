@@ -15,9 +15,15 @@ function Players() {
     description: '',
     avatar: ''
   });
+  const [servers, setServers] = useState([]);
+  const [claims, setClaims] = useState([]);
+  const [claimForm, setClaimForm] = useState({ server_id: '', in_game_username: '' });
+  const [claimMsg, setClaimMsg] = useState('');
 
   useEffect(() => {
     loadPlayers();
+    loadServers();
+    loadClaims();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -33,6 +39,56 @@ function Players() {
       setError('Failed to load players');
       setLoading(false);
     }
+  };
+
+  const loadServers = async () => {
+    try {
+      const data = await api.servers.getAll();
+      if (data.servers) setServers(data.servers);
+    } catch (err) {
+      console.error('Load servers error:', err);
+    }
+  };
+
+  const loadClaims = async () => {
+    try {
+      const data = await api.claims.getMine(token);
+      if (data.claims) setClaims(data.claims);
+    } catch (err) {
+      console.error('Load claims error:', err);
+    }
+  };
+
+  const handleClaimSubmit = async (e) => {
+    e.preventDefault();
+    setClaimMsg('');
+    setError('');
+    if (!claimForm.server_id || !claimForm.in_game_username.trim()) {
+      setError('Pick a server and enter your in-game username');
+      return;
+    }
+    try {
+      await api.claims.create(token, {
+        server_id: parseInt(claimForm.server_id, 10),
+        in_game_username: claimForm.in_game_username.trim()
+      });
+      setClaimForm({ server_id: '', in_game_username: '' });
+      setClaimMsg('Claim request submitted — an admin will review it.');
+      loadClaims();
+    } catch (err) {
+      console.error('Submit claim error:', err);
+      setError(err.message || 'Failed to submit claim');
+    }
+  };
+
+  const claimStatusBadge = (status) => {
+    const map = { approved: 'success', pending: 'warning', rejected: 'secondary' };
+    return map[status] || 'secondary';
+  };
+
+  const serverName = (id) => {
+    const s = servers.find((sv) => sv.id === id);
+    return s ? s.name : `#${id}`;
   };
 
   const handleCreate = () => {
@@ -100,12 +156,12 @@ function Players() {
       <div className="container">
         <div className="d-flex justify-content-between align-items-center mb-4">
           <div>
-            <h2 style={{ fontFamily: "'Oswald', sans-serif", letterSpacing: '0.6px' }}>
-              MY PLAYERS
+            <h2 className="text-uppercase font-display">
+              My Players
             </h2>
-            <p className="small-muted">Manage your game characters</p>
+            <p className="text-body-secondary">Manage your game characters</p>
           </div>
-          <button className="btn btn-accent" onClick={handleCreate}>
+          <button className="btn btn-danger" onClick={handleCreate}>
             <i className="fas fa-plus"></i> Create Player
           </button>
         </div>
@@ -116,10 +172,64 @@ function Players() {
           </div>
         )}
 
+        {/* Claim an in-game character */}
+        <div className="card mb-4">
+          <div className="card-body">
+          <h5 className="card-title font-display mb-1">Claim a Character</h5>
+          <p className="text-body-secondary">
+            Link an in-game character to your account so you can receive items.
+            You must be <strong>online</strong> on the server when you submit the request.
+          </p>
+          {claimMsg && <div className="alert alert-success py-2">{claimMsg}</div>}
+          <form className="row g-2 align-items-end" onSubmit={handleClaimSubmit}>
+            <div className="col-md-5">
+              <label className="form-label text-body-secondary">Server</label>
+              <select
+                className="form-select"
+                value={claimForm.server_id}
+                onChange={(e) => setClaimForm({ ...claimForm, server_id: e.target.value })}
+              >
+                <option value="">Select a server…</option>
+                {servers.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-md-5">
+              <label className="form-label text-body-secondary">In-game username</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="YourInGameName"
+                value={claimForm.in_game_username}
+                onChange={(e) => setClaimForm({ ...claimForm, in_game_username: e.target.value })}
+              />
+            </div>
+            <div className="col-md-2">
+              <button type="submit" className="btn btn-danger w-100">Claim</button>
+            </div>
+          </form>
+
+          {claims.length > 0 && (
+            <div className="mt-3">
+              <div className="text-body-secondary mb-2">My claim requests</div>
+              <ul className="list-group">
+                {claims.map((c) => (
+                  <li key={c.id} className="list-group-item d-flex justify-content-between align-items-center">
+                    <span>{c.in_game_username} @ {serverName(c.server_id)}</span>
+                    <span className={`badge text-bg-${claimStatusBadge(c.status)}`}>{c.status}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          </div>
+        </div>
+
         {players.length === 0 ? (
           <div className="text-center py-5">
-            <p className="small-muted mb-3">You don't have any players yet</p>
-            <button className="btn btn-accent" onClick={handleCreate}>
+            <p className="text-body-secondary mb-3">You don't have any players yet</p>
+            <button className="btn btn-danger" onClick={handleCreate}>
               Create Your First Player
             </button>
           </div>
@@ -127,34 +237,45 @@ function Players() {
           <div className="row g-4">
             {players.map((player) => (
               <div key={player.id} className="col-md-6 col-lg-4">
-                <div className="character-card">
-                  <div>
-                    <div 
-                      className="avatar" 
-                      style={{ 
-                        backgroundImage: player.avatar && player.avatar.startsWith('http') 
-                          ? `url(${player.avatar.replace(/['"]/g, '')})` 
-                          : "url('./assets/images/safezone-banner-1.png')" 
-                      }}
-                    ></div>
-                    <div className="character-title">{player.name}</div>
-                    <div className="character-desc">
+                <div className="card h-100">
+                  <img
+                    className="card-img-top card-banner object-fit-cover"
+                    src={player.avatar && player.avatar.startsWith('http')
+                      ? player.avatar.replace(/['"]/g, '')
+                      : '/assets/images/safezone-banner-1.png'}
+                    alt={player.name}
+                  />
+                  <div className="card-body d-flex flex-column">
+                    <h5 className="card-title font-display">
+                      {player.name}
+                      {player.verified && (
+                        <span className="badge text-bg-success ms-2" title="Linked in-game character">
+                          <i className="fas fa-check"></i> Linked
+                        </span>
+                      )}
+                    </h5>
+                    {player.verified && (
+                      <div className="text-body-secondary mb-2">
+                        <i className="fas fa-gamepad"></i> {player.in_game_username} @ {serverName(player.server_id)}
+                      </div>
+                    )}
+                    <p className="card-text text-body-secondary flex-grow-1">
                       {player.description || 'No description provided'}
+                    </p>
+                    <div className="d-flex gap-2">
+                      <button
+                        className="btn btn-outline-light btn-sm"
+                        onClick={() => handleEdit(player)}
+                      >
+                        <i className="fas fa-edit"></i> Edit
+                      </button>
+                      <button
+                        className="btn btn-outline-danger btn-sm"
+                        onClick={() => handleDelete(player.id)}
+                      >
+                        <i className="fas fa-trash"></i> Delete
+                      </button>
                     </div>
-                  </div>
-                  <div className="mt-3 d-flex gap-2">
-                    <button 
-                      className="btn btn-light btn-sm"
-                      onClick={() => handleEdit(player)}
-                    >
-                      <i className="fas fa-edit"></i> Edit
-                    </button>
-                    <button 
-                      className="btn btn-outline-light btn-sm"
-                      onClick={() => handleDelete(player.id)}
-                    >
-                      <i className="fas fa-trash"></i> Delete
-                    </button>
                   </div>
                 </div>
               </div>
@@ -166,14 +287,14 @@ function Players() {
         {showModal && (
           <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}>
             <div className="modal-dialog modal-dialog-centered">
-              <div className="modal-content" style={{ backgroundColor: 'var(--card)', color: '#e6e6e6' }}>
-                <div className="modal-header border-0">
+              <div className="modal-content">
+                <div className="modal-header">
                   <h5 className="modal-title">
                     {editingPlayer ? 'Edit Player' : 'Create Player'}
                   </h5>
-                  <button 
-                    type="button" 
-                    className="btn-close btn-close-white" 
+                  <button
+                    type="button"
+                    className="btn-close"
                     onClick={() => setShowModal(false)}
                   ></button>
                 </div>
@@ -208,15 +329,15 @@ function Players() {
                       />
                     </div>
                   </div>
-                  <div className="modal-footer border-0">
-                    <button 
-                      type="button" 
-                      className="btn btn-outline-light" 
+                  <div className="modal-footer">
+                    <button
+                      type="button"
+                      className="btn btn-outline-light"
                       onClick={() => setShowModal(false)}
                     >
                       Cancel
                     </button>
-                    <button type="submit" className="btn btn-accent">
+                    <button type="submit" className="btn btn-danger">
                       Save
                     </button>
                   </div>

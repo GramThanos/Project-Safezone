@@ -18,7 +18,7 @@ MANAGER_API_TOKEN = os.getenv('MANAGER_API_TOKEN', '')
 MANAGER_API_TOKEN = MANAGER_API_TOKEN if MANAGER_API_TOKEN else None
 
 # Steam Configuration
-STEAM_APP_ID = 380870
+STEAM_APP_ID = int(os.getenv('STEAM_APP_ID', '380870')) # 380870 is Project Zomboid
 STEAM_APP_BETA = os.getenv('STEAM_APP_BETA', '') # 42.13.1
 STEAM_APP_BETA = STEAM_APP_BETA if STEAM_APP_BETA else None
 STEAM_INSTALL_DIR = os.getenv('STEAM_INSTALL_DIR', '/opt/steam-apps')

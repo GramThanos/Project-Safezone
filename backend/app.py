@@ -16,6 +16,10 @@ from src.routes.auth import auth_bp
 from src.routes.players import players_bp
 from src.routes.servers import servers_bp
 from src.routes.admin import admin_bp
+from src.routes.claims import claims_bp
+from src.routes.rewards import rewards_bp
+from src.routes.boxes import boxes_bp
+from src.routes.inventory import inventory_bp
 from src.database import db
 from src.utils.redis_utils import get_redis_connection
 
@@ -54,6 +58,9 @@ limiter = Limiter(
     storage_options={"socket_connect_timeout": 30},
     strategy="fixed-window"
 )
+# Expose the limiter so routes can apply stricter per-endpoint limits
+# (e.g. the auth routes reference current_app.limiter).
+app.limiter = limiter
 
 # Security Headers Middleware
 @app.after_request
@@ -81,6 +88,10 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(players_bp)
 app.register_blueprint(servers_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(claims_bp)
+app.register_blueprint(rewards_bp)
+app.register_blueprint(boxes_bp)
+app.register_blueprint(inventory_bp)
 
 
 @app.route('/')

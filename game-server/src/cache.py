@@ -45,6 +45,27 @@ def get_instance():
         _log(f"ERROR: Failed to connect to Redis: {e}")
         return None
 
+def set_value(key, value, ttl=None):
+    """Set a key in the cache, optionally with a TTL (seconds)."""
+    try:
+        r = get_instance()
+        if r:
+            r.set(key, value, ex=ttl)
+            return True
+    except Exception as e:
+        _log(f"ERROR: set_value failed for {key}: {e}")
+    return False
+
+def get_value(key):
+    """Get a key from the cache, or None on miss/error."""
+    try:
+        r = get_instance()
+        if r:
+            return r.get(key)
+    except Exception as e:
+        _log(f"ERROR: get_value failed for {key}: {e}")
+    return None
+
 def broadcast_to_channel(channel, message):
     """Short-lived connection: Use pool to avoid 3-way handshake overhead."""
     try:

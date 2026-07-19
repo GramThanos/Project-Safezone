@@ -163,12 +163,20 @@ For detailed API documentation, see [backend/API.md](backend/API.md)
 - `DELETE /api/players/:id` - Delete player (requires auth)
 - `GET /api/servers` - Get all servers (public)
 - `GET /api/servers/status` - Get server status (public)
-- `GET /api/admin/users` - Get all users (admin only)
+- `GET /api/admin/users` - Get all users (moderator/admin)
 - `PUT /api/admin/users/:id` - Update user role (admin only)
-- `GET /api/admin/servers` - Get servers (moderator/admin)
+- `GET /api/admin/servers` - Get servers with live state (moderator/admin)
+- `GET /api/admin/servers/:id` - Get a server (moderator/admin)
 - `POST /api/admin/servers` - Create server (admin only)
+- `PUT /api/admin/servers/:id` - Update server (admin only)
+- `DELETE /api/admin/servers/:id` - Delete server (admin only)
+- `POST /api/admin/servers/:id/start|stop|sleep` - Control server (moderator/admin)
+- `POST /api/admin/servers/:id/command` - Send console command (moderator/admin)
 - `GET /api/admin/tasks` - Get tasks (moderator/admin)
 - `POST /api/admin/tasks` - Create task (moderator/admin)
+
+> Server and task operations under `/api/admin` and `/api/servers` are proxied to
+> the game-server manager API; the backend does not store servers/tasks locally.
 
 ### Game Server Task API (port 5001):
 All endpoints require Authorization header with Bearer token.
@@ -189,11 +197,13 @@ See [game-server/README.md](game-server/README.md) for detailed API documentatio
 .
 ├── game-server/            # Game server manager with task API
 │   ├── Dockerfile
-│   ├── manager.py
+│   ├── supervisord.conf    # Runs the 3 processes below
+│   ├── requirements.txt
 │   └── src/
-│       ├── manager_api.py
-│       ├── manager_tasks.py
-│       ├── models.py
+│       ├── manager_api.py    # Task + server REST API
+│       ├── manager_tasks.py  # Background task worker
+│       ├── manager_game.py   # Game server orchestrator
+│       ├── models.py         # Server + Task ORM models
 │       └── ...
 ├── backend/                # Flask API backend
 │   ├── Dockerfile
@@ -205,15 +215,17 @@ See [game-server/README.md](game-server/README.md) for detailed API documentatio
 │       ├── database.py
 │       ├── models/
 │       │   ├── user.py
-│       │   ├── player.py
-│       │   └── server.py
+│       │   └── player.py
 │       ├── routes/
 │       │   ├── auth.py
 │       │   ├── players.py
-│       │   ├── servers.py
+│       │   ├── servers.py     # Proxied to game-server
 │       │   └── admin.py
-│       └── middleware/
-│           └── auth.py
+│       ├── middleware/
+│       │   └── auth.py
+│       └── utils/
+│           ├── redis_utils.py
+│           └── game_server.py # game-server API proxy helper
 ├── frontend/               # React frontend
 │   ├── Dockerfile
 │   ├── nginx.conf

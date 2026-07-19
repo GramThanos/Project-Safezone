@@ -29,14 +29,13 @@ function Servers() {
     }
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (state) => {
     const statusMap = {
-      'online': 'success',
-      'offline': 'secondary',
-      'starting': 'warning',
-      'stopping': 'warning'
+      'running': 'success',
+      'sleeping': 'warning',
+      'stopped': 'secondary'
     };
-    return statusMap[status?.toLowerCase()] || 'secondary';
+    return statusMap[state?.toLowerCase()] || 'secondary';
   };
 
   if (loading) {
@@ -57,12 +56,12 @@ function Servers() {
       <div className="container">
         <div className="d-flex justify-content-between align-items-center mb-4">
           <div>
-            <h2 style={{ fontFamily: "'Oswald', sans-serif", letterSpacing: '0.6px' }}>
-              GAME SERVERS
+            <h2 className="text-uppercase font-display">
+              Game Servers
             </h2>
-            <p className="small-muted">View active servers and their status</p>
+            <p className="text-body-secondary">View active servers and their status</p>
           </div>
-          <button className="btn btn-accent" onClick={loadServers}>
+          <button className="btn btn-danger" onClick={loadServers}>
             <i className="fas fa-sync-alt"></i> Refresh
           </button>
         </div>
@@ -75,36 +74,34 @@ function Servers() {
 
         {servers.length === 0 ? (
           <div className="text-center py-5">
-            <p className="small-muted">No servers configured yet</p>
+            <p className="text-body-secondary">No servers configured yet</p>
           </div>
         ) : (
           <div className="row g-4">
             {servers.map((server) => (
               <div key={server.id} className="col-md-6 col-lg-4">
-                <div className="character-card">
-                  <div className="d-flex justify-content-between align-items-start mb-3">
-                    <h5 className="character-title mb-0">{server.name}</h5>
-                    <span className={`badge bg-${getStatusBadge(server.status)}`}>
-                      {server.status}
-                    </span>
-                  </div>
+                <div className="card h-100">
+                  <div className="card-body">
+                    <div className="d-flex justify-content-between align-items-start mb-3">
+                      <h5 className="card-title font-display mb-0">{server.name}</h5>
+                      <span className={`badge text-bg-${getStatusBadge(server.state)}`}>
+                        {server.state || server.default_state}
+                      </span>
+                    </div>
 
-                  <div className="small-muted mb-2">
-                    <i className="fas fa-server"></i> {server.host}:{server.port}
-                  </div>
+                    <div className="d-flex justify-content-between mb-2">
+                      <span className="text-body-secondary">
+                        <i className="fas fa-network-wired"></i> Ports:
+                      </span>
+                      <span>{Array.isArray(server.ports) ? server.ports.join(', ') : '—'}</span>
+                    </div>
 
-                  <div className="d-flex justify-content-between mb-2">
-                    <span className="small-muted">
-                      <i className="fas fa-users"></i> Players:
-                    </span>
-                    <span>{server.active_players} / {server.max_players}</span>
-                  </div>
-
-                  <div className="d-flex justify-content-between">
-                    <span className="small-muted">
-                      <i className="fas fa-calendar"></i> Game Day:
-                    </span>
-                    <span>{server.game_day || 0}</span>
+                    <div className="d-flex justify-content-between">
+                      <span className="text-body-secondary">
+                        <i className="fas fa-toggle-on"></i> Default:
+                      </span>
+                      <span>{server.default_state}</span>
+                    </div>
                   </div>
                 </div>
               </div>

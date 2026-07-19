@@ -108,6 +108,38 @@ def signup():
         return jsonify({'error': 'Internal server error'}), 500
 
 
+@auth_bp.route('/password', methods=['PUT'])
+def change_password():
+    """Change the current user's password (requires current password)."""
+    from src.middleware.auth import token_required
+
+    @token_required
+    def _change(current_user):
+        data = request.get_json() or {}
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+
+        if not current_password or not new_password:
+            return jsonify({'error': 'Current and new password are required'}), 400
+        if len(new_password) < 8:
+            return jsonify({'error': 'New password must be at least 8 characters'}), 400
+
+        try:
+            with db.get_db() as session:
+                user = session.query(User).filter_by(id=current_user['user_id']).first()
+                if not user:
+                    return jsonify({'error': 'User not found'}), 404
+                if not user.check_password(current_password):
+                    return jsonify({'error': 'Current password is incorrect'}), 401
+                user.set_password(new_password)
+                return jsonify({'message': 'Password updated successfully'}), 200
+        except Exception as e:
+            logger.error(f"Change password error: {e}")
+            return jsonify({'error': 'Internal server error'}), 500
+
+    return _change()
+
+
 @auth_bp.route('/me', methods=['GET'])
 def get_current_user():
     """Get current user info from token"""

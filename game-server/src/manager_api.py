@@ -288,10 +288,16 @@ def update_server(server_id):
     data = to_update
     
     try:
-        error, info = servers.update(server_id, data)
-        if error:
-            return jsonify({'error': f"Failed to update server: {error}"}), 500
-        
+        success, info = servers.update(server_id, data)
+        if not success:
+            # info holds the failure reason (e.g. "Server not found")
+            return jsonify({'error': f"Failed to update server: {info}"}), 400
+
+        # Notify the orchestrator so config changes (ports/state) take effect
+        notification_sent = cache.broadcast_to_channel(config.MANAGE_GAME_SERVERS_CHANNEL, {'command': 'update-managers'})
+        if not notification_sent:
+            _log(f"Warning: Server {server_id} updated but notification failed")
+
         return jsonify({
             'data': info,
             'message': 'Server updated successfully'
@@ -299,6 +305,44 @@ def update_server(server_id):
     except Exception as e:
         _log(f"Error updating server: {e}")
         return jsonify({'error': str(e)}), 500
+
+SERVER_CONTROL_COMMANDS = {
+    'start': 'server-start',
+    'stop': 'server-stop',
+    'sleep': 'server-sleep',
+}
+
+@app.route('/api/servers/<int:server_id>/<string:action>', methods=['POST'])
+@require_auth
+def control_server(server_id, action):
+    """Send a lifecycle command to a running server manager.
+
+    Actions: start, stop, sleep, command. The command is broadcast on the game
+    server management channel; the matching GameManager reacts to it.
+    """
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    if action == 'command':
+        data = request.get_json(silent=True) or {}
+        command_text = data.get('command')
+        if not command_text:
+            return jsonify({'error': 'A command string is required'}), 400
+        message = {'server': server['name'], 'command': 'server-command', 'data': command_text}
+    elif action in SERVER_CONTROL_COMMANDS:
+        message = {'server': server['name'], 'command': SERVER_CONTROL_COMMANDS[action]}
+    else:
+        return jsonify({'error': f'Invalid action: {action}'}), 400
+
+    sent = cache.broadcast_to_channel(config.MANAGE_GAME_SERVERS_CHANNEL, message)
+    if not sent:
+        return jsonify({'error': 'Failed to dispatch command to server manager'}), 503
+
+    return jsonify({
+        'data': {'id': server_id, 'action': action},
+        'message': f"Command '{action}' dispatched to server '{server['name']}'"
+    }), 202
 
 @app.route('/api/servers/<int:server_id>', methods=['DELETE'])
 @require_auth

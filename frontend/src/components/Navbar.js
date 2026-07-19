@@ -13,9 +13,9 @@ function Navbar() {
   };
 
   return (
-    <nav className="navbar navbar-expand-lg navbar-dark py-3">
+    <nav className="navbar navbar-expand-lg bg-body-tertiary border-bottom py-3">
       <div className="container">
-        <Link className="navbar-brand text-uppercase" to="/">Project Safezone</Link>
+        <Link className="navbar-brand text-uppercase font-display fw-bold" to="/">Project Safezone</Link>
         <button 
           className="navbar-toggler" 
           type="button" 
@@ -40,6 +40,9 @@ function Navbar() {
               <>
                 <li className="nav-item">
                   <Link className="nav-link" to="/players">My Players</Link>
+                </li>
+                <li className="nav-item">
+                  <Link className="nav-link" to="/rewards">Rewards</Link>
                 </li>
                 {isModerator() && (
                   <li className="nav-item">

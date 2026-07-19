@@ -32,7 +32,8 @@ class Config:
     HTTPS_ENABLED = os.getenv('HTTPS_ENABLED', 'false').lower() == 'true'
     
     # Game Server Configuration
-    GAME_SERVER_API_URL = os.getenv('GAME_SERVER_API_URL', 'http://game-server:5001')
+    # Internal address of the game-server manager API (listens on 5000 in-container).
+    GAME_SERVER_API_URL = os.getenv('GAME_SERVER_API_URL', 'http://game-server:5000')
     API_TOKEN = os.getenv('API_TOKEN', '')
     
     # Flask Configuration
@@ -40,7 +41,13 @@ class Config:
     
     # Rate Limiting Configuration
     RATELIMIT_STORAGE_URI = REDIS_URL
-    RATELIMIT_DEFAULT_LIMITS = ["200 per day", "50 per hour"]
+    # Global per-IP defaults. These must be generous: a single-page app that polls
+    # (e.g. live task/server status) legitimately makes many requests. Configure via
+    # RATELIMIT_DEFAULT as semicolon-separated limits. Sensitive write endpoints
+    # should add their own stricter per-route limits.
+    RATELIMIT_DEFAULT_LIMITS = os.getenv(
+        'RATELIMIT_DEFAULT', '300 per minute;20000 per day'
+    ).split(';')
     
     # SQLAlchemy Connection Pool Configuration
     SQLALCHEMY_POOL_PRE_PING = True  # Verify connections before using

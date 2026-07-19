@@ -55,13 +55,35 @@ class Database:
             session.close()
     
     def init_db(self):
-        """Initialize database tables"""
+        """Initialize database tables owned by the backend (users, players, claim_requests)"""
         # Import models to register them with Base
-        from src.models import User, Player, Server
-        
+        from src.models import (User, Player, ClaimRequest, Reward,
+                                 BoxLootPool, UserBox, InventoryItem, AuditLog)
+
         # Create all tables
         Base.metadata.create_all(self.engine)
+        # Apply additive migrations for columns create_all won't add to existing tables
+        self._run_migrations()
         logger.info("Database tables initialized successfully")
+
+    def _run_migrations(self):
+        """Idempotent additive migrations (no Alembic yet).
+
+        MariaDB's `ADD COLUMN IF NOT EXISTS` makes these safe to run repeatedly on
+        both fresh and existing databases.
+        """
+        from sqlalchemy import text
+        statements = [
+            "ALTER TABLE players ADD COLUMN IF NOT EXISTS server_id INT",
+            "ALTER TABLE players ADD COLUMN IF NOT EXISTS in_game_username VARCHAR(32)",
+            "ALTER TABLE players ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE",
+        ]
+        with self.engine.begin() as conn:
+            for stmt in statements:
+                try:
+                    conn.execute(text(stmt))
+                except Exception as e:
+                    logger.warning(f"Migration step skipped ({stmt}): {e}")
     
     def drop_all(self):
         """Drop all tables (for testing)"""

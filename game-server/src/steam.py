@@ -11,6 +11,7 @@ STEAMCMD_BIN = os.path.join(
     os.environ.get("STEAMCMDDIR", "/home/steam/steamcmd/"),
     "steamcmd.sh"
 )
+#DEBUG = os.environ.get("DEBUG", "true")
 
 def check_steamcmd():
     """
@@ -34,15 +35,20 @@ def check_steamcmd():
     return None
 
 def app_info(appid):
-    """
-    Fetches app metadata using SteamCMD and parses it via the vdf library.
+    """Fetch app metadata using SteamCMD.
+
+    Returns ``(data, None)`` on success or ``(None, error_message)`` on failure so
+    callers can surface the reason instead of a bare False.
     """
     err = check_steamcmd()
     if err:
         print(err, file=sys.stderr)
-        return None
+        return None, err
 
-    # We call app_info_print twice. SteamCMD often requires a warm cache 
+    # Maybe delete the cache folder first
+    # ~/Steam/appcache/
+
+    # We call app_info_print twice. SteamCMD often requires a warm cache
     # to actually output the data to stdout.
     cmd = [
         STEAMCMD_BIN,
@@ -57,46 +63,63 @@ def app_info(appid):
     ]
 
     try:
-        process = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        stdout = process.stdout
-    except subprocess.CalledProcessError as e:
-        print(f"Error: SteamCMD failed with return code {e.returncode}", file=sys.stderr)
-        return None
-
-    # Find the start of the VDF block (e.g., "123456" { ... })
-    match = re.search(rf'"{appid}"\s*{{', stdout, re.DOTALL)
-    if not match:
-        print(f"Error: Could not find app {appid} info in SteamCMD output.", file=sys.stderr)
-        return None
-
-    # Extract the string starting from the match
-    vdf_content = stdout[match.start():]
-    
-    try:
-        # Use the official Valve Data Format parser
-        data = vdf.loads(vdf_content)
-        return data.get(str(appid))
+        # Do NOT use check=True: SteamCMD often exits non-zero even when it
+        # printed usable output, so we parse stdout regardless of return code.
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return None, "SteamCMD timed out fetching app info"
     except Exception as e:
-        print(f"Error: Failed to parse VDF data: {e}", file=sys.stderr)
-        return None
+        print(e, file=sys.stderr)
+        return None, f"SteamCMD could not be executed: {e}"
+
+    stdout = process.stdout or ""
+
+    # Find the start of the VDF block (e.g., "380870" { ... }).
+    match = re.search(rf'"{appid}"\s*{{', stdout)
+    if not match:
+        tail = (process.stderr or stdout).strip()[-400:]
+        return None, f"App {appid} info not found in SteamCMD output (rc={process.returncode}). {tail}"
+
+    # Extract only the balanced { ... } block so SteamCMD's trailing output
+    # (login messages, prompts) doesn't break the VDF parser.
+    brace_start = stdout.index('{', match.start())
+    depth = 0
+    brace_end = None
+    for i in range(brace_start, len(stdout)):
+        if stdout[i] == '{':
+            depth += 1
+        elif stdout[i] == '}':
+            depth -= 1
+            if depth == 0:
+                brace_end = i + 1
+                break
+    if brace_end is None:
+        return None, "Malformed app info (unbalanced braces) from SteamCMD"
+
+    vdf_block = f'"{appid}"\n{stdout[brace_start:brace_end]}'
+    try:
+        data = vdf.loads(vdf_block)
+        return data.get(str(appid)), None
+    except Exception as e:
+        print(f"Failed to parse app info VDF: {e}", file=sys.stderr)
+        print(f"{vdf_block}", file=sys.stderr)
+        return None, f"Failed to parse app info VDF: {e}"
 
 def app_update(appid, beta=None, install_dir="/opt/steam-apps/"):
-    """
-    Updates or Installs a Steam app. 
-    Handles directory creation and validation.
+    """Update or install a Steam app, validating files.
+
+    Returns ``(True, None)`` on success or ``(False, error_message)`` on failure.
     """
     err = check_steamcmd()
     if err:
-        print(err, file=sys.stderr)
-        return False
+        return False, err
 
     # Normalize path and ensure it exists
     install_dir = os.path.abspath(install_dir)
     try:
         os.makedirs(install_dir, exist_ok=True)
     except OSError as e:
-        print(f"Error: Could not create directory {install_dir}: {e}", file=sys.stderr)
-        return False
+        return False, f"Could not create directory {install_dir}: {e}"
 
     # Build update command
     update_params = ["+app_update", str(appid)]
@@ -112,18 +135,38 @@ def app_update(appid, beta=None, install_dir="/opt/steam-apps/"):
         "+login", "anonymous",
     ] + update_params + ["+quit"]
 
+    '''
     try:
-        # We don't capture_output here so the user can see progress in the terminal
+        # Stream output to the worker log so install progress is visible.
         subprocess.run(cmd, check=True)
-        return True
+        return True, None
     except subprocess.CalledProcessError as e:
-        print(f"Error: Update failed for AppID {appid}. Code: {e.returncode}", file=sys.stderr)
-        return False
+        return False, f"SteamCMD update failed for AppID {appid} (rc={e.returncode})"
+    except Exception as e:
+        return False, f"SteamCMD could not be executed: {e}"
+    '''
+    try:
+        # Capture output (combining stdout and stderr into a single string)
+        result = subprocess.run(
+            cmd, 
+            check=True, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.STDOUT, 
+            text=True
+        )
+        return True, None, result.stdout
+    except subprocess.CalledProcessError as e:
+        # e.output holds the captured string even if the command fails
+        return False, f"SteamCMD update failed for AppID {appid} (rc={e.returncode})", e.output
+    except Exception as e:
+        return False, f"SteamCMD could not be executed: {e}", ""
 
 if __name__ == "__main__":
     # Example usage:
-    info = app_info(380870) # Project Zomboid
+    info, err = app_info(380870)  # Project Zomboid
     if info:
-        print(f"Fetched info for: {info.get('common', {}).get('name')}")
+        print(f"Fetched info for: {info.get('common', {}).get('name')}", file=sys.stderr)
+    else:
+        print(f"app_info failed: {err}", file=sys.stderr)
     # Example update/install
-    #success = app_update(380870, beta="42.13.1", install_dir="/opt/steam-apps/")
+    #ok, err = app_update(380870, beta="42.13.1", install_dir="/opt/steam-apps/")

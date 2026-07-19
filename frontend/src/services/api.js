@@ -34,6 +34,17 @@ export const api = {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       return handleResponse(response);
+    },
+    changePassword: async (token, currentPassword, newPassword) => {
+      const response = await fetch(`${API_URL}/api/auth/password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+      });
+      return handleResponse(response);
     }
   },
 
@@ -91,6 +102,79 @@ export const api = {
     getStatus: async () => {
       const response = await fetch(`${API_URL}/api/servers/status`);
       return handleResponse(response);
+    },
+    // In-game usernames currently online on a server (auth required).
+    getOnline: async (token, serverId) => {
+      const response = await fetch(`${API_URL}/api/servers/${serverId}/online`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    }
+  },
+
+  // Loot box endpoints
+  boxes: {
+    claimDaily: async (token) => {
+      const response = await fetch(`${API_URL}/api/boxes/daily`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    list: async (token) => {
+      const response = await fetch(`${API_URL}/api/boxes`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    open: async (token, id) => {
+      const response = await fetch(`${API_URL}/api/boxes/${id}/open`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    }
+  },
+
+  // Inventory endpoints
+  inventory: {
+    list: async (token) => {
+      const response = await fetch(`${API_URL}/api/inventory`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    send: async (token, id, playerId) => {
+      const response = await fetch(`${API_URL}/api/inventory/${id}/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ player_id: playerId })
+      });
+      return handleResponse(response);
+    }
+  },
+
+  // Claim request endpoints (account ↔ in-game player linking)
+  claims: {
+    getMine: async (token) => {
+      const response = await fetch(`${API_URL}/api/claims`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    create: async (token, data) => {
+      const response = await fetch(`${API_URL}/api/claims`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
+      });
+      return handleResponse(response);
     }
   },
 
@@ -123,6 +207,12 @@ export const api = {
         });
         return handleResponse(response);
       },
+      get: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
       create: async (token, data) => {
         const response = await fetch(`${API_URL}/api/admin/servers`, {
           method: 'POST',
@@ -148,6 +238,133 @@ export const api = {
       delete: async (token, id) => {
         const response = await fetch(`${API_URL}/api/admin/servers/${id}`, {
           method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // Lifecycle control: action is one of 'start' | 'stop' | 'sleep'.
+      control: async (token, id, action) => {
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}/${action}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // Send a console command to a running server.
+      command: async (token, id, command) => {
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}/command`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ command })
+        });
+        return handleResponse(response);
+      }
+    },
+    give: async (token, data) => {
+      const response = await fetch(`${API_URL}/api/admin/give`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
+      });
+      return handleResponse(response);
+    },
+    rewards: {
+      getAll: async (token, kind) => {
+        const url = kind ? `${API_URL}/api/admin/rewards?kind=${kind}` : `${API_URL}/api/admin/rewards`;
+        const response = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      create: async (token, data) => {
+        const response = await fetch(`${API_URL}/api/admin/rewards`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      update: async (token, id, data) => {
+        const response = await fetch(`${API_URL}/api/admin/rewards/${id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      delete: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/rewards/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
+    boxPools: {
+      getAll: async (token, size) => {
+        const url = size ? `${API_URL}/api/admin/box-pools?size=${size}` : `${API_URL}/api/admin/box-pools`;
+        const response = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      add: async (token, data) => {
+        const response = await fetch(`${API_URL}/api/admin/box-pools`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      delete: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/box-pools/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
+    audit: {
+      getAll: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/audit`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
+    claims: {
+      getAll: async (token, status) => {
+        const url = status ? `${API_URL}/api/admin/claims?status=${status}` : `${API_URL}/api/admin/claims`;
+        const response = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      approve: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/claims/${id}/approve`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      reject: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/claims/${id}/reject`, {
+          method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
