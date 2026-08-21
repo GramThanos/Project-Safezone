@@ -1,17 +1,22 @@
-"""Account-side claim request routes.
+"""Account-side claim routes.
 
-An account claims an in-game player (username on a server). The player must be
-online at request time; an admin later approves the request to link it.
+An account claims an in-game character (username on a server). The character must
+be online at request time, and that *is* the proof: only someone controlling the
+character can have it connected, so the link is made immediately rather than
+queued for staff approval. Staff can revoke a link afterwards.
 """
 import re
 import logging
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from src.database import db
-from src.models.player import Player
+from src.models.character import Character
 from src.models.claim_request import ClaimRequest
+from src.models.notification import Notification
 from src.middleware.auth import token_required
 from src.utils.game_server import gs_request
 from src.utils.redis_utils import is_player_online
+from src.utils import audit, notify, alerting
 
 logger = logging.getLogger(__name__)
 claims_bp = Blueprint('claims', __name__, url_prefix='/api/claims')
@@ -39,7 +44,7 @@ def get_my_claims(current_user):
 @claims_bp.route('', methods=['POST'])
 @token_required
 def create_claim(current_user):
-    """Submit a claim request for an online in-game player"""
+    """Claim an online in-game character, linking it to this account."""
     data = request.get_json() or {}
     server_id = data.get('server_id')
     username = (data.get('in_game_username') or '').strip()
@@ -60,38 +65,63 @@ def create_claim(current_user):
     if status != 200:
         return jsonify({'error': 'Could not verify server'}), 503
 
-    # The target player must currently be online to prove it is real and present.
+    # The target character must currently be online to prove it is real and present.
     if not is_player_online(server_id, username):
-        return jsonify({'error': 'That player is not currently online on this server'}), 409
+        return jsonify({'error': 'That character is not currently online on this server'}), 409
 
     try:
         with db.get_db() as session:
-            # Block if this identity is already linked to a verified player.
-            already_linked = (session.query(Player)
+            # One account per in-game identity. This is the only real gate now
+            # that approval is automatic.
+            already_linked = (session.query(Character)
                               .filter_by(server_id=server_id, in_game_username=username, verified=True)
                               .first())
             if already_linked:
-                return jsonify({'error': 'That player is already linked to an account'}), 409
+                return jsonify({'error': 'That character is already linked to an account'}), 409
 
-            # Block duplicate pending requests for the same identity.
-            existing = (session.query(ClaimRequest)
-                        .filter_by(server_id=server_id, in_game_username=username,
-                                   status=ClaimRequest.STATUS_PENDING)
-                        .first())
-            if existing:
-                return jsonify({'error': 'A pending claim for that player already exists'}), 409
+            character = Character(
+                user_id=current_user['user_id'],
+                name=username,
+                server_id=server_id,
+                in_game_username=username,
+                verified=True
+            )
+            session.add(character)
+            session.flush()  # obtain character.id
 
+            # The claim row is kept as the record of how the link came about.
             claim = ClaimRequest(
                 user_id=current_user['user_id'],
                 server_id=server_id,
                 in_game_username=username,
-                status=ClaimRequest.STATUS_PENDING
+                status=ClaimRequest.STATUS_APPROVED,
+                character_id=character.id,
+                reviewed_at=datetime.utcnow()
             )
             session.add(claim)
             session.flush()
+
+            # actor None = the system decided this, not a staff member.
+            audit.record(session, None, 'claim.auto_approve',
+                         target=f'claim:{claim.id}',
+                         detail=f"linked {username}@server{server_id} to user "
+                                f"{current_user['user_id']} (online check passed)")
+
+            notify.send(session, current_user['user_id'], Notification.KIND_CLAIM,
+                        f'{username} is linked to your account',
+                        body='You can send rewards to this character while it is online.',
+                        link='/characters')
+
+            alerting.emit('character.linked',
+                          f'{username} is now linked to an account',
+                          server_id=server_id,
+                          fields=[('Character', username),
+                                  ('Account', current_user.get('username'))])
+
             return jsonify({
-                'message': 'Claim request submitted',
-                'claim': claim.to_dict()
+                'message': 'Character linked to your account',
+                'claim': claim.to_dict(),
+                'character': character.to_dict()
             }), 201
     except Exception as e:
         logger.error(f"Create claim error: {e}")

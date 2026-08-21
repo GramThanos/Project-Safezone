@@ -36,28 +36,5 @@ class TestItemCommand(unittest.TestCase):
                 commands.build_item_command('Alice', 'Base.Axe', bad)
 
 
-class TestUsableCommand(unittest.TestCase):
-    def test_substitutes_username(self):
-        self.assertEqual(
-            commands.build_usable_command('Bob', 'godmode "{username}" -true'),
-            'godmode "Bob" -true'
-        )
-
-    def test_template_without_placeholder(self):
-        self.assertEqual(
-            commands.build_usable_command('Bob', 'servermsg hello'),
-            'servermsg hello'
-        )
-
-    def test_rejects_bad_username(self):
-        with self.assertRaises(commands.CommandError):
-            commands.build_usable_command('bad name', 'x {username}')
-
-    def test_rejects_newline_template(self):
-        for bad in ['cmd\nquit', 'cmd\rquit', '']:
-            with self.assertRaises(commands.CommandError):
-                commands.build_usable_command('Bob', bad)
-
-
 if __name__ == '__main__':
     unittest.main()

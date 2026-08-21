@@ -3,88 +3,117 @@ services:
   # Game Server and Manager
   game-server:
     build: ./game-server
-    container_name: safezone_game_server
-    # The manager API listens on MANAGER_API_PORT (5000) inside the container;
-    # publish it on host port 5001.
+    restart: unless-stopped
     ports:
       - "16261:16261/udp"
       - "16262:16262/udp"
-      - "5001:5000"
     environment:
       - TZ=Athens/Europe
-      - DATABASE_URL=mysql+pymysql://safezone:S4feZone_D4tabas3_Pas5w0rd@db/safezone
+      - DATABASE_URL=mysql+pymysql://${DATABASE_USER:-safezone}:${DATABASE_PASSWORD:-S4feZone_D4tabas3_Pas5w0rd}@db/${DATABASE_NAME:-safezone}
       - CACHE_URL=redis://cache:6379
       - MANAGER_API_PORT=5000
-      - MANAGER_API_TOKEN=S4feZone_API_T0k3n
-      #- STEAM_APP_BETA=42.13.1
+      - MANAGER_API_TOKEN=${MANAGER_API_TOKEN:-S4feZone_API_T0k3n}
       - STEAM_INSTALL_DIR=/opt/steam-apps
+      # The game installs with -Xmx8g and ZGC, which assume a machine bigger
+      # than many hosts. `auto` measures this container's memory and CPU limits
+      # at launch and picks values that fit, so the same compose file is right
+      # on a small box and a large one. Override with a size (e.g. 4g) and a
+      # collector (Z, G1, Parallel, Serial), or `keep` to change nothing.
+      - GAME_SERVER_MAX_HEAP=auto
+      - GAME_SERVER_GC=auto
+      # Outbound email lives here, not in the backend: this is the only
+      # container with egress, so it is the only one that can reach a mail
+      # server. Blank SMTP_HOST means messages are logged instead of sent.
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_TLS=${SMTP_TLS:-true}
+      - SMTP_FROM=${SMTP_FROM:-}
     depends_on:
       - db
       - cache
     volumes:
-      - game_data:/opt/steam-apps
-    #  - steamcmd_data:/home/steam/steamcmd
-    #  - game_data:/home/steam/Steam
-    restart: unless-stopped
+      - game_data:/home/steam/Zomboid
+      - game_files:/opt/steam-apps
+      - game_backups:/backups
     networks:
       - default
-      - safezone_network
+      - internal
 
   # Flask Backend API
   backend:
     build: ./backend
-    container_name: safezone_web_backend
-    #ports:
-    #  - "5000:5000"
+    restart: unless-stopped
     environment:
       - TZ=Athens/Europe
       - DATABASE_HOST=db
-      - DATABASE_NAME=safezone
-      - DATABASE_USER=safezone
-      - DATABASE_PASSWORD=S4feZone_D4tabas3_Pas5w0rd
+      - DATABASE_NAME=${DATABASE_NAME:-safezone}
+      - DATABASE_USER=${DATABASE_USER:-safezone}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-S4feZone_D4tabas3_Pas5w0rd}
       - REDIS_HOST=cache
       - REDIS_PORT=6379
-      - SECRET_KEY=S4feZone_W3bApp_S3cr3t_K3y
+      - SECRET_KEY=${SECRET_KEY:-S4feZone_W3bApp_S3cr3t_K3y}
       - TOKEN_EXPIRY_HOURS=${TOKEN_EXPIRY_HOURS:-24}
-      - API_TOKEN=S4feZone_API_T0k3n
+      - API_TOKEN=${API_TOKEN:-S4feZone_API_T0k3n}
       - GAME_SERVER_API_URL=http://game-server:5000
     depends_on:
       - db
       - cache
-    restart: unless-stopped
     networks:
-      - safezone_network
+      - internal
+
+  # Recurring jobs scheduler
+  scheduler:
+    build: ./backend
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "scheduler"]
+    environment:
+      - TZ=Athens/Europe
+      - DATABASE_HOST=db
+      - DATABASE_NAME=${DATABASE_NAME:-safezone}
+      - DATABASE_USER=${DATABASE_USER:-safezone}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-S4feZone_D4tabas3_Pas5w0rd}
+      - REDIS_HOST=cache
+      - REDIS_PORT=6379
+      - SECRET_KEY=${SECRET_KEY:-S4feZone_W3bApp_S3cr3t_K3y}
+      - API_TOKEN=${API_TOKEN:-S4feZone_API_T0k3n}
+      - GAME_SERVER_API_URL=http://game-server:5000
+    depends_on:
+      - db
+      - cache
+      - backend
+    networks:
+      - internal
 
   # React Frontend
   frontend:
     build: ./frontend
-    container_name: safezone_web_frontend
+    restart: unless-stopped
     ports:
       - "8080:80"
     environment:
       - TZ=Athens/Europe
     depends_on:
       - backend
-    restart: unless-stopped
     networks:
       - default
-      - safezone_network
+      - internal
 
   # MariaDB Database
   db:
     image: mariadb:11
-    container_name: safezone_db
+    restart: unless-stopped
     environment:
       - TZ=Athens/Europe
-      - MYSQL_DATABASE=safezone
-      - MYSQL_USER=safezone
-      - MYSQL_PASSWORD=S4feZone_D4tabas3_Pas5w0rd
-      - MYSQL_ROOT_PASSWORD=S4feZone_D4tabas3_Pas5w0rd
+      - MYSQL_DATABASE=${DATABASE_NAME:-safezone}
+      - MYSQL_USER=${DATABASE_USER:-safezone}
+      - MYSQL_PASSWORD=${DATABASE_PASSWORD:-S4feZone_D4tabas3_Pas5w0rd}
+      - MYSQL_ROOT_PASSWORD=${DATABASE_ROOT_PASSWORD:-S4feZone_D4tabas3_Pas5w0rd}
     volumes:
       - db_data:/var/lib/mysql
-    restart: unless-stopped
     networks:
-      - safezone_network
+      - internal
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
@@ -94,12 +123,11 @@ services:
   # Redis Cache
   cache:
     image: redis:7-alpine
-    container_name: safezone_cache
+    restart: unless-stopped
     environment:
       - TZ=Athens/Europe
-    restart: unless-stopped
     networks:
-      - safezone_network
+      - internal
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -109,12 +137,16 @@ services:
 volumes:
   db_data:
     driver: local
+  game_backups:
+    driver: local
   steamcmd_data:
     driver: local
   game_data:
     driver: local
+  game_files:
+    driver: local
 
 networks:
   default:
-  safezone_network:
+  internal:
     internal: true

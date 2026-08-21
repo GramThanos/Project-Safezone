@@ -13,6 +13,48 @@ STEAMCMD_BIN = os.path.join(
 )
 #DEBUG = os.environ.get("DEBUG", "true")
 
+# ANSI escape sequences (colours, cursor movement, erase-line, hide-cursor, ...).
+_ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+
+
+# Workshop content lives under Project Zomboid's own app id.
+WORKSHOP_APP_ID = "108600"
+
+
+def clean_console_output(text):
+    """Collapse terminal control output into plain, readable log lines.
+
+    SteamCMD reports download progress by rewriting a single line: it prints a
+    progress string, emits a carriage return to move the cursor back to column
+    0, then prints the next state over the top. Captured to a string that
+    becomes one very long line holding every intermediate state.
+
+    For each physical line we keep only the last carriage-return segment - i.e.
+    what a terminal would actually be showing once the overwrites are done -
+    and drop the superseded ones. ANSI escapes are stripped and runs of blank
+    lines are collapsed.
+    """
+    if not text:
+        return ''
+
+    text = _ANSI_RE.sub('', text)
+
+    lines = []
+    for raw_line in text.split('\n'):
+        # Splitting on '\r' also handles CRLF endings and pure-progress lines.
+        segments = [s for s in raw_line.split('\r') if s.strip()]
+        lines.append(segments[-1].rstrip() if segments else '')
+
+    # Collapse consecutive blank lines left behind by the removed progress spam.
+    cleaned = []
+    for line in lines:
+        if not line and (not cleaned or not cleaned[-1]):
+            continue
+        cleaned.append(line)
+
+    return '\n'.join(cleaned).strip()
+
+
 def check_steamcmd():
     """
     Validates that SteamCMD exists and is being run by the correct user.
@@ -108,18 +150,20 @@ def app_info(appid):
 def app_update(appid, beta=None, install_dir="/opt/steam-apps/"):
     """Update or install a Steam app, validating files.
 
-    Returns ``(True, None)`` on success or ``(False, error_message)`` on failure.
+    Returns ``(ok, error_message, output)``. ``output`` is the captured SteamCMD
+    console text with progress-line overwrites stripped (see
+    :func:`clean_console_output`) so it is safe to persist on a task.
     """
     err = check_steamcmd()
     if err:
-        return False, err
+        return False, err, ''
 
     # Normalize path and ensure it exists
     install_dir = os.path.abspath(install_dir)
     try:
         os.makedirs(install_dir, exist_ok=True)
     except OSError as e:
-        return False, f"Could not create directory {install_dir}: {e}"
+        return False, f"Could not create directory {install_dir}: {e}", ''
 
     # Build update command
     update_params = ["+app_update", str(appid)]
@@ -154,10 +198,10 @@ def app_update(appid, beta=None, install_dir="/opt/steam-apps/"):
             stderr=subprocess.STDOUT, 
             text=True
         )
-        return True, None, result.stdout
+        return True, None, clean_console_output(result.stdout)
     except subprocess.CalledProcessError as e:
         # e.output holds the captured string even if the command fails
-        return False, f"SteamCMD update failed for AppID {appid} (rc={e.returncode})", e.output
+        return False, f"SteamCMD update failed for AppID {appid} (rc={e.returncode})", clean_console_output(e.output)
     except Exception as e:
         return False, f"SteamCMD could not be executed: {e}", ""
 
@@ -170,3 +214,112 @@ if __name__ == "__main__":
         print(f"app_info failed: {err}", file=sys.stderr)
     # Example update/install
     #ok, err = app_update(380870, beta="42.13.1", install_dir="/opt/steam-apps/")
+
+
+def workshop_download(item_ids, install_dir="/opt/steam-apps/"):
+    """Download or update Workshop items.
+
+    Returns ``(ok, error_message, output)``, same shape as :func:`app_update`.
+
+    All items go in one SteamCMD invocation on purpose: each run pays the login
+    and startup cost, and a mod list of twenty would otherwise take minutes of
+    pure overhead.
+    """
+    err = check_steamcmd()
+    if err:
+        return False, err, ''
+
+    if not item_ids:
+        return True, None, 'no Workshop items configured'
+
+    install_dir = os.path.abspath(install_dir)
+    try:
+        os.makedirs(install_dir, exist_ok=True)
+    except OSError as e:
+        return False, f"Could not create directory {install_dir}: {e}", ''
+
+    downloads = []
+    for item in item_ids:
+        # Defensive: these reach a command line. The caller validates too.
+        if not str(item).isdigit():
+            return False, f"'{item}' is not a Workshop item id", ''
+        downloads.extend(["+workshop_download_item", WORKSHOP_APP_ID, str(item)])
+
+    cmd = [
+        STEAMCMD_BIN,
+        "@ShutdownOnFailedCommand", "1",
+        "@NoPromptForPassword", "1",
+        "+force_install_dir", install_dir,
+        "+login", "anonymous",
+    ] + downloads + ["+quit"]
+
+    try:
+        result = subprocess.run(
+            cmd, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, timeout=3600
+        )
+        return True, None, clean_console_output(result.stdout)
+    except subprocess.TimeoutExpired:
+        return False, 'SteamCMD timed out downloading Workshop items', ''
+    except subprocess.CalledProcessError as e:
+        return False, f"Workshop download failed (rc={e.returncode})", clean_console_output(e.output)
+    except Exception as e:
+        return False, f"SteamCMD could not be executed: {e}", ''
+
+
+def manifest_path(appid, install_dir):
+    """Where SteamCMD records what it installed for an app."""
+    return os.path.join(os.path.abspath(install_dir), 'steamapps',
+                        f'appmanifest_{appid}.acf')
+
+
+def installed_app_state(appid, install_dir):
+    """What is actually installed, read from Steam's own manifest.
+
+    This is the local half of the "am I up to date?" question - `app_info`
+    answers the remote half. Returns ``(state, error)``; ``state`` is None with
+    no error when nothing is installed yet, which is a normal first-run answer
+    rather than a failure.
+
+    `buildid` is the field that matters: comparing it against the branch's
+    buildid from `app_info` is the only reliable way to tell a current install
+    from a stale one. Version strings on disk lie after a partial update.
+    """
+    path = manifest_path(appid, install_dir)
+    if not os.path.isfile(path):
+        return None, None
+
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+            parsed = vdf.load(handle)
+    except Exception as e:
+        return None, f"Could not read {path}: {e}"
+
+    app_state = parsed.get('AppState') if isinstance(parsed, dict) else None
+    if not isinstance(app_state, dict):
+        return None, f"{path} has no AppState block"
+
+    def _int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    # The branch is recorded per-config and is absent entirely on `public`,
+    # which is why this reports None rather than guessing a name.
+    beta = (app_state.get('UserConfig', {}) or {}).get('betakey') \
+        or (app_state.get('MountedConfig', {}) or {}).get('betakey') \
+        or None
+
+    return {
+        'appid': str(app_state.get('appid') or appid),
+        'name': app_state.get('name'),
+        'buildid': app_state.get('buildid'),
+        'branch': beta,
+        'install_dir': os.path.abspath(install_dir),
+        'size_on_disk': _int(app_state.get('SizeOnDisk')),
+        'last_updated': _int(app_state.get('LastUpdated')),
+        # 4 means "fully installed"; anything else is mid-update or damaged.
+        'state_flags': _int(app_state.get('StateFlags')),
+    }, None

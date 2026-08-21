@@ -1,22 +1,18 @@
-/*
- * Project Safezone — minimal helpers on top of Bootstrap 5.3 (dark theme).
- * The UI is built from Bootstrap components; the rules below only cover things
- * Bootstrap utilities can't express (a display font and a couple of fixed
- * media heights). Everything else uses stock Bootstrap classes.
- */
+/* Project Safezone */
 
 .font-display {
 	font-family: "Oswald", sans-serif;
 	letter-spacing: 0.5px;
 }
 
-/* Hero banner height — layout/overlay handled by Bootstrap .card-img-overlay */
+/* Hero banner */
 .hero-img {
 	height: 70vh;
 	min-height: 380px;
+	mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 75%, rgba(0, 0, 0, 0) 99%);
 }
 
-/* Card banner / avatar image height (uses Bootstrap .object-fit-cover) */
+/* Card banner */
 .card-banner {
 	height: 180px;
 }

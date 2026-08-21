@@ -1,4 +1,8 @@
-"""Audit log: a record of sensitive reward/claim actions for accountability."""
+"""Audit log: a record of every privileged action, for accountability.
+
+Covers role changes, server lifecycle and console commands, claim decisions,
+reward and loot-pool edits, direct gives, character unlinks and deliveries.
+"""
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime
 from src.database import Base

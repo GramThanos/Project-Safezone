@@ -1,11 +1,16 @@
 """Reward catalog model (items and usables).
 
 A unified table keeps delivery uniform: items carry an ``in_game_id`` delivered via
-`additem`; usables carry a ``command_template`` (may reference ``{username}``)
-delivered as a raw console command. The admin UI presents them as two lists.
+`additem`; usables carry an ``action_id`` from the game-server's action catalog
+plus its ``action_params`` (e.g. ``teleport_to_beacon`` with a destination). The
+admin UI presents them as two lists.
+
+Every usable is a catalog action. The free-text command field that predated the
+catalog has been removed, so there is no longer any way to reach the game console
+with a string the catalog did not produce.
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, JSON
 from src.database import Base
 
 
@@ -23,7 +28,9 @@ class Reward(Base):
     description = Column(Text)
     icon = Column(String(512))
     in_game_id = Column(String(64))        # for items (e.g. "Base.Axe")
-    command_template = Column(Text)        # for usables (may contain {username})
+    count = Column(Integer, nullable=False, default=1)  # how many, for items
+    action_id = Column(String(64))         # for usables: game-server action catalog id
+    action_params = Column(JSON)           # for usables: validated action parameters
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -38,7 +45,9 @@ class Reward(Base):
             'description': self.description,
             'icon': self.icon,
             'in_game_id': self.in_game_id,
-            'command_template': self.command_template,
+            'count': self.count if self.count is not None else 1,
+            'action_id': self.action_id,
+            'action_params': self.action_params or {},
             'active': self.active,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }

@@ -94,37 +94,61 @@ def process_pending_tasks():
     
     return tasks_processed
 
+def sweep():
+    """Periodic safety net: reap dead tasks, then drain the pending queue.
+
+    Task creation notifies this service over pub/sub, but a publish can be lost
+    (no subscriber yet, a dropped connection), which would leave a task pending
+    until some unrelated event happened to wake the loop. The sweep makes a lost
+    notification cost a delay instead of the task.
+    """
+    try:
+        reaped = tasks.reap_stuck()
+        if reaped:
+            _log(f"Failed {reaped} task(s) abandoned in 'processing'")
+    except Exception as e:
+        _log(f"Error reaping stuck tasks: {e}")
+    return process_pending_tasks()
+
+
 def manage_tasks():
     """Main manager loop with improved stability and error recovery"""
     _log("Starting Task Manager Service...")
-    
+
     # 1. Initial backlog processing
     _log("Checking for existing pending tasks on startup...")
-    initial_count = process_pending_tasks()
+    initial_count = sweep()
     _log(f"Processed {initial_count} existing tasks on startup")
 
     while True:
         try:
             _log(f"Subscribing to channel: {config.MANAGE_TASKS_CHANNEL}")
             pubsub = cache.subscribe_to_channel(config.MANAGE_TASKS_CHANNEL)
-            
+
             if not pubsub:
                 _log("ERROR: Failed to subscribe. Retrying in 5s...")
                 time.sleep(5)
                 continue
 
-            _log("System online. Listening for new task notifications...")
-            
-            # Listen for messages
-            for message in pubsub.listen():
-                # Ignore internal Redis subscription messages
-                if message['type'] != 'message':
-                    continue
+            _log(f"System online. Listening for new task notifications "
+                 f"(sweeping every {config.TASK_SWEEP_INTERVAL}s).")
 
-                # Process tasks
-                count = process_pending_tasks()
-                if count > 0:
-                    _log(f"Processed {count} tasks in response to event")
+            # Poll rather than block on listen(), so the sweep still runs while
+            # the channel is quiet.
+            last_sweep = time.monotonic()
+            while True:
+                message = pubsub.get_message(timeout=1.0)
+
+                if message and message.get('type') == 'message':
+                    count = process_pending_tasks()
+                    last_sweep = time.monotonic()
+                    if count > 0:
+                        _log(f"Processed {count} tasks in response to event")
+                elif time.monotonic() - last_sweep >= config.TASK_SWEEP_INTERVAL:
+                    count = sweep()
+                    last_sweep = time.monotonic()
+                    if count > 0:
+                        _log(f"Processed {count} tasks in periodic sweep")
 
         except Exception as e:
             _log(f"Connection lost or loop error: {e}. Reconnecting...")

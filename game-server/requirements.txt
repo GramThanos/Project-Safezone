@@ -5,3 +5,4 @@ redis==7.1.0
 SQLAlchemy==2.0.45
 supervisor==4.2.5
 vdf==3.4
+tzdata>=2024.1

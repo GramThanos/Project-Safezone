@@ -15,12 +15,15 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 RUN mkdir -p /var/log/supervisor && \
     chown -R steam:steam /var/log/supervisor
 
-# Configure folders 
-RUN mkdir -p /opt/steam-apps && \
-    chown -R steam:steam /opt/steam-apps
+# Configure folders
+# /opt/steam-apps is where the game files are installed
+# /home/steam/Zomboid is the game's data directory (HOME/Zomboid),
+# /backups is where world archives are written.
+RUN mkdir -p /opt/steam-apps /home/steam/Zomboid /backups && \
+    chown -R steam:steam /opt/steam-apps /home/steam/Zomboid /backups
 
-USER steam
 # Install Python dependencies
+USER steam
 COPY requirements.txt .
 RUN python3 -m pip install --break-system-packages --upgrade pip && \
     python3 -m pip install --break-system-packages --no-cache-dir -r requirements.txt
