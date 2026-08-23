@@ -13,10 +13,12 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+import ServerTemplateModal from '../../components/ServerTemplateModal';
 
 function ServerConfig({ server, onClose }) {
   const { token } = useAuth();
   const [tab, setTab] = useState('simple');
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const [simple, setSimple] = useState([]);
   const [simpleDraft, setSimpleDraft] = useState({});
@@ -24,6 +26,10 @@ function ServerConfig({ server, onClose }) {
   const [raw, setRaw] = useState(null);
   const [rawDraft, setRawDraft] = useState({});
   const [newKey, setNewKey] = useState({ key: '', value: '' });
+
+  // World difficulty (SandboxVars.lua) — its own file, edited independently.
+  const [sandbox, setSandbox] = useState(null);
+  const [sandboxDraft, setSandboxDraft] = useState({});
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -39,9 +45,10 @@ function ServerConfig({ server, onClose }) {
     setError('');
     setNotice('');
     try {
-      const [simpleData, rawData] = await Promise.all([
+      const [simpleData, rawData, sandboxData] = await Promise.all([
         api.admin.servers.config(token, server.id),
-        api.admin.servers.configRaw(token, server.id)
+        api.admin.servers.configRaw(token, server.id),
+        api.admin.servers.sandbox(token, server.id)
       ]);
 
       setSimple(simpleData.settings || []);
@@ -59,6 +66,11 @@ function ServerConfig({ server, onClose }) {
         rawStart[e.key] = { value: e.secret ? '' : (e.value ?? ''), disabled: e.disabled };
       });
       setRawDraft(rawStart);
+
+      setSandbox(sandboxData);
+      const sbStart = {};
+      (sandboxData.entries || []).forEach((e) => { sbStart[e.key] = e.value; });
+      setSandboxDraft(sbStart);
     } catch (err) {
       console.error('Load config error:', err);
       setError(err.message || 'Could not read the config');
@@ -67,6 +79,7 @@ function ServerConfig({ server, onClose }) {
   };
 
   const editable = !!raw?.editable;
+  const sandboxEditable = !!sandbox?.editable;
 
   const saveSimple = async (e) => {
     e.preventDefault();
@@ -140,6 +153,117 @@ function ServerConfig({ server, onClose }) {
     setNewKey({ key: '', value: '' });
   };
 
+  const saveSandbox = async () => {
+    setSaving(true);
+    setError('');
+    setNotice('');
+
+    // Only send what actually changed, so an untouched key is never rewritten.
+    const changes = {};
+    (sandbox?.entries || []).forEach((e) => {
+      if (e.type === null) return;   // unmodelled value: shown, not editable
+      const next = sandboxDraft[e.key];
+      // A cleared numeric field is not a value; leave the key as it was rather
+      // than writing an empty string over a number.
+      if ((e.type === 'int' || e.type === 'float') && (next === '' || Number.isNaN(next))) return;
+      if (next !== e.value) changes[e.key] = next;
+    });
+
+    if (Object.keys(changes).length === 0) {
+      setNotice('Nothing changed.');
+      setSaving(false);
+      return;
+    }
+
+    try {
+      const data = await api.admin.servers.saveSandbox(token, server.id, changes, sandbox.version);
+      setNotice(`${data.message} (${(data.changed || []).join(', ')})`);
+      loadAll();
+    } catch (err) {
+      console.error('Save sandbox error:', err);
+      setError(err.message || 'Could not save');
+    }
+    setSaving(false);
+  };
+
+  // Download the current server as a portable template: both the INI settings
+  // and the SandboxVars in one file. Excluded keys (ports/credentials/identity
+  // for the INI, VERSION for the sandbox) are filtered out by the backend, so
+  // what lands in the file is safe to publish.
+  const downloadTemplate = async () => {
+    setError('');
+    setNotice('');
+    try {
+      const tpl = await api.admin.servers.exportConfigTemplate(token, server.id, server.name);
+      const blob = new Blob([JSON.stringify(tpl, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${server.name}-template.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export template error:', err);
+      setError(err.message || 'Could not export');
+    }
+  };
+
+  const onTemplateImported = (result) => {
+    setShowTemplates(false);
+    setNotice(result.message || 'Template applied.');
+    if (result.error) setError(result.error);
+    loadAll();
+  };
+
+  const sandboxField = (e) => {
+    const value = sandboxDraft[e.key];
+    if (e.type === 'bool') {
+      return (
+        <div className="form-check form-switch">
+          <input
+            className="form-check-input"
+            type="checkbox"
+            id={`sb-${e.key}`}
+            disabled={!sandboxEditable}
+            checked={!!value}
+            onChange={(ev) => setSandboxDraft({ ...sandboxDraft, [e.key]: ev.target.checked })}
+          />
+          <label className="form-check-label" htmlFor={`sb-${e.key}`}><code>{e.key}</code></label>
+        </div>
+      );
+    }
+    const numeric = e.type === 'int' || e.type === 'float';
+    return (
+      <>
+        <label className="form-label" htmlFor={`sb-${e.key}`}>
+          <code>{e.key}</code>
+          {e.type === null && (
+            <span className="badge text-bg-secondary ms-2" title="This value's type isn't recognised, so it can't be edited here">
+              read-only
+            </span>
+          )}
+        </label>
+        <input
+          id={`sb-${e.key}`}
+          type={numeric ? 'number' : 'text'}
+          step={e.type === 'float' ? 'any' : undefined}
+          className="form-control"
+          disabled={!sandboxEditable || e.type === null}
+          value={value ?? ''}
+          onChange={(ev) => {
+            const raw = ev.target.value;
+            const next = e.type === 'int' ? (raw === '' ? '' : parseInt(raw, 10))
+              : e.type === 'float' ? (raw === '' ? '' : parseFloat(raw))
+                : raw;
+            setSandboxDraft({ ...sandboxDraft, [e.key]: next });
+          }}
+        />
+      </>
+    );
+  };
+
   const simpleField = (s) => {
     if (s.type === 'bool') {
       return (
@@ -175,6 +299,7 @@ function ServerConfig({ server, onClose }) {
   if (loading) return <Spinner />;
 
   return (
+    <>
     <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} onClick={onClose}>
       <div
         className="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable"
@@ -190,7 +315,7 @@ function ServerConfig({ server, onClose }) {
             {!editable && (
               <div className="alert alert-warning">
                 This server is <strong>{raw?.state || 'in an unknown state'}</strong>, so the
-                config is read-only. Project Zomboid rewrites this file when it
+                config is read-only. Project Zomboid rewrites its files when it
                 shuts down, so anything saved now would be lost. Stop the server
                 to edit it &mdash; editable states are{' '}
                 {(raw?.editable_states || []).join(', ')}.
@@ -217,6 +342,14 @@ function ServerConfig({ server, onClose }) {
                   Advanced ({(raw?.entries || []).length} keys)
                 </button>
               </li>
+              <li className="nav-item">
+                <button
+                  className={`nav-link ${tab === 'sandbox' ? 'active' : ''}`}
+                  onClick={() => setTab('sandbox')}
+                >
+                  World ({(sandbox?.entries || []).length})
+                </button>
+              </li>
             </ul>
 
             {tab === 'simple' ? (
@@ -231,7 +364,7 @@ function ServerConfig({ server, onClose }) {
                   {saving ? 'Saving…' : 'Save settings'}
                 </button>
               </form>
-            ) : (
+            ) : tab === 'raw' ? (
               <>
                 <p className="text-body-secondary">
                   Every key in the file, including ones this panel does not know
@@ -361,19 +494,69 @@ function ServerConfig({ server, onClose }) {
                   {saving ? 'Saving…' : 'Save file'}
                 </button>
               </>
+            ) : (
+              <>
+                <p className="text-body-secondary">
+                  Gameplay difficulty from <code>SandboxVars.lua</code>: how long
+                  until water and power cut, how much loot spawns, how many
+                  zombies, how fast hunger and thirst climb. These are separate
+                  from the settings above. Nested groups and unrecognised values
+                  are not shown here &mdash; use a template or edit the file
+                  directly for those.
+                </p>
+
+                {(sandbox?.entries || []).length === 0 ? (
+                  <p className="text-body-secondary py-3 mb-0">
+                    No sandbox settings were found in this server's file.
+                  </p>
+                ) : (
+                  <>
+                    {(sandbox?.entries || []).map((e) => (
+                      <div className="mb-3" key={e.key}>
+                        {sandboxField(e)}
+                      </div>
+                    ))}
+                    <button className="btn btn-danger" onClick={saveSandbox} disabled={!sandboxEditable || saving}>
+                      {saving ? 'Saving…' : 'Save world settings'}
+                    </button>
+                  </>
+                )}
+              </>
             )}
           </div>
 
           <div className="modal-footer">
             <span className="text-body-secondary small me-auto">
-              {raw?.path}
+              {tab === 'sandbox' ? sandbox?.path : raw?.path}
             </span>
+            <button
+              className="btn btn-outline-secondary"
+              onClick={() => setShowTemplates(true)}
+              disabled={!editable}
+              title={editable ? 'Apply a template (config + world) from the community or a file'
+                              : 'Stop the server to apply a template'}
+            >
+              <i className="fas fa-download"></i> Import template
+            </button>
+            <button className="btn btn-outline-secondary" onClick={downloadTemplate}>
+              <i className="fas fa-upload"></i> Export template
+            </button>
             <button className="btn btn-outline-secondary" onClick={loadAll}>Reload</button>
             <button className="btn btn-outline-secondary" onClick={onClose}>Close</button>
           </div>
         </div>
       </div>
     </div>
+
+    {showTemplates && (
+      <ServerTemplateModal
+        server={server}
+        versions={{ ini: raw?.version, sandbox: sandbox?.version }}
+        onImported={onTemplateImported}
+        onClose={() => setShowTemplates(false)}
+      />
+    )}
+    </>
   );
 }
 

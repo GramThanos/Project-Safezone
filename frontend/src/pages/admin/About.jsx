@@ -15,7 +15,7 @@ const dotColour = (value) => {
 
 const DEPENDENCIES = [
   ['Database', 'database', 'MariaDB — accounts, characters, rewards, the audit log.'],
-  ['Cache', 'cache', 'Redis — live server state, the online roster, rate limits.'],
+  ['Cache', 'cache', 'Redis — live server state, the online roster, signup CAPTCHAs.'],
   ['Game server', 'game_server', 'The orchestrator that runs and watches the game processes.']
 ];
 

@@ -1,0 +1,12 @@
+{
+  "schema": "safezone.template-list/v1",
+  "templates": [
+    {
+      "id": "relaxed",
+      "name": "Relaxed",
+      "description": "Cooperative, forgiving survival: no PvP, world pauses when empty, generous respawns, and an easy world where water and power never cut, loot is plentiful, and zombies are few.",
+      "settings": 15,
+      "sandbox": 18
+    }
+  ]
+}

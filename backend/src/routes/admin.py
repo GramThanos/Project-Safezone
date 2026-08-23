@@ -5,7 +5,7 @@ task operations are proxied to the game-server API, which owns those tables.
 """
 import logging
 from datetime import datetime, timedelta
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response, stream_with_context
 from src.database import db
 from src.models.user import User
 from src.models.character import Character
@@ -17,11 +17,12 @@ from src.models.notification import Notification
 from src.models.ban import Ban
 from src.models.alert_channel import AlertChannel
 from src.middleware.auth import moderator_required, admin_required
-from src.utils.game_server import gs_request
+from src.utils.game_server import gs_request, gs_stream
 from src.utils.redis_utils import apply_live_state
 from src.utils import (loot, audit, settings, mailer, paging, notify, jobs, moderation,
                        box_types, alerting, channels)
 from src.utils.actions import fetch_catalog, role_allows, validate_action
+from src.utils.rewards import validate_reward_payload, validate_usable_commands
 
 logger = logging.getLogger(__name__)
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -250,6 +251,43 @@ def admin_reset_password(current_user, user_id):
         return jsonify({'error': 'Internal server error'}), 500
 
 
+@admin_bp.route('/users/<int:user_id>/disable-2fa', methods=['POST'])
+@admin_required
+def admin_disable_2fa(current_user, user_id):
+    """Clear a user's two-factor auth (admin only).
+
+    With no recovery codes, a lost authenticator locks the owner out for good -
+    the code is the only key, and it lives on a device that is now gone. This is
+    the deliberate way back in: an admin turns the factor off so the user can
+    sign in with their password and, if they want, set it up again. It removes a
+    control, so it is audited and admin-only.
+    """
+    try:
+        with db.get_db() as session:
+            user = session.query(User).filter_by(id=user_id).first()
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            if not user.totp_enabled and not user.totp_secret:
+                return jsonify({'error': 'This account does not have two-factor auth set up'}), 400
+
+            user.totp_enabled = False
+            user.totp_secret = None
+            audit.record(session, current_user['user_id'], '2fa.admin_disabled',
+                         target=f'user:{user_id}',
+                         detail=f"two-factor auth cleared for {user.username}")
+            notify.send(session, user_id, Notification.KIND_ACCOUNT,
+                        'Two-factor authentication was turned off',
+                        body=('An administrator turned off two-factor '
+                              'authentication on your account. If this was not '
+                              'expected, contact the server staff and set it up '
+                              'again from your profile.'))
+            return jsonify({'message': f'Two-factor auth cleared for {user.username}.',
+                            'user': user.to_dict()}), 200
+    except Exception as e:
+        logger.error(f"Admin disable 2FA error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
 # ---------------------------------------------------------------------------
 # Server management (proxied to the game-server API)
 # ---------------------------------------------------------------------------
@@ -446,6 +484,97 @@ def restore_server_backup(current_user, server_id):
     return jsonify({'message': 'Restore queued', 'task': payload.get('data')}), 202
 
 
+@admin_bp.route('/servers/<int:server_id>/backups/upload', methods=['POST'])
+@admin_required
+def upload_server_backup(current_user, server_id):
+    """Forward an operator-supplied archive to the game-server (admin only).
+
+    Streamed straight through rather than buffered here: a world archive can be
+    large, and the backend has no reason to hold it in memory on the way past.
+    """
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'error': 'No file uploaded'}), 400
+
+    response, error = gs_stream(
+        'POST', f'/api/servers/{server_id}/backups/upload',
+        files={'file': (upload.filename, upload.stream, upload.mimetype
+                        or 'application/gzip')},
+    )
+    if error:
+        return jsonify(error[0]), error[1]
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return jsonify({'error': 'Invalid response from game server'}), 502
+    finally:
+        response.close()
+
+    if response.status_code not in (200, 201):
+        return jsonify({'error': payload.get('error', 'Upload failed')}), response.status_code
+
+    audit.record_standalone(current_user['user_id'], 'server.backup.upload',
+                            target=f'server:{server_id}',
+                            detail=(payload.get('data') or {}).get('name') or upload.filename)
+    return jsonify(payload), 201
+
+
+@admin_bp.route('/servers/<int:server_id>/backups/<archive_name>/download', methods=['GET'])
+@admin_required
+def download_server_backup(current_user, server_id, archive_name):
+    """Stream a backup archive down to the operator (admin only)."""
+    response, error = gs_stream(
+        'GET', f'/api/servers/{server_id}/backups/{archive_name}/download')
+    if error:
+        return jsonify(error[0]), error[1]
+
+    if response.status_code != 200:
+        # The error body is small JSON; read it and pass it on rather than
+        # streaming a 404 page back as if it were an archive.
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {'error': 'Could not download the backup'}
+        finally:
+            response.close()
+        return jsonify(payload), response.status_code
+
+    audit.record_standalone(current_user['user_id'], 'server.backup.download',
+                            target=f'server:{server_id}', detail=archive_name)
+
+    def generate():
+        try:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            response.close()
+
+    headers = {
+        'Content-Disposition': f'attachment; filename="{archive_name}"',
+    }
+    length = response.headers.get('Content-Length')
+    if length:
+        headers['Content-Length'] = length
+    return Response(stream_with_context(generate()),
+                    mimetype='application/gzip', headers=headers)
+
+
+@admin_bp.route('/servers/<int:server_id>/backups/<archive_name>', methods=['DELETE'])
+@admin_required
+def delete_server_backup(current_user, server_id, archive_name):
+    """Delete a backup archive (admin only)."""
+    payload, status = gs_request(
+        'DELETE', f'/api/servers/{server_id}/backups/{archive_name}')
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not delete the backup')}), status
+
+    audit.record_standalone(current_user['user_id'], 'server.backup.delete',
+                            target=f'server:{server_id}', detail=archive_name)
+    return jsonify({'message': payload.get('message', 'Deleted')}), 200
+
+
 @admin_bp.route('/servers/<int:server_id>/config', methods=['GET'])
 @moderator_required
 def get_server_config(current_user, server_id):
@@ -572,6 +701,110 @@ def update_server_config_raw(current_user, server_id):
                             detail=f"changed: {', '.join(sorted(result.get('changed') or [])) or 'nothing'}")
     return jsonify({
         'message': payload.get('message', 'Config updated'),
+        'changed': result.get('changed') or [],
+        'version': result.get('version')
+    }), 200
+
+
+@admin_bp.route('/servers/<int:server_id>/config/template/export', methods=['GET'])
+@admin_required
+def export_server_config_template(current_user, server_id):
+    """Build a portable config template from a server (admin only, proxied).
+
+    The game-server filters out ports, credentials and per-server identity, so
+    the returned JSON is safe to publish to the community repo and import onto
+    another server.
+    """
+    params = {'name': request.args.get('name', ''),
+              'description': request.args.get('description', '')}
+    payload, status = gs_request('GET', f'/api/servers/{server_id}/config/template',
+                                 params=params)
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not export the config')}), status
+    return jsonify(payload.get('data') or {}), 200
+
+
+@admin_bp.route('/servers/<int:server_id>/config/template/import', methods=['POST'])
+@admin_required
+def import_server_config_template(current_user, server_id):
+    """Apply a combined template to a server (admin only, proxied).
+
+    The template may come from the community list or a local file; either way it
+    arrives as ``{settings?, sandbox?, version?, sandbox_version?}`` - at least
+    one of the two halves must be present. The game-server re-filters each half
+    against its own blacklist before a byte is written. Refused unless off.
+    """
+    data = request.get_json(silent=True) or {}
+    settings = data.get('settings')
+    sandbox = data.get('sandbox')
+    has_settings = isinstance(settings, dict) and settings
+    has_sandbox = isinstance(sandbox, dict) and sandbox
+    if not has_settings and not has_sandbox:
+        return jsonify({'error': 'The template has no settings or sandbox values'}), 400
+
+    payload, status = gs_request(
+        'POST', f'/api/servers/{server_id}/config/template',
+        json={
+            'settings': settings if has_settings else None,
+            'sandbox': sandbox if has_sandbox else None,
+            'version': data.get('version'),
+            'sandbox_version': data.get('sandbox_version'),
+        }
+    )
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not import the template')}), status
+
+    result = payload.get('data') or {}
+    ini = result.get('settings') or {}
+    sb = result.get('sandbox') or {}
+    changed = (ini.get('changed') or []) + (sb.get('changed') or [])
+    skipped = (ini.get('skipped') or []) + (sb.get('skipped') or [])
+    audit.record_standalone(current_user['user_id'], 'server.config_template',
+                            target=f'server:{server_id}',
+                            detail=f"applied: {', '.join(sorted(changed)) or 'nothing'}"
+                                   + (f"; skipped: {', '.join(sorted(skipped))}" if skipped else ''))
+    return jsonify({
+        'message': payload.get('message', 'Template applied'),
+        'changed': changed,
+        'skipped': skipped,
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# SandboxVars: the gameplay-difficulty half of a server's config (a Lua file,
+# handled separately from the .ini). Water/power shutoff, loot abundance, zombie
+# population, stats decay. Admin only, like the raw config editor.
+# ---------------------------------------------------------------------------
+
+@admin_bp.route('/servers/<int:server_id>/config/sandbox', methods=['GET'])
+@admin_required
+def get_server_sandbox(current_user, server_id):
+    """The top-level SandboxVars for a server (admin only, proxied)."""
+    payload, status = gs_request('GET', f'/api/servers/{server_id}/config/sandbox')
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not read the sandbox')}), status
+    return jsonify(payload.get('data') or {}), 200
+
+
+@admin_bp.route('/servers/<int:server_id>/config/sandbox', methods=['PUT'])
+@admin_required
+def update_server_sandbox(current_user, server_id):
+    """Apply SandboxVars edits (admin only). Refused unless the server is off."""
+    data = request.get_json(silent=True) or {}
+    changes = data.get('changes') or {}
+    if not changes:
+        return jsonify({'error': 'Nothing to change'}), 400
+
+    payload, status = gs_request('PUT', f'/api/servers/{server_id}/config/sandbox', json=data)
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not write the sandbox')}), status
+
+    result = payload.get('data') or {}
+    audit.record_standalone(current_user['user_id'], 'server.sandbox',
+                            target=f'server:{server_id}',
+                            detail=f"changed: {', '.join(sorted(result.get('changed') or [])) or 'nothing'}")
+    return jsonify({
+        'message': payload.get('message', 'Sandbox updated'),
         'changed': result.get('changed') or [],
         'version': result.get('version')
     }), 200
@@ -769,6 +1002,273 @@ def delete_box_pool(current_user, entry_id):
             return jsonify({'message': 'Removed from pool'}), 200
     except Exception as ex:
         logger.error(f"Delete box pool error: {ex}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+# ---------------------------------------------------------------------------
+# Community box configs (import a loot pool from GitHub or a local file, export
+# the current one)
+#
+# A box config is a portable description of one size's loot pool: a list of
+# rewards, each carrying its full definition plus a drop weight. Importing it
+# creates any reward the catalog is missing (matched by name + kind, never
+# mutating an existing one) and sets this size's pool weights. The community
+# list is fetched by the game-server - the backend has no egress - and applied
+# here; a local-file import skips the fetch and posts the same JSON directly.
+# ---------------------------------------------------------------------------
+
+# The whole box config crosses a trust boundary (it is authored elsewhere), so
+# it is bounded like any other external input before a single row is written.
+MAX_CONFIG_REWARDS = 100
+MAX_POOL_WEIGHT = 1000
+REWARD_BOXES_PROXY_TIMEOUT = 20
+
+
+@admin_bp.route('/reward-boxes', methods=['GET'])
+@moderator_required
+def list_reward_boxes(current_user):
+    """The community loot-box config index (proxied to the game-server).
+
+    Reference data fetched from GitHub by the manager, the only service with
+    egress. ``stale`` reports a failed refresh without discarding a usable list.
+    """
+    params = {'refresh': '1'} if request.args.get('refresh') in ('1', 'true', 'yes') else None
+    payload, status = gs_request('GET', '/api/reward-boxes', params=params,
+                                 timeout=REWARD_BOXES_PROXY_TIMEOUT)
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'The community box list is unavailable')}), status
+    data = payload.get('data') or {}
+    return jsonify({'boxes': data.get('boxes', []), 'source': data.get('source'),
+                    'stale': payload.get('stale')}), 200
+
+
+@admin_bp.route('/reward-boxes/<string:box_id>', methods=['GET'])
+@moderator_required
+def get_reward_box(current_user, box_id):
+    """One community box config, for preview before import (proxied)."""
+    payload, status = gs_request('GET', f'/api/reward-boxes/{box_id}',
+                                 timeout=REWARD_BOXES_PROXY_TIMEOUT)
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'The box config is unavailable')}), status
+    return jsonify({'config': payload.get('data') or {}}), 200
+
+
+@admin_bp.route('/server-templates', methods=['GET'])
+@admin_required
+def list_server_templates(current_user):
+    """The community server-config template index (proxied to the game-server).
+
+    Admin, like the config editor these templates apply to: the screen where
+    somebody can quietly break a server is admin-only, and so is this. ``stale``
+    reports a failed refresh without discarding a usable list.
+    """
+    params = {'refresh': '1'} if request.args.get('refresh') in ('1', 'true', 'yes') else None
+    payload, status = gs_request('GET', '/api/server-templates', params=params,
+                                 timeout=REWARD_BOXES_PROXY_TIMEOUT)
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'The template list is unavailable')}), status
+    data = payload.get('data') or {}
+    return jsonify({'templates': data.get('templates', []), 'source': data.get('source'),
+                    'stale': payload.get('stale')}), 200
+
+
+@admin_bp.route('/server-templates/<string:template_id>', methods=['GET'])
+@admin_required
+def get_server_template(current_user, template_id):
+    """One community server-config template, for preview before import (proxied)."""
+    payload, status = gs_request('GET', f'/api/server-templates/{template_id}',
+                                 timeout=REWARD_BOXES_PROXY_TIMEOUT)
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'The template is unavailable')}), status
+    return jsonify({'template': payload.get('data') or {}}), 200
+
+
+def _prepare_config_reward(entry, index):
+    """Validate one config reward. Returns ``(payload, weight, error, status)``.
+
+    Applies the exact rules a hand-authored reward faces, so an external config
+    can never introduce a reward the panel itself would have rejected.
+    """
+    if not isinstance(entry, dict):
+        return None, None, f'reward {index} is malformed', 400
+
+    kind = entry.get('kind')
+    name = (entry.get('name') or '').strip()
+    payload = {
+        'kind': kind,
+        'name': name,
+        'description': (entry.get('description') or '').strip(),
+        'icon': (entry.get('icon') or '').strip(),
+    }
+    if kind == Reward.KIND_ITEM:
+        payload['in_game_id'] = (entry.get('in_game_id') or '').strip()
+        payload['count'] = entry.get('count', 1)
+    elif kind == Reward.KIND_USABLE:
+        payload['commands'] = entry.get('commands')
+
+    label = name or f'#{index}'
+    error = validate_reward_payload(payload)
+    if error:
+        return None, None, f'reward "{label}": {error}', 400
+    error, status = validate_usable_commands(payload)
+    if error:
+        return None, None, f'reward "{label}": {error}', status
+
+    weight = entry.get('weight', 1)
+    try:
+        weight = float(weight)
+    except (TypeError, ValueError):
+        return None, None, f'reward "{label}": weight must be a number', 400
+    if weight < 0 or weight > MAX_POOL_WEIGHT:
+        return None, None, f'reward "{label}": weight must be between 0 and {MAX_POOL_WEIGHT}', 400
+
+    return payload, weight, None, 200
+
+
+@admin_bp.route('/reward-boxes/import', methods=['POST'])
+@admin_required
+def import_reward_box(current_user):
+    """Apply a box config to a size's loot pool (admin only).
+
+    The config may come from the community list or a local file; either way it
+    arrives here as ``{size, config, replace?}`` and is fully re-validated. With
+    ``replace`` the pool is made to match the config exactly (entries absent from
+    it are removed); otherwise the import merges - it adds and reweights without
+    dropping rewards the config does not mention.
+    """
+    data = request.get_json(silent=True) or {}
+    size = data.get('size')
+    config = data.get('config')
+    replace = bool(data.get('replace'))
+
+    if size not in box_types.all_types():
+        return jsonify({'error': 'Invalid box size'}), 400
+    if not isinstance(config, dict):
+        return jsonify({'error': 'config is required'}), 400
+    rewards_in = config.get('rewards')
+    if not isinstance(rewards_in, list) or not rewards_in:
+        return jsonify({'error': 'The config has no rewards'}), 400
+    if len(rewards_in) > MAX_CONFIG_REWARDS:
+        return jsonify({'error': f'A config may hold at most {MAX_CONFIG_REWARDS} rewards'}), 400
+
+    # Validate everything before writing anything, so a bad entry halfway down
+    # cannot leave a half-imported pool behind.
+    prepared = []
+    for index, entry in enumerate(rewards_in, start=1):
+        payload, weight, error, status = _prepare_config_reward(entry, index)
+        if error:
+            return jsonify({'error': error}), status
+        prepared.append((payload, weight))
+
+    try:
+        summary = {'created': 0, 'reused': 0, 'added': 0, 'reweighted': 0, 'removed': 0}
+        with db.get_db() as session:
+            # Match on name + kind: reusing an item reward for a usable of the
+            # same name would put the wrong thing in the pool.
+            existing = {}
+            for r in session.query(Reward).all():
+                existing.setdefault(((r.name or '').strip().lower(), r.kind), r)
+
+            config_reward_ids = set()
+            pool_targets = []
+            for payload, weight in prepared:
+                is_item = payload['kind'] == Reward.KIND_ITEM
+                key = (payload['name'].lower(), payload['kind'])
+                reward = existing.get(key)
+                if reward is None:
+                    reward = Reward(
+                        kind=payload['kind'],
+                        name=payload['name'],
+                        description=payload.get('description', ''),
+                        icon=payload.get('icon', ''),
+                        in_game_id=payload.get('in_game_id') if is_item else None,
+                        count=payload.get('count', 1) if is_item else 1,
+                        commands=payload.get('commands') if not is_item else None,
+                        active=True,
+                    )
+                    session.add(reward)
+                    session.flush()
+                    existing[key] = reward
+                    summary['created'] += 1
+                else:
+                    summary['reused'] += 1
+                pool_targets.append((reward.id, weight))
+                config_reward_ids.add(reward.id)
+
+            pool_by_reward = {e.reward_id: e for e in
+                              session.query(BoxLootPool).filter_by(size=size).all()}
+            for reward_id, weight in pool_targets:
+                entry = pool_by_reward.get(reward_id)
+                if entry is None:
+                    session.add(BoxLootPool(size=size, reward_id=reward_id, weight=weight))
+                    summary['added'] += 1
+                elif entry.weight != weight:
+                    entry.weight = weight
+                    summary['reweighted'] += 1
+
+            if replace:
+                for reward_id, entry in pool_by_reward.items():
+                    if reward_id not in config_reward_ids:
+                        session.delete(entry)
+                        summary['removed'] += 1
+
+            audit.record(session, current_user['user_id'], 'reward_box.import',
+                         target=f'box:{size}',
+                         detail=(f"'{(config.get('name') or 'config')}' -> {size}: "
+                                 f"{summary['created']} created, {summary['added']} added, "
+                                 f"{summary['reweighted']} reweighted, {summary['removed']} removed"))
+        return jsonify({'message': 'Box config imported', 'summary': summary}), 200
+    except Exception as ex:
+        logger.error(f"Import reward box error: {ex}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/reward-boxes/export', methods=['GET'])
+@admin_required
+def export_reward_box(current_user):
+    """Build a portable config from a size's current loot pool (admin only).
+
+    Returns the same ``box-config/v1`` shape the importer accepts, so a box can
+    be exported here, committed to the community repo, and imported elsewhere.
+    """
+    size = request.args.get('size')
+    name = (request.args.get('name') or '').strip()
+    description = (request.args.get('description') or '').strip()
+    if size not in box_types.all_types():
+        return jsonify({'error': 'Invalid box size'}), 400
+
+    try:
+        with db.get_db() as session:
+            entries = session.query(BoxLootPool).filter_by(size=size).all()
+            rewards_by_id = {r.id: r for r in session.query(Reward).all()}
+            rewards_out = []
+            for e in entries:
+                reward = rewards_by_id.get(e.reward_id)
+                if not reward:
+                    continue
+                is_item = reward.kind == Reward.KIND_ITEM
+                out = {
+                    'kind': reward.kind,
+                    'name': reward.name,
+                    'description': reward.description or '',
+                    'icon': reward.icon or '',
+                    'weight': e.weight,
+                }
+                if is_item:
+                    out['in_game_id'] = reward.in_game_id
+                    out['count'] = reward.count or 1
+                else:
+                    out['commands'] = reward.commands or ''
+                rewards_out.append(out)
+
+        return jsonify({
+            'schema': 'safezone.box-config/v1',
+            'name': name or f'{size} box',
+            'description': description,
+            'rewards': rewards_out,
+        }), 200
+    except Exception as ex:
+        logger.error(f"Export reward box error: {ex}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -1317,6 +1817,51 @@ def update_settings(current_user):
         return jsonify({'message': 'Settings updated', 'settings': settings.describe()}), 200
     except Exception as e:
         logger.error(f"Update settings error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/settings/test-mail', methods=['POST'])
+@admin_required
+def test_mail(current_user):
+    """Send a test message to the caller's own address (admin only).
+
+    Mail is the one setting whose failure is invisible: a wrong password means
+    verification and reset messages stop arriving, and nobody finds out until
+    somebody cannot get back into their account. This is how an admin finds out
+    in ten seconds instead.
+
+    Sent to their own address rather than a typed one, so this cannot be used
+    to bounce mail at a stranger.
+    """
+    try:
+        with db.get_db() as session:
+            user = session.query(User).filter_by(id=current_user['user_id']).first()
+            if not user or not user.email:
+                return jsonify({'error': 'Your account has no email address'}), 400
+            address = user.email
+            username = user.username
+
+        if not mailer.is_configured():
+            return jsonify({
+                'error': 'No mail server is configured, here or on the game-server'
+            }), 409
+
+        sent = mailer.send(
+            address,
+            'Safezone mail test',
+            f'Hi {username},\n\n'
+            f'Your mail settings work. This was sent from the admin panel to '
+            f'confirm that verification and password-reset messages will '
+            f'arrive.\n'
+        )
+        audit.record_standalone(current_user['user_id'], 'settings.test_mail',
+                                detail='delivered' if sent else 'failed')
+        if not sent:
+            return jsonify({'error': 'The mail server refused it - check the '
+                                     'backend log for what it said'}), 502
+        return jsonify({'message': f'Sent to {address}. Check your inbox.'}), 200
+    except Exception as e:
+        logger.error(f"Test mail error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 

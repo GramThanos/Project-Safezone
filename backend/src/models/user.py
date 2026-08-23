@@ -32,6 +32,14 @@ class User(Base):
     # Set on the seeded admin: the account cannot do anything else until the
     # documented default password is replaced.
     must_change_password = Column(Boolean, nullable=False, default=False)
+    # Second-factor auth (TOTP). The base32 secret is shared with the user's
+    # authenticator app; `totp_enabled` is the switch that makes sign-in demand a
+    # code. The secret is written when setup begins but only matters once
+    # enabled, so a setup the user abandoned leaves a harmless unused secret that
+    # the next setup overwrites. Never leaves the server except as the one-time
+    # provisioning URI - it is a credential, and to_dict must not carry it.
+    totp_secret = Column(String(64))
+    totp_enabled = Column(Boolean, nullable=False, default=False)
     # Who vouched for this account, when it arrived through an invitation.
     invited_by = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -74,6 +82,8 @@ class User(Base):
             'role': self.role,
             'email_verified': bool(self.email_verified),
             'must_change_password': bool(self.must_change_password),
+            # The switch, never the secret: the UI shows whether 2FA is on.
+            'totp_enabled': bool(self.totp_enabled),
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
         if include_sensitive:

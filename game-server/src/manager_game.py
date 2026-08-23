@@ -16,6 +16,7 @@ import database
 import roster
 import servers
 import events
+import server_config
 
 # Paths this manager touches or could touch, observed from a real install.
 # Kept because they are the reference for the file layout the rest of the code
@@ -47,6 +48,19 @@ class GameManager:
         self.server_log_path = f'/tmp/game_server_{server_name}.log'
 
         # Thread-safe State Management
+        #
+        # First-boot provisioning. Project Zomboid writes its per-server INI
+        # only on its first successful launch, and much of the panel (the config
+        # and mod editors, the mod-usage listing) needs that file to exist. When
+        # it is missing we boot the server once to generate it, then fall back to
+        # the configured default - see the "initializing" branch in run(). A
+        # server asked to run anyway needs no special handling (running writes
+        # the config on its own), and an already-provisioned one skips straight
+        # to its default. The INI's presence is the flag, so this is idempotent
+        # across manager restarts with no state to track in the database.
+        self.default_state = initial_state
+        if initial_state != "running" and not self._config_exists():
+            initial_state = "initializing"
         self._state = initial_state
         self.state_lock = threading.Lock()
         
@@ -190,6 +204,17 @@ class GameManager:
         """Polls the on-wake thread status."""
         return self.onwake_thread is not None and self.onwake_thread.is_alive()
 
+    def _config_exists(self):
+        """Whether PZ has already written this server's INI.
+
+        Its presence is proof the server has booted at least once, and is what
+        the first-boot provisioning in run() keys off. Read from disk every time
+        rather than cached: the file appears partway through the very boot this
+        check governs.
+        """
+        path = server_config.path_for(self.server_name)
+        return bool(path) and os.path.isfile(path)
+
     def _reset_crash_tracking(self):
         """Forget recent restarts, clearing any backoff or failed verdict."""
         with self._crash_lock:
@@ -262,6 +287,39 @@ class GameManager:
         self.log(f"Idle sleep timeout: {self.idle_sleep_seconds}s -> {seconds}s")
         self.idle_sleep_seconds = seconds
         self._idle_since = None
+
+    def _reconcile_initializing(self, game_alive):
+        """One reconcile pass for the first-boot provisioning state.
+
+        Boots the server once so Project Zomboid writes its INI, then hands off
+        to the configured default. Split out of run() so it can be exercised on
+        its own. See the note in __init__ for why this state exists.
+        """
+        if not game_alive:
+            # If the config is already there - a manager restart caught
+            # mid-provision, or a boot that finished between passes - there is
+            # nothing to generate; go straight to the default.
+            if self._config_exists():
+                self.state = self.default_state
+            elif self._may_restart():
+                self._last_start_at = time.monotonic()
+                self.manage_server_process(start=True)
+            else:
+                # Repeatedly failed to boot; say why. _publish_live_state reports
+                # "failed", and it parks until the state is set again, exactly as
+                # a crash-looping "running" server does.
+                self._report_exit()
+        else:
+            # Booting. Wait until the server has genuinely come up (answered a
+            # `players` query) so the INI it writes is complete, then fall back
+            # to the default - the stopped / sleeping branch does the graceful
+            # save+quit from there. The INI appears early in boot, so
+            # file-existence alone is not enough to prove it is safe to shut down.
+            self._note_healthy_run()
+            if self._roster_ready:
+                self.log("First boot complete; configuration generated. "
+                         f"Applying default state '{self.default_state}'.")
+                self.state = self.default_state
 
     def _check_idle_sleep(self):
         """Put a running server with nobody on it back to sleep.
@@ -955,7 +1013,10 @@ class GameManager:
             # Publish the observed runtime state so the web UI reflects reality.
             self._publish_live_state()
 
-            if current_goal == "sleeping":
+            if current_goal == "initializing":
+                self._reconcile_initializing(game_alive)
+
+            elif current_goal == "sleeping":
                 if game_alive:
                     self.manage_server_process(start=False)
                 elif not wake_alive and time.monotonic() >= self._wake_retry_after:

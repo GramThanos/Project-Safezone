@@ -2,11 +2,40 @@
 //
 // These override environment defaults and take effect without a redeploy, which
 // is the point — closing registration is something you do during an incident,
-// not at deploy time.
+// not at deploy time. Everything here is admin-only, and the endpoint enforces
+// that rather than trusting the nav to hide the link.
+//
+// Grouped, because the list stopped being readable at twenty-odd entries and
+// because the groups mean different things: mail is credentials, limits are
+// numbers you tune under load, and the rest is policy.
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+
+// Order and wording of the sections. Anything in a group not listed here falls
+// under Operations, so a new setting appears somewhere sensible by default.
+const GROUPS = [
+  {
+    key: 'operations',
+    title: 'Operations',
+    blurb: 'Registration, loot and retention policy.'
+  },
+  {
+    key: 'mail',
+    title: 'Mail',
+    blurb: 'Leave the host blank to use whatever the game-server container was '
+      + 'started with. Filling it in overrides that for every message — which is '
+      + 'how you switch providers without a redeploy. Mail is sent by the '
+      + 'game-server, because it is the only container with outbound access.'
+  },
+  {
+    key: 'limits',
+    title: 'Sessions',
+    blurb: 'How long a sign-in lasts. A change applies to tokens issued from '
+      + 'now on; "sign out everywhere" is what ends the ones already out there.'
+  }
+];
 
 function Settings() {
   const { token } = useAuth();
@@ -14,6 +43,7 @@ function Settings() {
   const [draft, setDraft] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -71,6 +101,20 @@ function Settings() {
     setSaving(false);
   };
 
+  const handleTestMail = async () => {
+    setError('');
+    setNotice('');
+    setTesting(true);
+    try {
+      const data = await api.admin.settings.testMail(token);
+      setNotice(data.message || 'Test message sent.');
+    } catch (err) {
+      console.error('Test mail error:', err);
+      setError(err.message || 'Could not send the test message');
+    }
+    setTesting(false);
+  };
+
   const field = (s) => {
     if (s.type === 'bool') {
       return (
@@ -94,6 +138,7 @@ function Settings() {
           type={s.secret ? 'password' : s.type === 'int' ? 'number' : 'text'}
           className="form-control"
           id={s.key}
+          autoComplete={s.secret ? 'new-password' : 'off'}
           value={draft[s.key] ?? ''}
           placeholder={s.secret ? (s.is_set ? '•••••• (set — type to replace)' : 'not set') : ''}
           onChange={(e) => setDraft({ ...draft, [s.key]: e.target.value })}
@@ -103,6 +148,11 @@ function Settings() {
   };
 
   if (loading) return <Spinner />;
+
+  const known = GROUPS.map((g) => g.key);
+  const inGroup = (key) => settings.filter(
+    (s) => (known.includes(s.group) ? s.group : 'operations') === key
+  );
 
   return (
     <>
@@ -116,18 +166,43 @@ function Settings() {
       {notice && <div className="alert alert-success" role="alert">{notice}</div>}
 
       <form onSubmit={handleSave}>
-        {settings.map((s) => (
-          <div className="card mb-3" key={s.key}>
-            <div className="card-body">
-              {field(s)}
-              <div className="form-text">{s.help}</div>
-            </div>
-          </div>
-        ))}
+        {GROUPS.map((group) => {
+          const rows = inGroup(group.key);
+          if (rows.length === 0) return null;
+          return (
+            <section className="mb-4" key={group.key}>
+              <h5 className="font-display mb-1">{group.title}</h5>
+              <p className="text-body-secondary small">{group.blurb}</p>
+
+              {rows.map((s) => (
+                <div className="card mb-3" key={s.key}>
+                  <div className="card-body">
+                    {field(s)}
+                    {s.help && <div className="form-text">{s.help}</div>}
+                  </div>
+                </div>
+              ))}
+
+              {group.key === 'mail' && (
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  onClick={handleTestMail}
+                  disabled={testing || saving}
+                >
+                  {testing ? 'Sending…' : 'Send me a test email'}
+                </button>
+              )}
+            </section>
+          );
+        })}
 
         <button type="submit" className="btn btn-danger" disabled={saving}>
           {saving ? 'Saving…' : 'Save settings'}
         </button>
+        <span className="form-text ms-3">
+          Save before testing — the test uses the stored settings, not what is on screen.
+        </span>
       </form>
     </>
   );

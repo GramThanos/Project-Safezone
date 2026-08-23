@@ -32,6 +32,23 @@ BANNED_ALLOWED = {
 }
 
 
+def _token_hours():
+    """How long a new session lasts, from the settings.
+
+    Imported lazily and guarded: this is on the sign-in path, and a settings
+    read that failed must issue a token with the configured lifetime rather
+    than refuse to sign anybody in.
+    """
+    try:
+        from src.utils import settings
+        hours = settings.get('token_expiry_hours')
+        if hours and hours > 0:
+            return hours
+    except Exception:
+        pass
+    return current_app.config['TOKEN_EXPIRY_HOURS']
+
+
 def generate_token(user_id, username, role, token_version=0):
     """
     Generate lightweight JWT token for user with security claims.
@@ -44,7 +61,11 @@ def generate_token(user_id, username, role, token_version=0):
         # Bumped on the user record to invalidate every outstanding token at
         # once; compared on each request in _apply_live_authorisation.
         'tv': token_version or 0,
-        'exp': datetime.utcnow() + timedelta(hours=current_app.config['TOKEN_EXPIRY_HOURS']),
+        # Editable in the panel; the environment value is only the default.
+        # Shortening it applies to tokens issued from now on - the ones already
+        # out there carry their own expiry, and "sign out everywhere" is what
+        # ends those.
+        'exp': datetime.utcnow() + timedelta(hours=_token_hours()),
         'iat': datetime.utcnow(),  # Issued at
         'iss': current_app.config['TOKEN_ISSUER'],  # Issuer
         'aud': current_app.config['TOKEN_AUDIENCE'],  # Audience
@@ -52,6 +73,50 @@ def generate_token(user_id, username, role, token_version=0):
     }
     token = jwt.encode(payload, current_app.config['SECRET_KEY'], algorithm='HS256')
     return token
+
+
+# A sign-in that has cleared the password but still owes a second factor is not
+# a session: it may do exactly one thing, present a TOTP code. This carries that
+# half-finished state between the two requests without a server-side store - it
+# is signed, so it cannot be forged, and short-lived, so an intercepted one is
+# useless in minutes. The distinct `scope` keeps it from being accepted anywhere
+# a real access token is expected, and vice versa.
+MFA_CHALLENGE_MINUTES = 5
+
+
+def generate_mfa_challenge_token(user_id):
+    """A short-lived token proving the password step passed, nothing more."""
+    payload = {
+        'user_id': user_id,
+        'scope': 'mfa_challenge',
+        'exp': datetime.utcnow() + timedelta(minutes=MFA_CHALLENGE_MINUTES),
+        'iat': datetime.utcnow(),
+        'iss': current_app.config['TOKEN_ISSUER'],
+        'aud': current_app.config['TOKEN_AUDIENCE'],
+        'jti': str(uuid.uuid4()),
+    }
+    return jwt.encode(payload, current_app.config['SECRET_KEY'], algorithm='HS256')
+
+
+def decode_mfa_challenge_token(token):
+    """The user id a challenge token vouches for, or None if it does not hold up."""
+    try:
+        payload = jwt.decode(
+            token,
+            current_app.config['SECRET_KEY'],
+            algorithms=['HS256'],
+            audience=current_app.config['TOKEN_AUDIENCE'],
+            issuer=current_app.config['TOKEN_ISSUER'],
+            options={'verify_exp': True, 'verify_iat': True,
+                     'verify_iss': True, 'verify_aud': True},
+        )
+    except jwt.InvalidTokenError:
+        return None
+    # A normal access token also decodes here; the scope is what stops it from
+    # standing in for the second factor.
+    if payload.get('scope') != 'mfa_challenge':
+        return None
+    return payload.get('user_id')
 
 
 def decode_token(token):

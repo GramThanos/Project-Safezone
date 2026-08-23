@@ -17,10 +17,18 @@ from src.models.app_setting import AppSetting
 
 logger = logging.getLogger(__name__)
 
+
 # key -> declaration.
-#   config:  the Flask config key holding the environment default
-#   type:    'bool' | 'int' | 'str'
-#   secret:  never returned to the browser; only whether it is set
+#   config:   the Flask config key holding the environment default
+#   default:  a literal default, for settings with no environment variable
+#             behind them - the mail settings, whose fallback lives in the
+#             game-server's environment rather than this one's
+#   type:     'bool' | 'int' | 'str' | 'text' | 'markdown'
+#   secret:   never returned to the browser; only whether it is set
+#   group:    which section of the panel it belongs to
+#   validate: callable(value) -> error string, or None if it is acceptable.
+#             A setting that can break every request if mistyped is checked
+#             before it is stored, not after somebody notices
 REGISTRY = {
     'registration_enabled': {
         'config': 'REGISTRATION_ENABLED',
@@ -106,6 +114,74 @@ REGISTRY = {
         'type': 'int',
         'label': 'Audit retention (days)',
         'help': 'How long audit entries are kept. 0 keeps them forever.',
+    },
+
+    # --- Mail ---------------------------------------------------------------
+    # No `config` key: the environment default for these lives in the
+    # *game-server* container, which is the one that can reach a mail server.
+    # Leave the host blank and that environment is used unchanged; fill it in
+    # and these win, so an operator can point the site at a different mailbox
+    # during an incident without a redeploy.
+    'smtp_host': {
+        'type': 'str',
+        'group': 'mail',
+        'label': 'SMTP host',
+        'help': 'Blank uses whatever SMTP_HOST the game-server container was started '
+                'with. Setting it here overrides that for every message.',
+    },
+    'smtp_port': {
+        'type': 'int',
+        'default': 587,
+        'group': 'mail',
+        'label': 'SMTP port',
+        'help': '587 for STARTTLS, which is what most providers want.',
+    },
+    'smtp_user': {
+        'type': 'str',
+        'group': 'mail',
+        'label': 'SMTP username',
+        'help': 'Blank means no authentication.',
+    },
+    'smtp_password': {
+        'type': 'str',
+        'secret': True,
+        'group': 'mail',
+        'label': 'SMTP password',
+        'help': 'An app-specific password from a consumer provider drops straight in. '
+                'Never shown again once saved.',
+    },
+    'smtp_tls': {
+        'type': 'bool',
+        'default': True,
+        'group': 'mail',
+        'label': 'Use STARTTLS',
+        'help': 'Leave on unless the mail server genuinely does not support it.',
+    },
+    'smtp_from': {
+        'type': 'str',
+        'group': 'mail',
+        'label': 'From address',
+        'help': 'Blank falls back to the username. Some providers reject a From '
+                'that is not the authenticated account.',
+    },
+
+    # --- Sessions ------------------------------------------------------------
+    'token_expiry_hours': {
+        'config': 'TOKEN_EXPIRY_HOURS',
+        'type': 'int',
+        'group': 'limits',
+        'label': 'Session length (hours)',
+        'help': 'How long a sign-in lasts. Shortening it does not end sessions '
+                'already issued; "sign out everywhere" does.',
+    },
+
+    'site_url': {
+        'config': 'SITE_URL',
+        'type': 'str',
+        'label': 'Public site address',
+        'help': 'Where players reach this deployment. Used for the links inside '
+                'email and invitations, so a wrong value produces links that go '
+                'nowhere.',
     },
 
     # --- Site content -------------------------------------------------------
@@ -217,6 +293,10 @@ LEGAL_PAGES = {
 # Overrides change rarely and are read on hot paths, so they are cached rather
 # than fetched per request. Short enough that a panel change feels immediate.
 _CACHE_TTL_SECONDS = 15
+# How long a *failed* read is remembered - see `_overrides`. Much shorter
+# than a successful one: this is about not hammering a database that is
+# down, not about caching an answer.
+_FAILURE_TTL_SECONDS = 2
 _cache = {'values': None, 'at': 0.0}
 
 
@@ -249,8 +329,17 @@ def _overrides():
                 values[row.key] = row.value
     except Exception as e:
         # A settings read must never take the site down; fall back to defaults.
+        #
+        # The failure is cached briefly too. Without that, a page reading a
+        # dozen settings makes a dozen connection attempts to a database that
+        # is already known to be down, each waiting out its own timeout - so an
+        # outage turns every request into a slow one on top of a degraded one.
+        # Short enough that recovery is noticed within seconds.
         logger.error(f"Could not read app settings, using environment defaults: {e}")
-        return _cache['values'] or {}
+        fallback = _cache['values'] or {}
+        _cache['values'] = fallback
+        _cache['at'] = now - _CACHE_TTL_SECONDS + _FAILURE_TTL_SECONDS
+        return fallback
 
     _cache['values'] = values
     _cache['at'] = now
@@ -275,7 +364,9 @@ def get(key):
         if value is not None:
             return value
 
-    return _coerce(current_app.config.get(spec['config']), spec['type'])
+    if spec.get('config'):
+        return _coerce(current_app.config.get(spec['config']), spec['type'])
+    return spec.get('default')
 
 
 def set_value(session, key, value, actor_user_id=None):
@@ -283,6 +374,12 @@ def set_value(session, key, value, actor_user_id=None):
     spec = REGISTRY.get(key)
     if not spec:
         raise KeyError(f"Unknown setting '{key}'")
+
+    validator = spec.get('validate')
+    if validator:
+        problem = validator(value)
+        if problem:
+            raise ValueError(f"'{key}': {problem}")
 
     if spec['type'] == 'bool':
         stored = 'true' if _coerce(value, 'bool') else 'false'
@@ -318,7 +415,7 @@ def describe():
             'type': spec['type'],
             'group': spec.get('group', 'operations'),
             'label': spec['label'],
-            'help': spec['help'],
+            'help': spec.get('help'),
             'secret': bool(spec.get('secret')),
         }
         value = get(key)

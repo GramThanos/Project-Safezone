@@ -1,75 +1,21 @@
 """Admin reward catalog routes (items + usables).
 
-A usable reward is a catalog action (`action_id` + `action_params`) validated by
-the game-server before it is stored, so a reward can never be saved with
-parameters that would fail at delivery time. Only loot-safe ("droppable")
-actions may back a reward - moderation and server operations are refused here
-and are reachable only through the admin give endpoint.
+A usable reward is a free-text ``commands`` sequence validated by the game-server
+before it is stored, so a reward can never be saved with a sequence that would
+fail at delivery time. The command text is admin-authored; the game-server is the
+command boundary and re-validates the one player-influenced value (the recipient
+name) when the reward is actually delivered.
 """
-import re
 import logging
 from flask import Blueprint, request, jsonify
 from src.database import db
 from src.models.reward import Reward
 from src.middleware.auth import moderator_required, admin_required
 from src.utils import audit, paging
-from src.utils.actions import validate_action
+from src.utils.rewards import validate_reward_payload, validate_usable_commands
 
 logger = logging.getLogger(__name__)
 rewards_bp = Blueprint('rewards', __name__, url_prefix='/api/admin/rewards')
-
-ITEM_ID_RE = re.compile(r'^[A-Za-z0-9_.]{1,64}$')
-
-# `count` reaches an `additem` console command, so it is bounded like any other
-# parameter that crosses that boundary rather than trusted from the panel.
-MAX_ITEM_COUNT = 1000
-
-
-def _validate_payload(data, partial=False):
-    """Validate a reward payload. Returns an error string or None.
-
-    When ``partial`` (PUT), only provided fields are checked. Usables are
-    additionally validated against the game-server action catalog by the caller
-    (see ``_validate_usable_action``).
-    """
-    if not partial:
-        if not data.get('name'):
-            return 'name is required'
-        if data.get('kind') not in Reward.KINDS:
-            return 'kind must be item or usable'
-
-    if 'count' in data:
-        count = data['count']
-        if isinstance(count, bool) or not isinstance(count, int):
-            return 'count must be a whole number'
-        if count < 1 or count > MAX_ITEM_COUNT:
-            return f'count must be between 1 and {MAX_ITEM_COUNT}'
-
-    kind = data.get('kind')
-    if kind == Reward.KIND_ITEM and 'in_game_id' in data:
-        if not data['in_game_id'] or not ITEM_ID_RE.match(data['in_game_id']):
-            return 'invalid in_game_id'
-
-    # On create, ensure the kind-specific field is present.
-    if not partial:
-        if kind == Reward.KIND_ITEM and not data.get('in_game_id'):
-            return 'in_game_id is required for items'
-        if kind == Reward.KIND_USABLE and not data.get('action_id'):
-            return 'action_id is required for usables'
-    return None
-
-
-def _validate_usable_action(data):
-    """Validate a usable's action against the catalog. Returns ``(error, status)``.
-
-    No-op for item rewards and for legacy free-text usables.
-    """
-    if data.get('kind') != Reward.KIND_USABLE or not data.get('action_id'):
-        return None, 200
-    _action, _command, error, status = validate_action(
-        data['action_id'], data.get('action_params'), droppable_only=True
-    )
-    return error, status
 
 
 @rewards_bp.route('', methods=['GET'])
@@ -99,10 +45,10 @@ def list_rewards(current_user):
 def create_reward(current_user):
     """Create a catalog reward (admin only)."""
     data = request.get_json() or {}
-    error = _validate_payload(data)
+    error = validate_reward_payload(data)
     if error:
         return jsonify({'error': error}), 400
-    error, status = _validate_usable_action(data)
+    error, status = validate_usable_commands(data)
     if error:
         return jsonify({'error': error}), status
     try:
@@ -115,8 +61,7 @@ def create_reward(current_user):
                 icon=data.get('icon', ''),
                 in_game_id=data.get('in_game_id') if not is_usable else None,
                 count=data.get('count', 1) if not is_usable else 1,
-                action_id=data.get('action_id') if is_usable else None,
-                action_params=(data.get('action_params') or {}) if is_usable else None,
+                commands=data.get('commands') if is_usable else None,
                 active=data.get('active', True)
             )
             session.add(reward)
@@ -143,20 +88,19 @@ def update_reward(current_user, reward_id):
 
             # Validate against the resulting kind.
             data.setdefault('kind', reward.kind)
-            error = _validate_payload(data, partial=True)
+            error = validate_reward_payload(data, partial=True)
             if error:
                 return jsonify({'error': error}), 400
-            # Re-validate whenever the action or its parameters change.
-            if 'action_id' in data or 'action_params' in data:
+            # Re-validate whenever the command sequence changes.
+            if 'commands' in data:
                 check = dict(data)
-                check.setdefault('action_id', reward.action_id)
-                check.setdefault('action_params', reward.action_params)
-                error, status = _validate_usable_action(check)
+                check.setdefault('commands', reward.commands)
+                error, status = validate_usable_commands(check)
                 if error:
                     return jsonify({'error': error}), status
 
             fields = ('kind', 'name', 'description', 'icon', 'in_game_id', 'count',
-                      'action_id', 'action_params', 'active')
+                      'commands', 'action_id', 'action_params', 'active')
             changed = [f for f in fields if f in data]
             for field in changed:
                 setattr(reward, field, data[field])

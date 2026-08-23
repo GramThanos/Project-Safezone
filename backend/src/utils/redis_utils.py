@@ -34,6 +34,39 @@ def get_redis_connection():
         return None
 
 
+def cache_get(key):
+    """Return a cached JSON value for ``key``, or None on miss/error.
+
+    Best-effort: a cache that is down must never be more than a slow path, so
+    every failure reads as a miss and the caller recomputes.
+    """
+    r = get_redis_connection()
+    if not r:
+        return None
+    try:
+        raw = r.get(key)
+        return json.loads(raw) if raw else None
+    except Exception as e:
+        logger.error(f"Cache read error for {key}: {e}")
+        return None
+
+
+def cache_set(key, value, ttl_seconds):
+    """Store ``value`` as JSON under ``key`` with a TTL. Never raises.
+
+    A write failure just means the next read is another miss, so it is logged
+    and swallowed rather than allowed to fail the request that produced the
+    value.
+    """
+    r = get_redis_connection()
+    if not r:
+        return
+    try:
+        r.setex(key, ttl_seconds, json.dumps(value))
+    except Exception as e:
+        logger.error(f"Cache write error for {key}: {e}")
+
+
 def apply_live_state(servers):
     """Overlay the live runtime state published by the game-server orchestrator.
 

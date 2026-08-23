@@ -49,30 +49,6 @@ class Config:
 
     # Flask Configuration
     FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    
-    # Rate Limiting Configuration
-    RATELIMIT_STORAGE_URI = REDIS_URL
-    # Global per-IP defaults. These must be generous: a single-page app that polls
-    # (e.g. live task/server status) legitimately makes many requests. Configure via
-    # RATELIMIT_DEFAULT as semicolon-separated limits. Sensitive write endpoints
-    # should add their own stricter per-route limits.
-    RATELIMIT_DEFAULT_LIMITS = os.getenv(
-        'RATELIMIT_DEFAULT', '300 per minute;20000 per day'
-    ).split(';')
-    # Stricter limits for credential endpoints, applied as decorators on the
-    # views themselves. Note these are per-IP: a community behind one NAT shares
-    # the signup budget, so loosen RATELIMIT_SIGNUP if that bites.
-    RATELIMIT_SIGNIN = os.getenv('RATELIMIT_SIGNIN', '5 per minute')
-    RATELIMIT_SIGNUP = os.getenv('RATELIMIT_SIGNUP', '3 per hour')
-    RATELIMIT_PASSWORD = os.getenv('RATELIMIT_PASSWORD', '5 per hour')
-    # Reset/verification mail is cheap to request and expensive to receive, so
-    # it gets its own budget separate from a signed-in password change.
-    RATELIMIT_PASSWORD_RESET = os.getenv('RATELIMIT_PASSWORD_RESET', '5 per hour')
-    # Challenges are cheap but not free, and one is consumed per signup attempt.
-    RATELIMIT_SIGNUP_CAPTCHA = os.getenv('RATELIMIT_SIGNUP_CAPTCHA', '30 per hour')
-    # Reports and appeals reach a human, so the cost of spam is a person's time.
-    RATELIMIT_REPORT = os.getenv('RATELIMIT_REPORT', '10 per hour')
-    
     # Outbound email is composed here and sent by the game-server (see
     # src/utils/mailer.py), so the SMTP_* variables belong to *that* container -
     # this one has no egress and no DNS, and never could have reached a mail

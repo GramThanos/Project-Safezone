@@ -30,7 +30,7 @@ Project Safezone puts a website in front of a Project Zomboid community's game s
 
 It runs as six containers on one host: a React frontend, a Flask API, a recurring-job scheduler, a SteamCMD-based game server manager, MariaDB and Redis. Everything comes up with a single `docker compose up`.
 
-**This is probably not for you** if you run a single private server for a handful of friends — the operational overhead will outweigh the benefit. It is aimed at a public or semi-public community that already has moderators, wants players to have accounts, and wants server control to live somewhere other than an SSH session.
+It suits a range of setups. A small team running a private server for friends can use it to hand out accounts, control the server without an SSH session, and drop a little loot into the world — and the whole stack comes up with one command. It scales up from there to a public or semi-public community that already has moderators, wants players to have accounts, and wants server control and an audit trail in one place. Run only the parts you need: the loot economy, the alert channels and invite-only registration are all optional, so a handful of friends can ignore what a larger community leans on.
 
 ## Features
 
@@ -208,12 +208,14 @@ Keys marked ° are **seed values only** — an admin can change them live under 
 | `DATABASE_HOST` / `DATABASE_NAME` / `DATABASE_USER` | `db` / `safezone` / `safezone` | |
 | `REDIS_HOST` / `REDIS_PORT` | `cache` / `6379` | |
 | `GAME_SERVER_API_URL` | `http://game-server:5000` | Internal address of the manager API |
-| `TOKEN_EXPIRY_HOURS` | `24` | Sessions can be revoked sooner by changing the password or signing out everywhere |
+| `TOKEN_EXPIRY_HOURS` ° | `24` | Sessions can be revoked sooner by changing the password or signing out everywhere |
 | `TOKEN_ISSUER` / `TOKEN_AUDIENCE` | `safezone-api` / `safezone-frontend` | JWT claims |
 | `ALLOWED_ORIGINS` | localhost origins | CORS allow-list — set to your real origin |
 | `HTTPS_ENABLED` | `false` | Sends strict-transport headers; set true behind a TLS proxy |
 | `FLASK_DEBUG` | `false` | Never enable on a reachable host |
-| `RATELIMIT_DEFAULT` | `300 per minute;20000 per day` | Global per-IP. The interface polls live status, so keep it generous |
+| `RATELIMIT_DEFAULT` ° | `300 per minute;20000 per day` | Global per-IP. The interface polls live status, so keep it generous. Validated before it is stored, since a limit the limiter cannot parse would break every request |
+| `RATELIMIT_SIGNIN` ° / `RATELIMIT_SIGNUP` ° / `RATELIMIT_SIGNUP_CAPTCHA` ° | `5 per minute` / `3 per hour` / `30 per hour` | Per-endpoint. Sign-in is the brute-force gate |
+| `RATELIMIT_PASSWORD` ° / `RATELIMIT_PASSWORD_RESET` ° / `RATELIMIT_REPORT` ° | `5 per hour` / `5 per hour` / `10 per hour` | Password changes, reset requests, and reports — the last reaches a human |
 | `REACT_APP_API_URL` | — | Build-time only. Left unset, the frontend talks same-origin through Nginx, which is what you want |
 
 ### Game server
@@ -240,8 +242,8 @@ Keys marked ° are **seed values only** — an admin can change them live under 
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_TLS` / `SMTP_FROM` | — / `587` / — / — / `true` / — | Set on the **game-server** container, which is the only one with outbound access — the backend composes mail and hands it over. A blank host logs mail instead of sending it. An app-specific password from a consumer provider drops straight in |
-| `SITE_URL` | `http://localhost:8080` | Where the browser reaches you; used for links inside email |
+| `SMTP_HOST` ° / `SMTP_PORT` ° / `SMTP_USER` ° / `SMTP_PASSWORD` ° / `SMTP_TLS` ° / `SMTP_FROM` ° | — / `587` / — / — / `true` / — | Set on the **game-server** container, which is the only one with outbound access — the backend composes mail and hands it over. A blank host logs mail instead of sending it. All six are editable under **Admin → Settings → Mail**, which overrides the container's values the moment a host is entered there; a button on that page mails the admin to prove it works |
+| `SITE_URL` ° | `http://localhost:8080` | Where the browser reaches you; used for links inside email and invitations |
 | `SMTP_TIMEOUT` | `15` | Seconds to wait on the mail server before giving up |
 
 ### Alert delivery

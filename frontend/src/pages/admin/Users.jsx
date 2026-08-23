@@ -50,6 +50,22 @@ function Users() {
     }
   };
 
+  // The way back in for a user who lost their authenticator: with no recovery
+  // codes, an admin clearing the factor is the only key left.
+  const handleDisable2fa = async (user) => {
+    if (!window.confirm(`Turn off two-factor authentication for ${user.username}?`)) return;
+    setError('');
+    setNotice('');
+    try {
+      const data = await api.admin.users.disable2fa(token, user.id);
+      setNotice(data.message || `Two-factor auth cleared for ${user.username}.`);
+      loadData();
+    } catch (err) {
+      console.error('Disable 2FA error:', err);
+      setError(err.message || 'Could not turn off two-factor auth');
+    }
+  };
+
   const openBan = async (user) => {
     setBanForm({ reason: '', duration_days: '' });
     setBanHistory([]);
@@ -216,6 +232,7 @@ function Users() {
                 <th>Username</th>
                 <th>Email</th>
                 <th>Confirmed</th>
+                <th>2FA</th>
                 <th>Role</th>
                 <th>Created</th>
                 <th>Actions</th>
@@ -224,7 +241,7 @@ function Users() {
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="text-center">No users found</td>
+                  <td colSpan="7" className="text-center">No users found</td>
                 </tr>
               ) : (
                 users.map((user) => (
@@ -235,6 +252,11 @@ function Users() {
                       {user.email_verified
                         ? <span className="badge text-bg-success">yes</span>
                         : <span className="badge text-bg-secondary">no</span>}
+                    </td>
+                    <td>
+                      {user.totp_enabled
+                        ? <span className="badge text-bg-success">on</span>
+                        : <span className="badge text-bg-secondary">off</span>}
                     </td>
                     <td>
                       <span className={`badge text-bg-${getRoleBadge(user.role)}`}>
@@ -260,6 +282,14 @@ function Users() {
                       >
                         Send reset link
                       </button>
+                      {user.totp_enabled && (
+                        <button
+                          className="btn btn-sm btn-outline-warning mt-2 ms-2"
+                          onClick={() => handleDisable2fa(user)}
+                        >
+                          Disable 2FA
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))

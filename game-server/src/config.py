@@ -80,6 +80,33 @@ ITEM_CATALOG_ICON_BASE = os.getenv(
 ITEM_CATALOG_TTL = int(os.getenv('ITEM_CATALOG_TTL', '604800'))
 ITEM_CATALOG_TIMEOUT = float(os.getenv('ITEM_CATALOG_TIMEOUT', '30'))
 
+# Community loot-box configs, behind "Import from community" in Admin > Loot
+# Boxes. A curated set of box configurations (rewards + drop weights) published
+# as JSON on GitHub, so an operator can seed a season without hand-building a
+# pool. Fetched here, not on the backend, for the same reason as the item
+# catalog: the backend has no egress. Base URL is a directory; the code appends
+# `list.json` (the index) and `<id>.json` (one config).
+REWARD_BOXES_BASE_URL = os.getenv(
+    'REWARD_BOXES_BASE_URL',
+    'https://raw.githubusercontent.com/gramthanos/Project-Safezone/main/community/reward-boxes/'
+)
+# An hour. Curated, but new boxes should show up the same day they are added.
+REWARD_BOXES_TTL = int(os.getenv('REWARD_BOXES_TTL', '3600'))
+REWARD_BOXES_TIMEOUT = float(os.getenv('REWARD_BOXES_TIMEOUT', '15'))
+
+# Community server-config templates, behind "Templates" in Admin > Servers >
+# config. A curated set of INI presets (gameplay tuning, mod lists) published as
+# JSON on GitHub, so an operator can adopt a known-good ruleset without editing
+# dozens of keys by hand. Fetched here, not on the backend, for the same reason
+# as the reward boxes: the backend has no egress. Base URL is a directory; the
+# code appends `list.json` (the index) and `<id>.json` (one template).
+SERVER_TEMPLATES_BASE_URL = os.getenv(
+    'SERVER_TEMPLATES_BASE_URL',
+    'https://raw.githubusercontent.com/gramthanos/Project-Safezone/main/community/server-templates/'
+)
+SERVER_TEMPLATES_TTL = int(os.getenv('SERVER_TEMPLATES_TTL', '3600'))
+SERVER_TEMPLATES_TIMEOUT = float(os.getenv('SERVER_TEMPLATES_TIMEOUT', '15'))
+
 # Steam Workshop metadata. Titles and short descriptions for Workshop item ids,
 # fetched from Steam's keyless `GetPublishedFileDetails`. Purely cosmetic plus
 # one useful check - whether an id exists at all - so it is safe to turn off on

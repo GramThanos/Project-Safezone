@@ -15,17 +15,21 @@ export const AuthProvider = ({ children }) => {
       if (token) {
         try {
           const data = await api.auth.me(token);
-          if (data.user) {
-            setUser(data.user);
-          } else {
-            // Invalid token
-            localStorage.removeItem('token');
-            setToken(null);
-          }
+          if (data.user) setUser(data.user);
         } catch (error) {
           console.error('Auth check error:', error);
-          localStorage.removeItem('token');
-          setToken(null);
+          // Only abandon the session when the server actually rejected the
+          // token (401). A transient failure - the backend still warming up on
+          // first boot, a network blip - must not discard a token that is still
+          // valid: doing so left the just-signed-in user with a live `user` but
+          // no token, so their next request went out as `Bearer null` and came
+          // back "Token is invalid or expired". This bit the seeded admin on
+          // first login, whose very first action is the forced password change.
+          if (error.status === 401) {
+            localStorage.removeItem('token');
+            setToken(null);
+            setUser(null);
+          }
         }
       }
       setLoading(false);
@@ -34,20 +38,51 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [token]);
 
+  // Adopt a session from any endpoint that hands one back (sign-in, the second
+  // 2FA step, a reset that had no second factor).
+  const establishSession = (data) => {
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem('token', data.token);
+    return { success: true };
+  };
+
   const signin = async (username, password) => {
     try {
       const data = await api.auth.signin(username, password);
-      if (data.token && data.user) {
-        setToken(data.token);
-        setUser(data.user);
-        localStorage.setItem('token', data.token);
-        return { success: true };
-      } else {
-        return { success: false, error: data.error || 'Sign in failed' };
+      // With 2FA on, the password step returns a challenge rather than a
+      // session. Hand it back so the page can ask for a code; no token is
+      // stored until the second step clears.
+      if (data.mfa_required && data.mfa_token) {
+        return { success: false, mfaRequired: true, mfaToken: data.mfa_token };
       }
+      if (data.token && data.user) {
+        return establishSession(data);
+      }
+      return { success: false, error: data.error || 'Sign in failed' };
     } catch (error) {
       console.error('Sign in error:', error);
-      return { success: false, error: 'Network error' };
+      return { success: false, error: error.message || 'Network error' };
+    }
+  };
+
+  // Second step of a 2FA sign-in: the challenge token from `signin` plus a
+  // current code, in exchange for a real session.
+  const completeMfaSignin = async (mfaToken, code) => {
+    try {
+      const data = await api.auth.signinVerify2fa(mfaToken, code);
+      if (data.token && data.user) {
+        return establishSession(data);
+      }
+      return { success: false, error: data.error || 'Sign in failed' };
+    } catch (error) {
+      console.error('2FA sign in error:', error);
+      return {
+        success: false,
+        error: error.message || 'Network error',
+        // A dead or expired challenge means starting over from the password.
+        expired: error.status === 401 && /expired/i.test(error.message || '')
+      };
     }
   };
 
@@ -113,6 +148,7 @@ export const AuthProvider = ({ children }) => {
     token,
     loading,
     signin,
+    completeMfaSignin,
     signup,
     signout,
     adoptToken,

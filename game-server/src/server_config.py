@@ -383,3 +383,123 @@ def write_raw(server_name, changes, expected_version=None):
         return None, f'Could not write the config: {e}'
 
     return {'changed': applied, 'version': _version(path)}, None
+
+
+# ---------------------------------------------------------------------------
+# Portable templates: a shareable subset of a server's config
+# ---------------------------------------------------------------------------
+#
+# A template is a curated INI - gameplay tuning, mod lists, welcome messages -
+# that can be exported from one server, published to the community repo, and
+# imported onto another. Unlike the whitelist editor above it is deliberately
+# open: any INI key may be carried, so the feature keeps working as Project
+# Zomboid adds settings this code has never enumerated.
+#
+# What keeps that safe is a *blacklist* rather than a whitelist. Three kinds of
+# key are never exported into a template and never applied from one, however the
+# template was authored:
+#
+#   * credentials - `Password`, `RCONPassword`. A template is shared; these are
+#     not. Matched by the `Password` suffix so a future credential key is caught
+#     without a code change.
+#   * network ports - `DefaultPort`, `UDPPort`, `SteamPort1/2`, `RCONPort`, and
+#     anything else ending in `Port`. This stack assigns ports in the `servers`
+#     table and publishes them through Docker; the game must not be handed a
+#     different one in its INI. Excluding them here is also why a template needs
+#     no per-value variable substitution - there is no machine-specific value
+#     left in it to substitute.
+#   * per-server identity - `PublicName` / `PublicDescription` (this operator's,
+#     not the author's) and `ResetID` / `ServerPlayerID` (per-world ids; changing
+#     them forces connected clients to wipe and redownload the world).
+#
+# The suffix rules are the version-proof half: a port or credential key added in
+# a later PZ build is excluded the day it appears, with no list to update.
+TEMPLATE_EXCLUDED_KEYS = {
+    'PublicName', 'PublicDescription',
+    'ResetID', 'ServerPlayerID',
+    # Steam's ports end in a digit, so the `Port` suffix below does not catch
+    # them - they are named explicitly.
+    'SteamPort1', 'SteamPort2',
+}
+TEMPLATE_EXCLUDED_SUFFIXES = ('Port', 'Password')
+
+# One paste's worth of settings. A real PZ INI has well over a hundred keys, so
+# this is a bound against a hostile file, not a limit a genuine template hits.
+MAX_TEMPLATE_SETTINGS = 500
+
+
+def is_template_excluded(key):
+    """Whether a key may never travel in a template (see TEMPLATE_EXCLUDED_KEYS)."""
+    return key in TEMPLATE_EXCLUDED_KEYS or key.endswith(TEMPLATE_EXCLUDED_SUFFIXES)
+
+
+def export_template(server_name, name='', description=''):
+    """Build a portable template from a server's current config.
+
+    Returns ``(payload, error)``. Only *enabled* keys are exported (a disabled
+    key means "use the game default", which is what an absent key means in a
+    template too), and blacklisted keys are dropped. The result is the same
+    ``server-template/v1`` shape the importer accepts.
+    """
+    path = path_for(server_name)
+    if not path:
+        return None, 'That server name cannot be used to locate a config file'
+    if not os.path.isfile(path):
+        return None, (f'No config at {path}. Project Zomboid writes it on first '
+                      f'launch, so start the server once before exporting it.')
+
+    settings = {}
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+            for line in handle:
+                match = RAW_LINE_RE.match(line.rstrip('\n'))
+                if not match:
+                    continue
+                _, comment, key, value = match.groups()
+                if comment:                       # disabled key: skip, as above
+                    continue
+                if is_template_excluded(key):
+                    continue
+                settings[key] = value
+    except OSError as e:
+        return None, f'Could not read the config: {e}'
+
+    return {
+        'schema': 'safezone.server-template/v1',
+        'name': (name or '').strip() or f'{server_name} config',
+        'description': (description or '').strip(),
+        'settings': settings,
+    }, None
+
+
+def import_template(server_name, settings, expected_version=None):
+    """Apply a template's settings to a server's INI. Returns ``(result, error)``.
+
+    Blacklisted keys are silently filtered and reported under ``skipped`` rather
+    than failing the whole import - a template that happens to carry a port is
+    applied minus the port, not rejected. Everything that survives the filter is
+    written through the same safe, backed-up path as a raw edit, so unknown keys
+    already in the file are preserved and the optimistic version lock still holds.
+    """
+    if not isinstance(settings, dict) or not settings:
+        return None, 'The template has no settings'
+    if len(settings) > MAX_TEMPLATE_SETTINGS:
+        return None, f'A template may hold at most {MAX_TEMPLATE_SETTINGS} settings'
+
+    changes = {}
+    skipped = []
+    for key, value in settings.items():
+        if is_template_excluded(key):
+            skipped.append(key)
+            continue
+        changes[key] = {'value': '' if value is None else str(value), 'disabled': False}
+
+    if not changes:
+        return None, 'The template has no applicable settings (all were excluded)'
+
+    result, error = write_raw(server_name, changes, expected_version)
+    if error:
+        return None, error
+
+    result['skipped'] = skipped
+    return result, None

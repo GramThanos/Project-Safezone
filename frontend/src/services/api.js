@@ -3,9 +3,14 @@ const API_URL = process.env.REACT_APP_API_URL || '';
 
 // Helper function to handle API responses
 const handleResponse = async (response) => {
-  const data = await response.json();
+  // An error response is not always JSON: a 502 from nginx while the backend
+  // is still warming, or a rate-limit page, arrives as HTML. Parsing must not
+  // throw over that and lose the status the caller needs to react to.
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || 'Request failed');
+    const error = new Error(data.error || 'Request failed');
+    error.status = response.status;
+    throw error;
   }
   return data;
 };
@@ -61,11 +66,60 @@ export const api = {
       const response = await fetch(`${API_URL}/api/auth/captcha`);
       return handleResponse(response);
     },
+    // Second step of a sign-in that returned { mfa_required, mfa_token }: the
+    // challenge token plus a current authenticator code, in exchange for the
+    // real session token.
+    signinVerify2fa: async (mfaToken, code) => {
+      const response = await fetch(`${API_URL}/api/auth/signin/2fa`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfa_token: mfaToken, code })
+      });
+      return handleResponse(response);
+    },
     me: async (token) => {
       const response = await fetch(`${API_URL}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       return handleResponse(response);
+    },
+    // Two-factor auth. setup mints a secret and returns the otpauth URI to turn
+    // into a QR; enable confirms a code to switch it on; disable needs the
+    // password and a current code together.
+    twofa: {
+      setup: async (token, password) => {
+        const response = await fetch(`${API_URL}/api/auth/2fa/setup`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ password })
+        });
+        return handleResponse(response);
+      },
+      enable: async (token, code) => {
+        const response = await fetch(`${API_URL}/api/auth/2fa/enable`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ code })
+        });
+        return handleResponse(response);
+      },
+      disable: async (token, password, code) => {
+        const response = await fetch(`${API_URL}/api/auth/2fa/disable`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ password, code })
+        });
+        return handleResponse(response);
+      }
     },
     changePassword: async (token, currentPassword, newPassword) => {
       const response = await fetch(`${API_URL}/api/auth/password`, {
@@ -86,11 +140,13 @@ export const api = {
       });
       return handleResponse(response);
     },
-    resetPassword: async (resetToken, newPassword) => {
+    // `clearTwoFactor` also strips 2FA as part of the reset — the recovery path
+    // for a lost authenticator. Off by default, so an ordinary reset keeps it.
+    resetPassword: async (resetToken, newPassword, clearTwoFactor = false) => {
       const response = await fetch(`${API_URL}/api/auth/password/reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: resetToken, new_password: newPassword })
+        body: JSON.stringify({ token: resetToken, new_password: newPassword, clear_2fa: clearTwoFactor })
       });
       return handleResponse(response);
     },
@@ -428,6 +484,14 @@ export const api = {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
+      },
+      // Clears a user's 2FA so a lost-authenticator lockout has a way back in.
+      disable2fa: async (token, userId) => {
+        const response = await fetch(`${API_URL}/api/admin/users/${userId}/disable-2fa`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
       }
     },
     jobs: {
@@ -534,6 +598,15 @@ export const api = {
         });
         return handleResponse(response);
       },
+      // Mails the caller's own address, so a wrong SMTP password is found in
+      // ten seconds rather than the next time somebody needs a reset link.
+      testMail: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/settings/test-mail`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
       update: async (token, values) => {
         const response = await fetch(`${API_URL}/api/admin/settings`, {
           method: 'PUT',
@@ -597,6 +670,48 @@ export const api = {
       },
       saveConfigRaw: async (token, id, changes, version) => {
         const response = await fetch(`${API_URL}/api/admin/servers/${id}/config/raw`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ changes, version })
+        });
+        return handleResponse(response);
+      },
+      // Build a portable template from this server's config (ports, credentials
+      // and identity filtered out server-side). Returns the JSON to download.
+      exportConfigTemplate: async (token, id, name, description) => {
+        const params = new URLSearchParams({ name: name || '', description: description || '' });
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}/config/template/export?${params}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // Apply a combined template (INI settings and/or SandboxVars) to this
+      // server, in one call. `body` is { settings?, sandbox?, version?,
+      // sandbox_version? }. Refused unless the server is off.
+      importConfigTemplate: async (token, id, body) => {
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}/config/template/import`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(body)
+        });
+        return handleResponse(response);
+      },
+      // The gameplay-difficulty settings (SandboxVars.lua), separate from the
+      // .ini above: water/power shutoff, loot, zombie count, stats decay.
+      sandbox: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}/config/sandbox`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      saveSandbox: async (token, id, changes, version) => {
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}/config/sandbox`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -678,6 +793,39 @@ export const api = {
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({ backup })
+        });
+        return handleResponse(response);
+      },
+      // Fetch the archive as a blob so the Authorization header can be sent —
+      // a plain <a href> download cannot carry one.
+      downloadBackup: async (token, id, name) => {
+        const response = await fetch(
+          `${API_URL}/api/admin/servers/${id}/backups/${encodeURIComponent(name)}/download`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          const error = new Error(data.error || 'Could not download the backup');
+          error.status = response.status;
+          throw error;
+        }
+        return response.blob();
+      },
+      deleteBackup: async (token, id, name) => {
+        const response = await fetch(
+          `${API_URL}/api/admin/servers/${id}/backups/${encodeURIComponent(name)}`,
+          { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        return handleResponse(response);
+      },
+      // multipart: the archive rides in a FormData field, not JSON.
+      uploadBackup: async (token, id, file) => {
+        const body = new FormData();
+        body.append('file', file);
+        const response = await fetch(`${API_URL}/api/admin/servers/${id}/backups/upload`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body
         });
         return handleResponse(response);
       },
@@ -826,6 +974,64 @@ export const api = {
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      }
+    },
+    // Community loot-box configs: browse the GitHub list, preview one, and
+    // apply it to a size's pool. Import also accepts a config parsed from a
+    // local file — the backend validates either source the same way.
+    rewardBoxes: {
+      list: async (token, refresh) => {
+        const url = refresh
+          ? `${API_URL}/api/admin/reward-boxes?refresh=1`
+          : `${API_URL}/api/admin/reward-boxes`;
+        const response = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      get: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/reward-boxes/${id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      import: async (token, data) => {
+        const response = await fetch(`${API_URL}/api/admin/reward-boxes/import`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      // Returns the config JSON for the caller to download.
+      export: async (token, { size, name, description }) => {
+        const params = new URLSearchParams({ size, name: name || '', description: description || '' });
+        const response = await fetch(`${API_URL}/api/admin/reward-boxes/export?${params}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
+    // Community server-config templates: curated INI presets published on GitHub,
+    // fetched by the game-server (the only service with egress) and proxied here.
+    serverTemplates: {
+      list: async (token, refresh) => {
+        const url = refresh
+          ? `${API_URL}/api/admin/server-templates?refresh=1`
+          : `${API_URL}/api/admin/server-templates`;
+        const response = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      get: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/server-templates/${id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
       }

@@ -14,7 +14,6 @@ import logging
 from flask import Blueprint, request, jsonify, current_app
 
 from src.database import db
-from src.extensions import limiter
 from src.models.report import Report
 from src.models.user import User
 from src.middleware.auth import token_required
@@ -51,7 +50,6 @@ def list_mine(current_user):
 
 
 @reports_bp.route('', methods=['POST'])
-@limiter.limit(lambda: current_app.config['RATELIMIT_REPORT'])
 def create_report():
     """File a report about another player, or appeal a ban."""
     @token_required

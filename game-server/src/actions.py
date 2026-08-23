@@ -583,9 +583,27 @@ def get(action_id):
     return ACTIONS.get(action_id)
 
 
+def _template(action):
+    """A ready-to-edit console line for this action, for the reward editor.
+
+    The builders are pure formatters, so feeding them placeholder tokens yields
+    the exact command shape with ``{{USERNAME}}`` where the recipient goes and
+    ``{param}`` for each parameter - authoritative and drift-free, since it comes
+    from the same builder that runs the real command. Optional parts are shown so
+    the admin can see them and delete what they do not want.
+    """
+    params = {p['name']: '{' + p['name'] + '}' for p in action['params']}
+    try:
+        return action['build']('{{USERNAME}}', params)
+    except Exception:
+        return action['command']
+
+
 def to_public(action):
-    """Strip the builder so the entry can be serialised to JSON."""
-    return {k: v for k, v in action.items() if k != 'build'}
+    """Strip the builder so the entry can be serialised to JSON, adding a template."""
+    public = {k: v for k, v in action.items() if k != 'build'}
+    public['template'] = _template(action)
+    return public
 
 
 def catalog(droppable_only=False):

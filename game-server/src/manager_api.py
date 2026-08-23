@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Manager with a RESTful API
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from functools import wraps
 import os
 import random
@@ -20,9 +20,12 @@ import commands
 import logs
 import backups
 import server_config
+import sandbox_config
 import mods
 import workshop
 import items
+import reward_boxes
+import server_templates
 import steam
 import rcon
 import webhook
@@ -130,6 +133,36 @@ def preview_action(action_id):
     return jsonify({
         'data': {'action': actions.to_public(action), 'command': command_text},
         'message': 'Action validated successfully'
+    })
+
+
+@app.route('/api/rewards/preview', methods=['POST'])
+@require_auth
+def preview_reward_commands():
+    """Validate a free-text reward command sequence without running anything.
+
+    The backend calls this before storing a usable reward, so a bad sequence is
+    reported to the admin at authoring time rather than failing inside a delivery
+    task. Parsing and rendering rules live in `commands.py` (the command-injection
+    boundary); this only exposes them. Returns the parsed steps and, for an
+    example username, the exact console lines that would be sent.
+    """
+    data = request.get_json(silent=True) or {}
+    username = data.get('username') or 'ExamplePlayer'
+    try:
+        steps = commands.parse_reward_commands(data.get('commands'))
+        preview = [commands.render_command(s['text'], username)
+                   for s in steps if s['type'] == 'command']
+    except commands.CommandError as e:
+        return jsonify({'error': str(e)}), 400
+
+    return jsonify({
+        'data': {
+            'steps': steps,
+            'preview': preview,
+            'requires_online': commands.reward_requires_online(steps),
+        },
+        'message': 'Reward commands validated successfully'
     })
 
 
@@ -541,6 +574,168 @@ def update_server_config_raw(server_id):
     })
 
 
+@app.route('/api/servers/<int:server_id>/config/template', methods=['GET'])
+@require_auth
+def export_server_template(server_id):
+    """Build a portable template from a server's current config.
+
+    One template carries both halves: the non-gameplay INI settings and the
+    SandboxVars difficulty. Readable whatever the server is doing - exporting is
+    a read. Credentials, ports and per-server identity (INI) and the sandbox
+    schema VERSION are filtered out by the config modules before the template is
+    built, so nothing machine-specific or secret ever leaves here.
+
+    Either half may be missing if that file has not been written yet; the
+    template simply carries whatever is available.
+    """
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    name = request.args.get('name', '')
+    description = request.args.get('description', '')
+
+    ini, ini_error = server_config.export_template(server['name'], name, description)
+    sandbox, sandbox_error = sandbox_config.export_template(server['name'], name, description)
+
+    if ini_error and sandbox_error:
+        # Neither file exists yet - nothing to export.
+        return jsonify({'error': ini_error}), 404
+
+    payload = {
+        'schema': 'safezone.server-template/v1',
+        'name': (name or '').strip() or f"{server['name']} config",
+        'description': (description or '').strip(),
+        'settings': ini['settings'] if not ini_error else {},
+        'sandbox': sandbox['sandbox'] if not sandbox_error else {},
+    }
+    return jsonify({'data': payload})
+
+
+@app.route('/api/servers/<int:server_id>/config/template', methods=['POST'])
+@require_auth
+def import_server_template(server_id):
+    """Apply a combined template to a server, only while it is off.
+
+    The body carries ``settings`` (INI) and/or ``sandbox`` (SandboxVars); at
+    least one must be present. Each half is applied to its own file through the
+    module that owns it, so its blacklist and formatting rules hold. The INI is
+    applied first, then the sandbox; if the sandbox write fails, the INI change
+    has already landed - the response reports what each half did so the operator
+    can see a partial apply rather than guessing.
+
+    Same state rule as every other config write: Project Zomboid rewrites these
+    files when it shuts down, so an edit made while it runs is silently lost, and
+    the state is re-checked here immediately before the writes.
+    """
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 400
+
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    data = request.get_json() or {}
+    settings = data.get('settings')
+    sandbox = data.get('sandbox')
+    if not settings and not sandbox:
+        return jsonify({'error': 'The template has no settings or sandbox values'}), 400
+
+    state = _server_state(server_id)
+    if state not in server_config.EDITABLE_STATES:
+        return jsonify({
+            'error': f"This server is '{state or 'in an unknown state'}'. Stop it "
+                     f"before importing a template - the game rewrites these files "
+                     f"when it shuts down, so changes made now would be lost."
+        }), 409
+
+    result = {}
+    parts = []
+    if settings:
+        ini, error = server_config.import_template(
+            server['name'], settings, data.get('version'))
+        if error:
+            code = 409 if 'Somebody else' in error else 400
+            return jsonify({'error': f'Config: {error}'}), code
+        result['settings'] = ini
+        parts.append(f"{len(ini.get('changed') or [])} config setting(s)")
+    if sandbox:
+        sb, error = sandbox_config.import_template(
+            server['name'], sandbox, data.get('sandbox_version'))
+        if error:
+            code = 409 if 'Somebody else' in error else 400
+            # Say what already landed, so a partial apply is not a surprise.
+            prefix = 'Config applied, but the world half failed. ' if result else ''
+            return jsonify({'error': f'{prefix}World: {error}', 'data': result}), code
+        result['sandbox'] = sb
+        parts.append(f"{len(sb.get('changed') or [])} world setting(s)")
+
+    return jsonify({'data': result, 'message': 'Applied ' + ', '.join(parts)})
+
+
+@app.route('/api/servers/<int:server_id>/config/sandbox', methods=['GET'])
+@require_auth
+def get_server_sandbox(server_id):
+    """The top-level SandboxVars for a server (gameplay difficulty settings).
+
+    Readable whatever the server is doing - looking is harmless. The live state
+    rides along so the panel can show the form read-only rather than letting
+    somebody type into a screen that will refuse to save.
+    """
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    payload, error = sandbox_config.read(server['name'])
+    if error:
+        return jsonify({'error': error}), 404
+
+    state = _server_state(server_id)
+    payload['state'] = state
+    payload['editable'] = state in server_config.EDITABLE_STATES
+    payload['editable_states'] = sorted(server_config.EDITABLE_STATES)
+    return jsonify({'data': payload})
+
+
+@app.route('/api/servers/<int:server_id>/config/sandbox', methods=['PUT'])
+@require_auth
+def update_server_sandbox(server_id):
+    """Apply SandboxVars edits, only while the server is off.
+
+    Same state rule as the INI: the game rewrites its files on shutdown, so an
+    edit made while it runs is silently lost, and the check is made immediately
+    before the write rather than trusting the one made when the form opened.
+    """
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 400
+
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    state = _server_state(server_id)
+    if state not in server_config.EDITABLE_STATES:
+        return jsonify({
+            'error': f"This server is '{state or 'in an unknown state'}'. Stop it "
+                     f"before editing the sandbox - the game rewrites this file "
+                     f"when it shuts down, so changes made now would be lost."
+        }), 409
+
+    data = request.get_json() or {}
+    result, error = sandbox_config.write(
+        server['name'], data.get('changes'), data.get('version')
+    )
+    if error:
+        code = 409 if 'Somebody else' in error else 400
+        return jsonify({'error': error}), code
+
+    return jsonify({
+        'data': result,
+        'message': f"Updated {len(result['changed'])} setting(s)"
+                   if result['changed'] else 'Nothing to change'
+    })
+
+
 @app.route('/api/servers/<int:server_id>/mods', methods=['GET'])
 @require_auth
 def get_server_mods(server_id):
@@ -704,6 +899,60 @@ def list_items():
     # `stale` set means the cached copy could not be refreshed: still usable,
     # just older than we would like, which is worth saying rather than hiding.
     return jsonify({'data': payload, 'stale': error})
+
+
+@app.route('/api/reward-boxes', methods=['GET'])
+@require_auth
+def list_reward_boxes():
+    """The community loot-box config index, for "Import from community".
+
+    Reference data fetched from GitHub - it lives here because this is the
+    container with egress. `?refresh=1` forces a re-fetch. Like the item
+    catalog, `stale` reports a failed refresh without discarding a usable list.
+    """
+    force = request.args.get('refresh') in ('1', 'true', 'yes')
+    payload, error = reward_boxes.get_box_list(force=force)
+    if not payload:
+        return jsonify({'error': error or 'The community box list is unavailable'}), 503
+    return jsonify({'data': payload, 'stale': error})
+
+
+@app.route('/api/reward-boxes/<string:box_id>', methods=['GET'])
+@require_auth
+def get_reward_box(box_id):
+    """One community loot-box config, for preview before import."""
+    payload, error = reward_boxes.get_box(box_id)
+    if not payload:
+        status = 400 if error == 'invalid box id' else 502
+        return jsonify({'error': error or 'The box config is unavailable'}), status
+    return jsonify({'data': payload})
+
+
+@app.route('/api/server-templates', methods=['GET'])
+@require_auth
+def list_server_templates():
+    """The community server-config template index, for "Templates".
+
+    Reference data fetched from GitHub - it lives here because this is the
+    container with egress. `?refresh=1` forces a re-fetch. Like the reward-box
+    list, `stale` reports a failed refresh without discarding a usable list.
+    """
+    force = request.args.get('refresh') in ('1', 'true', 'yes')
+    payload, error = server_templates.get_template_list(force=force)
+    if not payload:
+        return jsonify({'error': error or 'The community template list is unavailable'}), 503
+    return jsonify({'data': payload, 'stale': error})
+
+
+@app.route('/api/server-templates/<string:template_id>', methods=['GET'])
+@require_auth
+def get_server_template(template_id):
+    """One community server-config template, for preview before import."""
+    payload, error = server_templates.get_template(template_id)
+    if not payload:
+        status = 400 if error == 'invalid template id' else 502
+        return jsonify({'error': error or 'The template is unavailable'}), status
+    return jsonify({'data': payload})
 
 
 @app.route('/api/mods', methods=['GET'])
@@ -933,6 +1182,59 @@ def server_backups(server_id):
     return jsonify({'data': backups.list_backups(server['name'])})
 
 
+@app.route('/api/servers/<int:server_id>/backups/upload', methods=['POST'])
+@require_auth
+def upload_server_backup(server_id):
+    """Accept an archive uploaded from an operator's machine.
+
+    The name is validated and the container checked before it is accepted, so
+    restore can trust whatever lands here the same way it trusts one this system
+    took itself.
+    """
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'error': 'No file uploaded'}), 400
+
+    name, error = backups.save_uploaded(server['name'], upload.filename, upload)
+    if error:
+        return jsonify({'error': error}), 400
+
+    return jsonify({'data': {'name': name}, 'message': f'Uploaded {name}'})
+
+
+@app.route('/api/servers/<int:server_id>/backups/<string:archive_name>/download', methods=['GET'])
+@require_auth
+def download_server_backup(server_id, archive_name):
+    """Stream one archive back to the caller."""
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    path, error = backups.archive_path(server['name'], archive_name)
+    if error:
+        return jsonify({'error': error}), 404
+    return send_file(path, as_attachment=True, download_name=archive_name,
+                     mimetype='application/gzip')
+
+
+@app.route('/api/servers/<int:server_id>/backups/<string:archive_name>', methods=['DELETE'])
+@require_auth
+def delete_server_backup(server_id, archive_name):
+    """Remove one archive."""
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    ok, error = backups.delete(server['name'], archive_name)
+    if not ok:
+        return jsonify({'error': error}), 404
+    return jsonify({'message': f'Deleted {archive_name}'})
+
+
 @app.route('/api/servers/<int:server_id>/logs', methods=['GET'])
 @require_auth
 def server_logs(server_id):
@@ -1136,16 +1438,22 @@ def relay_mail():
     to_address = data.get('to')
     subject = data.get('subject')
     body = data.get('body')
+    # Optional: the SMTP server to use, when an admin configured mail in the
+    # panel instead of this container's environment. Absent means "use mine".
+    overrides = data.get('smtp')
+    if overrides is not None and not isinstance(overrides, dict):
+        return jsonify({'error': 'smtp must be an object'}), 400
 
     if not to_address or not subject:
         return jsonify({'error': 'to and subject are required'}), 400
     if not mailer.is_address(to_address):
         return jsonify({'error': 'Not an email address'}), 400
 
-    ok, error = mailer.send(to_address, subject, body)
-    if not ok and mailer.is_configured():
+    ok, error = mailer.send(to_address, subject, body, overrides=overrides)
+    configured = mailer.is_configured(overrides)
+    if not ok and configured:
         _log(f"Mail relay failed: {error}")
-    return jsonify({'ok': ok, 'configured': mailer.is_configured(), 'error': error})
+    return jsonify({'ok': ok, 'configured': configured, 'error': error})
 
 
 if __name__ == '__main__':

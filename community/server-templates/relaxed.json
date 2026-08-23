@@ -1,0 +1,42 @@
+{
+  "schema": "safezone.server-template/v1",
+  "name": "Relaxed",
+  "description": "Cooperative, forgiving survival. Config: no PvP, world pauses when empty, generous respawns, players see each other on the map. World: water and power never cut, plentiful respawning loot, few zombies, slow-draining needs.",
+  "settings": {
+    "PVP": "false",
+    "SafetySystem": "true",
+    "Open": "true",
+    "PauseEmpty": "true",
+    "GlobalChat": "true",
+    "AnnounceDeath": "false",
+    "MaxPlayers": "8",
+    "SaveWorldEveryMinutes": "15",
+    "AllowCoop": "true",
+    "SleepAllowed": "true",
+    "SleepNeeded": "false",
+    "SafehouseAllowRespawn": "true",
+    "PlayerRespawnWithSelf": "true",
+    "PlayerRespawnWithOther": "true",
+    "MapRemotePlayerVisibility": "4"
+  },
+  "sandbox": {
+    "WaterShut": 9,
+    "ElecShut": 9,
+    "Zombies": 5,
+    "ZombieRespawn": 4,
+    "StatsDecrease": 5,
+    "FoodLootNew": 2.0,
+    "CannedFoodLootNew": 2.0,
+    "MedicalLootNew": 2.0,
+    "WeaponLootNew": 1.5,
+    "AmmoLootNew": 1.5,
+    "OtherLootNew": 1.5,
+    "HoursForLootRespawn": 24,
+    "Farming": 2,
+    "NatureAbundance": 4,
+    "LockedHouses": 3,
+    "FoodRotSpeed": 4,
+    "StarterKit": true,
+    "DayLength": 5
+  }
+}

@@ -9,7 +9,6 @@ from flask_cors import CORS
 
 # Import configuration
 from src.config import Config, configure_app
-from src.extensions import limiter
 
 # Import routes
 from src.routes.auth import auth_bp
@@ -54,11 +53,6 @@ CORS(app,
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
      allow_headers=['Content-Type', 'Authorization'])
-
-# Rate Limiting - using Redis as storage. The limiter instance lives in
-# src/extensions.py so blueprints can decorate their views with stricter
-# per-endpoint limits at import time (see src/routes/auth.py).
-limiter.init_app(app)
 
 configure_logging(app)
 

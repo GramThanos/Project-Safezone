@@ -1,0 +1,11 @@
+{
+  "schema": "safezone.box-list/v1",
+  "boxes": [
+    {
+      "id": "starter-kit",
+      "name": "Starter Kit",
+      "description": "Basic survival gear to get a new player through their first days.",
+      "rewards": 4
+    }
+  ]
+}

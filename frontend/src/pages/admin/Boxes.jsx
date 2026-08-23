@@ -8,8 +8,15 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+import BoxConfigModal from '../../components/BoxConfigModal';
 
 const pct = (n) => `${(100 * (n || 0)).toFixed(1)}%`;
+
+// A filename slug from a config name — a bare name-slug, no hash.
+const slugify = (name) => (name || 'box')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '') || 'box';
 
 function Boxes() {
   const { token, isAdmin } = useAuth();
@@ -21,6 +28,7 @@ function Boxes() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [showImport, setShowImport] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -112,6 +120,42 @@ function Boxes() {
     }
   };
 
+  const handleImported = (summary, size) => {
+    setShowImport(false);
+    setError('');
+    const s = summary || {};
+    setNotice(
+      `Imported into the ${size} box: ${s.created || 0} reward(s) created, ` +
+      `${s.added || 0} added to the pool, ${s.reweighted || 0} reweighted` +
+      (s.removed ? `, ${s.removed} removed` : '') + '.'
+    );
+    loadData();
+  };
+
+  // Export one size's pool as a config file. The name and description are the
+  // config's own metadata (not stored anywhere), so they are asked for here.
+  const handleExport = async (size, label) => {
+    const name = window.prompt('Name for this box configuration:', `${label} box`);
+    if (name === null) return;
+    const description = window.prompt('Short description (optional):', '') || '';
+    setError('');
+    try {
+      const config = await api.admin.rewardBoxes.export(token, { size, name, description });
+      const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${slugify(name)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export box config error:', err);
+      setError(err.message || 'Failed to export that box');
+    }
+  };
+
   // Entries for one size, with each reward's share of a single draw.
   const poolFor = (size) => {
     const entries = boxPools.filter((p) => p.size === size);
@@ -128,7 +172,14 @@ function Boxes() {
 
   return (
     <>
-      <h4 className="font-display mb-1">Loot Boxes</h4>
+      <div className="d-flex flex-wrap justify-content-between align-items-baseline gap-2">
+        <h4 className="font-display mb-1">Loot Boxes</h4>
+        {isAdmin() && (
+          <button className="btn btn-sm btn-outline-secondary" onClick={() => setShowImport(true)}>
+            <i className="fas fa-download me-1"></i> Import config
+          </button>
+        )}
+      </div>
       <p className="text-body-secondary">
         Weights are relative, not percentages: a reward at 10 is ten times as
         likely as one at 1. Setting a weight to 0 keeps a reward in the pool but
@@ -234,12 +285,23 @@ function Boxes() {
         return (
           <div className="card mb-3" key={type.size}>
             <div className="card-body">
-              <h5 className="card-title font-display mb-1">
-                {type.label}
-                <span className="text-body-secondary fs-6 ms-2">
-                  {type.draws} reward{type.draws === 1 ? '' : 's'} per box
-                </span>
-              </h5>
+              <div className="d-flex justify-content-between align-items-baseline">
+                <h5 className="card-title font-display mb-1">
+                  {type.label}
+                  <span className="text-body-secondary fs-6 ms-2">
+                    {type.draws} reward{type.draws === 1 ? '' : 's'} per box
+                  </span>
+                </h5>
+                {isAdmin() && (
+                  <button
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={() => handleExport(type.size, type.label)}
+                    title="Export this pool as a config file"
+                  >
+                    <i className="fas fa-upload me-1"></i> Export
+                  </button>
+                )}
+              </div>
 
               {entries.length === 0 ? (
                 <p className="text-body-secondary">Nothing in this pool yet.</p>
@@ -324,6 +386,14 @@ function Boxes() {
           </div>
         );
       })}
+
+      {showImport && (
+        <BoxConfigModal
+          sizes={boxTypes.map((t) => ({ size: t.size, label: t.label }))}
+          onImported={handleImported}
+          onClose={() => setShowImport(false)}
+        />
+      )}
     </>
   );
 }

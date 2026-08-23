@@ -118,6 +118,81 @@ def create(server_name, note=None):
     return name, None
 
 
+def archive_path(server_name, archive_name):
+    """Full path of one archive, or ``(None, error)`` if it cannot be served.
+
+    Used by download and delete: both take a name from the API, so both go
+    through the same `ARCHIVE_RE` gate that `restore` does rather than trusting
+    the string to stay inside the backup directory.
+    """
+    directory = backup_dir(server_name)
+    if not directory:
+        return None, 'That server name cannot be used for backups'
+    if not ARCHIVE_RE.match(str(archive_name or '')):
+        return None, 'That is not a valid backup name'
+    path = os.path.join(directory, archive_name)
+    if not os.path.isfile(path):
+        return None, 'No such backup'
+    return path, None
+
+
+def delete(server_name, archive_name):
+    """Remove one archive. Returns ``(ok, error)``."""
+    path, error = archive_path(server_name, archive_name)
+    if error:
+        return False, error
+    try:
+        os.remove(path)
+    except OSError as e:
+        _log(f"Could not delete {archive_name}: {e}")
+        return False, f'Delete failed: {e}'
+    return True, None
+
+
+def save_uploaded(server_name, filename, stream):
+    """Store an uploaded archive under a server's backup directory.
+
+    Returns ``(archive_name, error)``. The name must match `ARCHIVE_RE` - the
+    same gate restore applies - so an upload is only accepted if it looks like an
+    archive this system produced; anything else could never be restored anyway.
+    The file is written to a `.partial` name first and moved into place only once
+    it is a valid gzip tar, so a truncated or bogus upload never appears as a
+    restorable backup.
+    """
+    target_dir = backup_dir(server_name)
+    if not target_dir:
+        return None, 'That server name cannot be used for backups'
+
+    name = os.path.basename(str(filename or ''))
+    if not ARCHIVE_RE.match(name):
+        return None, ('That file name is not a recognised backup archive. Expected '
+                      'a .tar.gz produced by this system (e.g. 20240102-153000.tar.gz).')
+
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        final = os.path.join(target_dir, name)
+        if os.path.exists(final):
+            return None, 'A backup with that name already exists'
+
+        partial = final + '.partial'
+        stream.save(partial)
+        try:
+            # A restore trusts this file; a plausible-looking upload that is not
+            # actually a gzip tar would fail there instead of here, later and
+            # less clearly. Verify the container before accepting it.
+            with tarfile.open(partial, 'r:gz') as archive:
+                archive.getmembers()
+        except Exception:
+            os.remove(partial)
+            return None, 'That file is not a valid .tar.gz archive'
+        os.replace(partial, final)
+    except Exception as e:
+        _log(f"Upload for '{server_name}' failed: {e}")
+        return None, f'Upload failed: {e}'
+
+    return name, None
+
+
 def prune(server_name, keep):
     """Delete all but the newest `keep` archives. Returns how many went."""
     try:

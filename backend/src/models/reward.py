@@ -1,13 +1,19 @@
 """Reward catalog model (items and usables).
 
 A unified table keeps delivery uniform: items carry an ``in_game_id`` delivered via
-`additem`; usables carry an ``action_id`` from the game-server's action catalog
-plus its ``action_params`` (e.g. ``teleport_to_beacon`` with a destination). The
-admin UI presents them as two lists.
+`additem`; usables carry a free-text ``commands`` block - one or more console
+commands (optionally interleaved with executor-side ``sleep``/``wait`` steps),
+with a ``{{USERNAME}}`` placeholder for the recipient. The admin UI presents the
+two kinds as separate lists.
 
-Every usable is a catalog action. The free-text command field that predated the
-catalog has been removed, so there is no longer any way to reach the game console
-with a string the catalog did not produce.
+Command text is admin-authored and trusted; the game-server is still the command
+boundary, validating the sequence when a reward is saved (via its reward preview
+endpoint) and re-validating the one player-influenced value - the recipient's
+in-game name - before it reaches the console at delivery time.
+
+``action_id`` / ``action_params`` are the legacy catalog columns, retained so a
+reward authored before free-text commands still reads and delivers; new usables
+use ``commands``.
 """
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, JSON
@@ -29,8 +35,9 @@ class Reward(Base):
     icon = Column(String(512))
     in_game_id = Column(String(64))        # for items (e.g. "Base.Axe")
     count = Column(Integer, nullable=False, default=1)  # how many, for items
-    action_id = Column(String(64))         # for usables: game-server action catalog id
-    action_params = Column(JSON)           # for usables: validated action parameters
+    commands = Column(Text)                # for usables: free-text command sequence
+    action_id = Column(String(64))         # legacy usables: game-server action catalog id
+    action_params = Column(JSON)           # legacy usables: validated action parameters
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -46,6 +53,7 @@ class Reward(Base):
             'icon': self.icon,
             'in_game_id': self.in_game_id,
             'count': self.count if self.count is not None else 1,
+            'commands': self.commands,
             'action_id': self.action_id,
             'action_params': self.action_params or {},
             'active': self.active,

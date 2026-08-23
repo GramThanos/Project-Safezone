@@ -98,9 +98,13 @@ def give_reward(data):
 
     Expected data: server_id, username, kind ('item'|'usable'), plus one of
       - in_game_id + count            (kind 'item')
-      - action_id + action_params     (kind 'usable', catalog action)
+      - commands                      (kind 'usable', free-text reward sequence)
+      - action_id + action_params     (kind 'usable', catalog action - staff path)
     ``scope`` is 'reward' (default, loot-safe actions only) or 'staff' (the whole
     catalog; the backend gates this on the operator's role).
+
+    A free-text ``commands`` sequence may interleave `sleep`/`wait` steps, which
+    are honoured here (between console writes) and never sent to the server.
     """
     server_id = data.get('server_id')
     username = data.get('username')
@@ -113,9 +117,32 @@ def give_reward(data):
         data['delivery_message'] = 'Server not found'
         return False
 
-    # Player-targeted commands are no-ops for a disconnected player; server-wide
-    # actions (weather, bans, save) run regardless.
-    needs_online = commands.action_requires_online(action_id) if action_id else True
+    # Resolve the delivery into an ordered plan of steps (console commands and,
+    # for free-text rewards, executor-side sleeps) and whether it needs the
+    # recipient online. Player-targeted commands are no-ops for a disconnected
+    # player; server-wide actions (weather, bans, save) run regardless.
+    try:
+        if kind == 'usable' and data.get('commands'):
+            parsed = commands.parse_reward_commands(data.get('commands'))
+            steps = [step if step['type'] == 'sleep'
+                     else {'type': 'command',
+                           'text': commands.render_command(step['text'], username)}
+                     for step in parsed]
+            needs_online = commands.reward_requires_online(parsed)
+        elif kind == 'usable' and action_id:
+            steps = [{'type': 'command', 'text': commands.build_action_command(
+                username, action_id, data.get('action_params'), droppable_only=not staff)}]
+            needs_online = commands.action_requires_online(action_id)
+        elif kind == 'usable':
+            raise commands.CommandError('usable rewards require commands or an action_id')
+        else:
+            steps = [{'type': 'command', 'text': commands.build_item_command(
+                username, data.get('in_game_id'), data.get('count', 1))}]
+            needs_online = True
+    except commands.CommandError as e:
+        data['delivery_message'] = f'Invalid reward: {e}'
+        return False
+
     if needs_online:
         raw = cache.get_value(f"server:{server_id}:online_players")
         try:
@@ -126,46 +153,22 @@ def give_reward(data):
             data['delivery_message'] = 'Player is not online'
             return False
 
-    # Build the command safely (raises CommandError on bad input).
-    try:
-        if kind == 'usable' and action_id:
-            command_text = commands.build_action_command(
-                username, action_id, data.get('action_params'), droppable_only=not staff
-            )
-        elif kind == 'usable':
-            # Free-text templates are gone: every usable is a catalog action, so
-            # nothing can reach the console outside the whitelist.
-            raise commands.CommandError('usable rewards require an action_id')
-        else:
-            command_text = commands.build_item_command(
-                username, data.get('in_game_id'), data.get('count', 1)
-            )
-    except commands.CommandError as e:
-        data['delivery_message'] = f'Invalid reward: {e}'
-        return False
+    # Run the plan in order. Each console line is dispatched with an ack, because
+    # a publish succeeds even with no manager listening - the ack is what proves
+    # the line reached the server's stdin. A sleep step just pauses the worker.
+    sent = []
+    for step in steps:
+        if step['type'] == 'sleep':
+            time.sleep(step['seconds'])
+            continue
+        ok, detail = send_console(server, step['text'])
+        if not ok:
+            data['command'] = '; '.join(sent + [step['text']])
+            data['delivery_message'] = f"Command not delivered ({detail or 'unknown reason'})"
+            return False
+        sent.append(step['text'])
 
-    # A publish succeeds even with no manager listening, so the command is sent
-    # with an ack id and we wait for the manager to report that it really wrote
-    # it to the game server's stdin.
-    ack_id = uuid.uuid4().hex
-    sent = cache.broadcast_to_channel(
-        config.MANAGE_GAME_SERVERS_CHANNEL,
-        {'server': server['name'], 'command': 'server-command',
-         'data': command_text, 'ack_id': ack_id}
-    )
-    if not sent:
-        data['delivery_message'] = 'Failed to dispatch command'
-        return False
-
-    ack = _await_command_ack(ack_id)
-    data['command'] = command_text
-    if ack is None:
-        data['delivery_message'] = 'No response from the server manager'
-        return False
-    if not ack.get('ok'):
-        data['delivery_message'] = f"Command not delivered ({ack.get('detail') or 'unknown reason'})"
-        return False
-
+    data['command'] = '; '.join(sent)
     data['delivery_message'] = 'Reward delivered'
     return True
 

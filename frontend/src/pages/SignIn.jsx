@@ -28,7 +28,12 @@ function SignIn() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { signin, signup } = useAuth();
+  // When the account has 2FA on, the password step hands back a challenge
+  // instead of a session; this holds it while the code is entered.
+  const [mfaToken, setMfaToken] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
+
+  const { signin, completeMfaSignin, signup } = useAuth();
   const navigate = useNavigate();
 
   const from = location.state?.from?.pathname || '/';
@@ -84,12 +89,42 @@ function SignIn() {
       const result = await signin(username, password);
       if (result.success) {
         navigate(from, { replace: true });
+      } else if (result.mfaRequired) {
+        // Password was right; move to the code step.
+        setMfaToken(result.mfaToken);
+        setMfaCode('');
       } else {
         setError(result.error);
       }
     }
 
     setLoading(false);
+  };
+
+  const handleVerifyMfa = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    const result = await completeMfaSignin(mfaToken, mfaCode.trim());
+    if (result.success) {
+      navigate(from, { replace: true });
+    } else if (result.expired) {
+      // The challenge died; send them back to the password step.
+      setMfaToken(null);
+      setMfaCode('');
+      setPassword('');
+      setError(result.error);
+    } else {
+      setError(result.error);
+    }
+    setLoading(false);
+  };
+
+  const cancelMfa = () => {
+    setMfaToken(null);
+    setMfaCode('');
+    setPassword('');
+    setError('');
   };
 
   return (
@@ -100,7 +135,7 @@ function SignIn() {
             <div className="card">
               <div className="card-body p-4">
               <h2 className="card-title font-display text-center mb-4">
-                {isSignUp ? 'Create Account' : 'Sign In'}
+                {mfaToken ? 'Two-Step Verification' : (isSignUp ? 'Create Account' : 'Sign In')}
               </h2>
 
               {error && (
@@ -109,6 +144,42 @@ function SignIn() {
                 </div>
               )}
 
+              {mfaToken ? (
+                <form onSubmit={handleVerifyMfa}>
+                  <p className="text-body-secondary">
+                    Enter the 6-digit code from your authenticator app to finish
+                    signing in.
+                  </p>
+                  <div className="mb-3">
+                    <label htmlFor="mfaCode" className="form-label">Authentication code</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      id="mfaCode"
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value)}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      pattern="[0-9]*"
+                      maxLength="6"
+                      autoFocus
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="btn btn-danger w-100 mb-3"
+                    disabled={loading}
+                  >
+                    {loading ? 'Verifying…' : 'Verify'}
+                  </button>
+                  <div className="text-center">
+                    <button type="button" className="btn btn-link" onClick={cancelMfa}>
+                      Back to sign in
+                    </button>
+                  </div>
+                </form>
+              ) : (
               <form onSubmit={handleSubmit}>
                 <div className="mb-3">
                   <label htmlFor="username" className="form-label">Username</label>
@@ -231,8 +302,9 @@ function SignIn() {
                   {loading ? 'Loading...' : (isSignUp ? 'Sign Up' : 'Sign In')}
                 </button>
               </form>
+              )}
 
-              {!isSignUp && (
+              {!mfaToken && !isSignUp && (
                 <div className="text-center">
                   <Link to="/forgot-password" className="text-body-secondary">
                     Forgot your password?
@@ -240,6 +312,7 @@ function SignIn() {
                 </div>
               )}
 
+              {!mfaToken && (
               <div className="text-center">
                 <button
                   className="btn btn-link"
@@ -251,6 +324,7 @@ function SignIn() {
                   {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
                 </button>
               </div>
+              )}
               </div>
             </div>
           </div>

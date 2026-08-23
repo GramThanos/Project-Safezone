@@ -5,13 +5,14 @@
 // connection details, the console, backups, the config editor, and the
 // destructive buttons. The log has a page of its own (`ServerLogs`), linked
 // from here — it wants the whole window.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
 import ServerConfig from './ServerConfig';
 import ServerForm from './ServerForm';
+import ServerModsEditor from './ServerModsEditor';
 
 const humanBytes = (n) => {
   if (!n) return '—';
@@ -40,11 +41,7 @@ function ServerDetail() {
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMsg, setBackupMsg] = useState('');
   const [backupError, setBackupError] = useState('');
-
-  // Mods, read-only here. Choosing them is done on Installations, where the
-  // shared library they are chosen from actually lives; this is the summary you
-  // want when you are looking at one server and wondering why it will not boot.
-  const [mods, setMods] = useState(null);
+  const uploadInput = useRef(null);
 
   const [showConfig, setShowConfig] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -52,7 +49,6 @@ function ServerDetail() {
   useEffect(() => {
     setCommandOutput(null);
     loadServer();
-    fetchMods();
     if (isAdmin()) fetchBackups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
@@ -110,17 +106,6 @@ function ServerDetail() {
     }
   };
 
-  const fetchMods = async () => {
-    try {
-      setMods(await api.admin.servers.mods(token, serverId));
-    } catch (err) {
-      // A server whose config has never been written has no mod list yet, and
-      // that is not worth an error banner on the page.
-      console.error('Load server mods error:', err);
-      setMods(null);
-    }
-  };
-
   const fetchBackups = async () => {
     try {
       const data = await api.admin.servers.backups(token, serverId);
@@ -145,6 +130,61 @@ function ServerDetail() {
     } catch (err) {
       console.error('Backup error:', err);
       setBackupError(err.message || 'Could not queue the backup');
+    }
+    setBackupBusy(false);
+  };
+
+  const handleDownloadBackup = async (name) => {
+    setBackupError('');
+    try {
+      const blob = await api.admin.servers.downloadBackup(token, serverId, name);
+      // Hand the blob to the browser as a save: an object URL clicked once, then
+      // revoked so it does not leak.
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download backup error:', err);
+      setBackupError(err.message || 'Could not download the backup');
+    }
+  };
+
+  const handleDeleteBackup = async (name) => {
+    if (!window.confirm(`Delete ${name}? This permanently removes the archive.`)) return;
+    setBackupBusy(true);
+    setBackupError('');
+    setBackupMsg('');
+    try {
+      await api.admin.servers.deleteBackup(token, serverId, name);
+      setBackupMsg(`Deleted ${name}.`);
+      fetchBackups();
+    } catch (err) {
+      console.error('Delete backup error:', err);
+      setBackupError(err.message || 'Could not delete the backup');
+    }
+    setBackupBusy(false);
+  };
+
+  const handleUploadBackup = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    // Let the same file be picked again after an error by clearing the input.
+    e.target.value = '';
+    if (!file) return;
+    setBackupBusy(true);
+    setBackupError('');
+    setBackupMsg('');
+    try {
+      const data = await api.admin.servers.uploadBackup(token, serverId, file);
+      setBackupMsg(data.message || `Uploaded ${file.name}.`);
+      fetchBackups();
+    } catch (err) {
+      console.error('Upload backup error:', err);
+      setBackupError(err.message || 'Could not upload the backup');
     }
     setBackupBusy(false);
   };
@@ -318,64 +358,25 @@ function ServerDetail() {
         </div>
       </div>
 
-      {/* Mods */}
-      {mods && (
-        <div className="card mb-3">
-          <div className="card-body">
-            <div className="d-flex justify-content-between align-items-center mb-3">
-              <h5 className="card-title font-display mb-0">Mods</h5>
-              <Link className="btn btn-sm btn-outline-secondary" to="/admin/installations">
-                <i className="fas fa-sliders"></i> Manage
-              </Link>
-            </div>
-
-            {(mods.missing_ids || []).length > 0 && (
-              <div className="alert alert-warning" role="alert">
-                Configured but not downloaded:{' '}
-                <span className="font-monospace">{mods.missing_ids.join(', ')}</span>.
-                This server will not start until they are fetched.
-              </div>
-            )}
-            {(mods.requirement_problems || []).length > 0 && (
-              <div className="alert alert-warning" role="alert">
-                <div className="fw-semibold mb-1">Dependency problems</div>
-                <ul className="mb-0 ps-3">
-                  {mods.requirement_problems.map((problem) => (
-                    <li key={`${problem.mod}:${problem.requires}:${problem.problem}`}>
-                      <code>{problem.mod}</code>{' '}
-                      {problem.problem === 'missing'
-                        ? <>requires <code>{problem.requires}</code>, which is not enabled</>
-                        : <>loads before <code>{problem.requires}</code>, which it requires</>}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {(mods.unknown_mod_names || []).length > 0 && (
-              <div className="alert alert-warning" role="alert">
-                Loaded but provided by nothing downloaded:{' '}
-                <span className="font-monospace">{mods.unknown_mod_names.join(', ')}</span>.
-                This is the failure that looks healthy right up until nobody can
-                connect.
-              </div>
-            )}
-
-            <dl className="row mb-0">
-              <dt className="col-sm-3 text-body-secondary fw-normal">Workshop items</dt>
-              <dd className="col-sm-9 font-monospace text-break">
-                {(mods.workshop_ids || []).join('; ')
-                  || <span className="text-body-secondary">none</span>}
-              </dd>
-
-              <dt className="col-sm-3 text-body-secondary fw-normal">Load order</dt>
-              <dd className="col-sm-9 font-monospace text-break">
-                {(mods.mod_names || []).join('; ')
-                  || <span className="text-body-secondary">none</span>}
-              </dd>
-            </dl>
+      {/* Mods. The shared library — installing and removing the files — is
+          host-level and stays on Installations; picking which of the downloaded
+          ones this server loads is per-server, so it lives here. */}
+      <div className="card mb-3">
+        <div className="card-body">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h5 className="card-title font-display mb-0">Mods</h5>
+            <Link className="btn btn-sm btn-outline-secondary" to="/admin/installations">
+              <i className="fas fa-hard-drive"></i> Mod library
+            </Link>
           </div>
+          <ServerModsEditor
+            serverId={serverId}
+            serverName={server.name}
+            serverState={state}
+            admin={isAdmin()}
+          />
         </div>
-      )}
+      </div>
 
       {/* Backups */}
       {isAdmin() && (
@@ -397,7 +398,7 @@ function ServerDetail() {
               requires the server to be stopped.
             </p>
 
-            <div className="row g-2 align-items-end mb-4">
+            <div className="row g-2 align-items-end mb-3">
               <div className="col-md-8">
                 <label className="form-label text-body-secondary">Note (optional)</label>
                 <input
@@ -417,6 +418,26 @@ function ServerDetail() {
                   {backupBusy ? 'Working…' : 'Back up now'}
                 </button>
               </div>
+            </div>
+
+            <div className="d-flex align-items-center gap-2 mb-4">
+              <input
+                ref={uploadInput}
+                type="file"
+                accept=".gz,.tar.gz,application/gzip"
+                className="d-none"
+                onChange={handleUploadBackup}
+              />
+              <button
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => uploadInput.current && uploadInput.current.click()}
+                disabled={backupBusy}
+              >
+                {backupBusy ? 'Working…' : 'Upload a backup'}
+              </button>
+              <small className="text-body-secondary">
+                A <code>.tar.gz</code> previously downloaded from here.
+              </small>
             </div>
 
             {backupList.length === 0 ? (
@@ -439,13 +460,29 @@ function ServerDetail() {
                         <td>{humanBytes(b.bytes)}</td>
                         <td>{b.created_at ? new Date(b.created_at).toLocaleString() : '—'}</td>
                         <td>
-                          <button
-                            className="btn btn-sm btn-outline-danger"
-                            onClick={() => handleRestore(b.name)}
-                            disabled={backupBusy}
-                          >
-                            Restore
-                          </button>
+                          <div className="d-flex gap-2 justify-content-end">
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() => handleDownloadBackup(b.name)}
+                              disabled={backupBusy}
+                            >
+                              Download
+                            </button>
+                            <button
+                              className="btn btn-sm btn-outline-danger"
+                              onClick={() => handleRestore(b.name)}
+                              disabled={backupBusy}
+                            >
+                              Restore
+                            </button>
+                            <button
+                              className="btn btn-sm btn-outline-danger"
+                              onClick={() => handleDeleteBackup(b.name)}
+                              disabled={backupBusy}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

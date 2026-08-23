@@ -26,6 +26,17 @@ class TestCatalogShape(unittest.TestCase):
         for action in actions.catalog():
             self.assertNotIn('build', action)
 
+    def test_every_action_has_a_template(self):
+        # The reward editor inserts these; they come from the real builders, so a
+        # player-targeted one must carry the {{USERNAME}} placeholder and every
+        # template must start with the underlying console command.
+        for action in actions.catalog():
+            with self.subTest(action=action['id']):
+                template = action['template']
+                self.assertTrue(template.startswith(action['command']))
+                if action['targets_player']:
+                    self.assertIn('{{USERNAME}}', template)
+
     def test_droppable_filter(self):
         droppable = {a['id'] for a in actions.catalog(droppable_only=True)}
         self.assertIn('god_mode', droppable)

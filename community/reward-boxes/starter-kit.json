@@ -1,0 +1,43 @@
+{
+  "schema": "safezone.box-config/v1",
+  "name": "Starter Kit",
+  "description": "Basic survival gear to get a new player through their first days.",
+  "rewards": [
+    {
+      "kind": "item",
+      "name": "Axe",
+      "description": "A reliable tool and weapon.",
+      "icon": "",
+      "in_game_id": "Base.Axe",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Canned Beans",
+      "description": "Non-perishable calories.",
+      "icon": "",
+      "in_game_id": "Base.TinnedBeans",
+      "count": 3,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Bandage",
+      "description": "For the inevitable scratches.",
+      "icon": "",
+      "in_game_id": "Base.Bandage",
+      "count": 2,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Water Bottle",
+      "description": "Stay hydrated.",
+      "icon": "",
+      "in_game_id": "Base.WaterBottleFull",
+      "count": 1,
+      "weight": 8
+    }
+  ]
+}

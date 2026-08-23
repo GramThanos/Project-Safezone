@@ -20,6 +20,7 @@ import time
 
 from flask import current_app
 
+from src.utils import settings
 from src.utils.game_server import gs_request
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,39 @@ _STATUS_TTL = 60
 _status = {'configured': None, 'checked_at': 0.0}
 
 
+def overrides():
+    """The SMTP settings from the panel, or None to use the relay's own.
+
+    Mail is configured in two places on purpose. The container that can reach a
+    mail server holds an environment default, which is what a deployment brings
+    up with; the panel can override it live, which is what an operator reaches
+    for when the provider stops accepting mail at nine on a Sunday. A blank host
+    in the panel means "use what the container was started with", so the
+    override is opt-in and there is no way to half-configure it by accident.
+    """
+    try:
+        host = (settings.get('smtp_host') or '').strip()
+    except Exception as e:
+        logger.error(f"Could not read the mail settings: {e}")
+        return None
+    if not host:
+        return None
+
+    return {
+        'host': host,
+        'port': settings.get('smtp_port') or 587,
+        'user': (settings.get('smtp_user') or '').strip(),
+        'password': settings.get('smtp_password') or '',
+        'tls': bool(settings.get('smtp_tls')),
+        'from': (settings.get('smtp_from') or '').strip(),
+    }
+
+
 def is_configured():
-    """Whether a mail server has been set up, as far as the relay knows."""
+    """Whether a mail server has been set up, here or on the relay."""
+    if overrides() is not None:
+        return True
+
     now = time.monotonic()
     if _status['configured'] is not None and now - _status['checked_at'] < _STATUS_TTL:
         return _status['configured']
@@ -58,7 +90,11 @@ def reset_cache():
 
 def site_url():
     """Base URL the browser reaches this deployment on, for links in email."""
-    return (current_app.config.get('SITE_URL') or '').rstrip('/')
+    try:
+        configured = settings.get('site_url')
+    except Exception:
+        configured = None
+    return (configured or current_app.config.get('SITE_URL') or '').rstrip('/')
 
 
 def send(to_address, subject, body):
@@ -67,11 +103,15 @@ def send(to_address, subject, body):
     Never raises: a mail failure must not turn into a 500 on signup. The caller
     decides what to tell the user, and the failure is logged either way.
     """
-    payload, status = gs_request('POST', '/api/mail', json={
-        'to': to_address,
-        'subject': subject,
-        'body': body,
-    })
+    request = {'to': to_address, 'subject': subject, 'body': body}
+    smtp = overrides()
+    if smtp:
+        # Sent with the message rather than stored on the relay: the settings
+        # live in one place (this database), and the relay stays a relay
+        # instead of holding a second copy of the configuration that can drift.
+        request['smtp'] = smtp
+
+    payload, status = gs_request('POST', '/api/mail', json=request)
 
     if status != 200:
         logger.error(f"Mail relay unreachable, not sending {subject!r} to {to_address}")

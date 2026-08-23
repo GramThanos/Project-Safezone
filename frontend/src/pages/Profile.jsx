@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import usePageTitle from '../hooks/usePageTitle';
 import ConfirmDialog from '../components/ConfirmDialog';
+import TwoFactorSettings from '../components/TwoFactorSettings';
 
 function Profile() {
   usePageTitle('Profile');
@@ -278,6 +279,8 @@ function Profile() {
                     </form>
                   </div>
                 </div>
+
+                <TwoFactorSettings />
 
                 <div className="card mb-4">
                   <div className="card-body p-4">

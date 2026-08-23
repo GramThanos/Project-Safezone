@@ -25,11 +25,12 @@ scheduler's pump, because the manager must never call the backend; that
 dependency runs one way and stays that way.
 
 **Announcing must never break the thing being announced.** Everything here
-swallows its failures, and `emit()` does the work on a background thread so a
+swallows its failures, and `emit()` hands the work to a background worker so a
 slow Discord never becomes a slow signup.
 """
 import json
 import logging
+import queue
 import threading
 from datetime import datetime
 
@@ -270,11 +271,67 @@ def dispatch(event, title, description=None, detail=None, fields=None,
     return sent
 
 
+# --- The dispatch pool -----------------------------------------------------
+#
+# `emit()` used to start a thread per event, with no pool and no ceiling. The
+# events that fire on signup, report filing, character links and reward
+# deliveries are all reachable from request handlers, and every dispatch does
+# network I/O against Discord or SMTP with a timeout measured in seconds - so a
+# burst of alertable activity parked an unbounded number of threads on sockets.
+#
+# A small fixed pool draining a bounded queue keeps the cost of an alert storm
+# flat. Two properties matter and are deliberate:
+#
+#   * The queue is bounded, and a full one sheds its *oldest* entry rather than
+#     refusing the newest. A staff channel wants the recent past; an afternoon
+#     of stale events is not worth keeping. (Same reasoning as the manager's own
+#     event queue - see `WEBHOOK_EVENT_QUEUE_MAX`.)
+#   * Nothing here ever blocks the caller. Waiting for a queue slot would put
+#     announcing back on the critical path of the thing being announced, which
+#     is the one outcome this module exists to prevent.
+_WORKER_COUNT = 2
+_QUEUE_MAX = 256
+
+_dispatch_queue = queue.Queue(maxsize=_QUEUE_MAX)
+_workers_lock = threading.Lock()
+_workers_started = False
+
+
+def _worker():
+    """Drain the dispatch queue. Runs for the life of the process."""
+    while True:
+        app, args, kwargs = _dispatch_queue.get()
+        try:
+            with app.app_context():
+                dispatch(*args, **kwargs)
+        except Exception as e:
+            # `dispatch` already swallows per-channel failures; this catches
+            # anything that got past it, so a bad event cannot kill a worker
+            # and quietly halve the pool.
+            logger.error(f"Alert dispatch for '{args[0]}' failed: {e}")
+        finally:
+            _dispatch_queue.task_done()
+
+
+def _ensure_workers():
+    """Start the pool on first use, exactly once."""
+    global _workers_started
+    if _workers_started:
+        return
+    with _workers_lock:
+        if _workers_started:
+            return
+        for index in range(_WORKER_COUNT):
+            threading.Thread(target=_worker, name=f'alert-worker-{index}',
+                             daemon=True).start()
+        _workers_started = True
+
+
 def emit(event, title, description=None, detail=None, fields=None,
          server_id=None, link=None):
     """Fire and forget, from a request handler or a job.
 
-    The work happens on a daemon thread holding its own app context, so a
+    The work happens on a pooled worker holding its own app context, so a
     Discord that takes three seconds does not add three seconds to somebody's
     signup. Nothing is returned, and nothing is raised.
     """
@@ -282,17 +339,30 @@ def emit(event, title, description=None, detail=None, fields=None,
         logger.error(f"Alert event '{event}' emitted without an app context")
         return
 
-    app = current_app._get_current_object()
+    _ensure_workers()
+    item = (
+        current_app._get_current_object(),
+        (event, title),
+        {'description': description, 'detail': detail, 'fields': fields,
+         'server_id': server_id, 'link': link},
+    )
 
-    def run():
+    try:
+        _dispatch_queue.put_nowait(item)
+    except queue.Full:
+        # Drop the oldest to make room. The window between the get and the put
+        # is not locked: another emit may take the slot first, in which case
+        # this event is dropped instead - which is the correct outcome anyway
+        # once the queue is saturated.
         try:
-            with app.app_context():
-                dispatch(event, title, description=description, detail=detail,
-                         fields=fields, server_id=server_id, link=link)
-        except Exception as e:
-            logger.error(f"Alert thread for '{event}' failed: {e}")
-
-    threading.Thread(target=run, name=f'alert-{event}', daemon=True).start()
+            _dispatch_queue.get_nowait()
+            _dispatch_queue.task_done()
+        except queue.Empty:
+            pass
+        try:
+            _dispatch_queue.put_nowait(item)
+        except queue.Full:
+            logger.warning(f"Alert queue is full; dropping '{event}'")
 
 
 def send_test(channel_id):

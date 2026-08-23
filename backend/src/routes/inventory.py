@@ -180,11 +180,14 @@ def send_item(current_user, item_id):
                 'kind': reward.kind
             }
             if reward.kind == Reward.KIND_USABLE:
-                if not reward.action_id:
-                    return jsonify({'error': 'That reward is no longer deliverable'}), 409
                 # scope stays 'reward': the game-server refuses staff-only actions.
-                payload['action_id'] = reward.action_id
-                payload['action_params'] = reward.action_params or {}
+                if reward.commands:
+                    payload['commands'] = reward.commands
+                elif reward.action_id:   # legacy catalog reward, still deliverable
+                    payload['action_id'] = reward.action_id
+                    payload['action_params'] = reward.action_params or {}
+                else:
+                    return jsonify({'error': 'That reward is no longer deliverable'}), 409
             else:
                 payload['in_game_id'] = reward.in_game_id
                 payload['count'] = reward.count or 1
