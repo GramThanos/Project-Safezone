@@ -442,7 +442,7 @@ def _render(entry):
     if event == 'server.state':
         state = entry.get('state')
         words = {
-            'running': 'is up',
+            'running': 'is up and joinable',
             'sleeping': 'went to sleep and will wake when someone connects',
             'stopped': 'stopped',
             'failed': 'is in trouble',

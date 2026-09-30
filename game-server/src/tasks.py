@@ -314,7 +314,7 @@ def restore_world(data):
         return False
 
     state = cache.get_value(f"server:{server_id}:state")
-    if state == 'running':
+    if state in ('running', 'booting'):
         data['result'] = 'error'
         data['message'] = 'Stop the server before restoring a backup'
         return False

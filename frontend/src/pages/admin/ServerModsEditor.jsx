@@ -256,7 +256,7 @@ function ServerModsEditor({ serverId, serverName, serverState, admin }) {
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
       {notice && <div className="alert alert-success" role="alert">{notice}</div>}
 
-      {serverState === 'running' && (
+      {(serverState === 'running' || serverState === 'booting') && (
         <div className="alert alert-warning" role="alert">
           <strong>{serverName}</strong> is running. The mod list is read at boot,
           so this takes effect on its next restart.

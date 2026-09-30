@@ -83,7 +83,7 @@ function Home() {
 											<div className="d-flex justify-content-between align-items-start">
 												<h5 className="card-title font-display mb-1">{server.name}</h5>
 												<span className={`badge text-bg-${
-													(server.state || server.default_state) === 'running' ? 'success' : 'secondary'
+													{ running: 'success', booting: 'info' }[server.state || server.default_state] || 'secondary'
 												}`}>
 													{server.state || server.default_state}
 												</span>

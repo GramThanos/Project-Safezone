@@ -20,6 +20,8 @@ export const getRoleBadge = (role) => {
 export const getStatusBadge = (status) => {
   const statusMap = {
     running: 'success',
+    booting: 'info',
+    restarting: 'info',
     sleeping: 'warning',
     stopped: 'secondary',
     pending: 'warning',

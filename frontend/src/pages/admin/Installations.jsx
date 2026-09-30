@@ -117,7 +117,7 @@ function Installations() {
   // The live state overlaid by the backend, falling back to the configured
   // default when the manager has not published one yet.
   const stateOf = (s) => s.state || s.default_state;
-  const anyRunning = servers.some((s) => stateOf(s) === 'running');
+  const anyRunning = servers.some((s) => ['running', 'booting'].includes(stateOf(s)));
   const branchNames = Object.keys(branches).sort();
 
   // Every mutating action here queues a task and refreshes; the only thing that

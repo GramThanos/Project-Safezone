@@ -355,7 +355,11 @@ class GameManager:
     def _publish_live_state(self):
         """Publish the actual runtime state to the cache for the web UI to read."""
         if self._is_game_server_running():
-            actual = "running"
+            # The process being alive is not the same as the server being
+            # joinable: a world takes minutes to load. Until it has answered
+            # `players` once (which is what sets _roster_ready) it is booting,
+            # so "running" means players can actually get in.
+            actual = "running" if self._roster_ready else "booting"
         elif self._is_onwake_running():
             actual = "sleeping"
         elif self._failed or self._wake_bind_failed:
@@ -376,11 +380,12 @@ class GameManager:
         # but expires if this manager dies.
         cache.set_value(f"server:{self.server_id}:state", actual, ttl=30)
 
-        # "restarting" is a transient the UI shows but subscribers are not paged
-        # for: skip the event and leave _published_state on the last real state,
-        # so a crash that recovers emits nothing while one that gives up still
-        # emits server.failed from the branch above once _failed latches.
-        if actual == "restarting":
+        # "restarting" and "booting" are transients the UI shows but subscribers
+        # are not paged for: skip the event and leave _published_state on the
+        # last real state, so a crash that recovers emits nothing while one that
+        # gives up still emits server.failed from the branch above once _failed
+        # latches - and "is up" is announced when players can really join.
+        if actual in ("restarting", "booting"):
             return
         if actual != self._published_state:
             if self._published_state is not None:

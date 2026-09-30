@@ -53,6 +53,7 @@ function Servers() {
 	const getStatusBadge = (state) => {
 		const statusMap = {
 			'running': 'success',
+			'booting': 'info',
 			'sleeping': 'warning',
 			'restarting': 'info',
 			'failed': 'danger',
