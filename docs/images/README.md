@@ -1,10 +1,18 @@
 # Screenshots
 
-Captures used by the root README. Replace the placeholders listed there:
+Captures shown in the root README's gallery:
 
-- `home.png` — public home page with live server status
-- `rewards.png` — opening a loot box, or inventory ready to send
-- `admin-servers.png` — Admin → Servers with a server running
-- `admin-give.png` — Admin → Give, the console action picker
+| File | Shows |
+|---|---|
+| `home.png` | The public home page |
+| `rewards.png` | A player's Rewards page: weekly streak, crates and inventory |
+| `admin-server.png` | A server's page in the admin panel, with its controls and console |
 
-Roughly 1600px wide, PNG. Once all four exist, uncomment the gallery in the README and delete the pending note above it.
+The README banner is `frontend/public/assets/images/safezone-banner-8.png`, one of the site's own hero images.
+
+## Adding or replacing one
+
+- PNG, captured at about **1600px wide** so it stays sharp on high-density screens. Keep each file under about 1 MB.
+- Use test data only: no real player names, email addresses or IP addresses, and a placeholder hostname such as `safezone.example.com`.
+- Captures that would round out the gallery: **Admin → Servers → Installations** with a mod list, and a server's **Mods** editor showing the load-order check.
+- When adding one, give it a row in the gallery table in the README with a one-line caption.

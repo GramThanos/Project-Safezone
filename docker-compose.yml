@@ -8,11 +8,11 @@ services:
       - "16261:16261/udp"
       - "16262:16262/udp"
     environment:
-      - TZ=Europe/Athens
+      - TZ=${TZ:-Europe/Athens}
       - DATABASE_URL=mysql+pymysql://${DATABASE_USER:-safezone}:${DATABASE_PASSWORD:-S4feZone_D4tabas3_Pas5w0rd}@db/${DATABASE_NAME:-safezone}
       - CACHE_URL=redis://cache:6379
       - MANAGER_API_PORT=5000
-      - MANAGER_API_TOKEN=${MANAGER_API_TOKEN:-S4feZone_API_T0k3n}
+      - MANAGER_API_TOKEN=${MANAGER_API_TOKEN:-${API_TOKEN:-S4feZone_API_T0k3n}}
       - STEAM_INSTALL_DIR=/opt/steam-apps
       # The game installs with -Xmx8g and ZGC, which assume a machine bigger
       # than many hosts. `auto` measures this container's memory and CPU limits
@@ -46,7 +46,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
-      - TZ=Europe/Athens
+      - TZ=${TZ:-Europe/Athens}
       - DATABASE_HOST=db
       - DATABASE_NAME=${DATABASE_NAME:-safezone}
       - DATABASE_USER=${DATABASE_USER:-safezone}
@@ -69,7 +69,7 @@ services:
     restart: unless-stopped
     entrypoint: ["python", "-m", "scheduler"]
     environment:
-      - TZ=Europe/Athens
+      - TZ=${TZ:-Europe/Athens}
       - DATABASE_HOST=db
       - DATABASE_NAME=${DATABASE_NAME:-safezone}
       - DATABASE_USER=${DATABASE_USER:-safezone}
@@ -93,7 +93,7 @@ services:
     ports:
       - "8080:80"
     environment:
-      - TZ=Europe/Athens
+      - TZ=${TZ:-Europe/Athens}
     depends_on:
       - backend
     networks:
@@ -105,7 +105,7 @@ services:
     image: mariadb:11
     restart: unless-stopped
     environment:
-      - TZ=Europe/Athens
+      - TZ=${TZ:-Europe/Athens}
       - MYSQL_DATABASE=${DATABASE_NAME:-safezone}
       - MYSQL_USER=${DATABASE_USER:-safezone}
       - MYSQL_PASSWORD=${DATABASE_PASSWORD:-S4feZone_D4tabas3_Pas5w0rd}
@@ -125,7 +125,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     environment:
-      - TZ=Europe/Athens
+      - TZ=${TZ:-Europe/Athens}
     networks:
       - internal
     healthcheck:

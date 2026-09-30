@@ -123,7 +123,7 @@ cd frontend && npm install && npm start
 - **Console commands go through `commands.py` / `actions.py`.** Nothing else builds a command string.
 - **Audit sensitive actions** via `src/utils/audit.py` (`GET /api/admin/audit`).
 - **Two independent requirements files** - `backend/` and `game-server/` pin different versions on purpose.
-- **Secrets**: `docker-compose.yml` ships dev defaults (`SECRET_KEY`, DB password, `API_TOKEN` / `MANAGER_API_TOKEN`). Override them via `.env` in production and never commit real ones. `.env.example` is the full list.
+- **Secrets**: `docker-compose.yml` ships dev defaults (`SECRET_KEY`, DB passwords, `API_TOKEN` - compose feeds the manager's `MANAGER_API_TOKEN` from the same value, so the two cannot drift). Override them via `.env` in production and never commit real ones.
 - **Tests** are stdlib `unittest`, no extra dependencies, covering the pure security-sensitive logic (command building, action catalog, roster parsing, crash-loop and ack handling, mod-library path containment, the uninstall's path containment and what it promises to keep, the sleeping server's wake filter and the game version it advertises, loot draws, which events grant a box and the period key that makes a grant idempotent, the daily boundary, the Discord relay's URL allowlist, the mail relay's address checks, alert routing - who hears an event and which parts of a message stay internal - and the staff feed's one-row-per-alert split from player notifications). Route and authorization tests do not exist yet; nothing in them needs a running stack any more, since the models and blueprints import cleanly against SQLite.
 
 ```bash
