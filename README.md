@@ -222,29 +222,15 @@ Six containers on one host. The **backend** owns accounts, characters and the lo
 
 Module layout and the conventions that keep the two halves apart are in [AGENTS.md](AGENTS.md).
 
-## Known limitations
+## Disclaimers
 
-This is alpha software. Worth knowing before putting it in front of a real community:
-
-- **No TLS in the stack** — run it behind a reverse proxy, as above.
-- **Email confirmation does not restrict anything.** An unconfirmed address is flagged, but the account works normally.
-- **An in-game ban does not ban the website account.** Banning from the website does reach the game.
-- **Waking by Steam join is a heuristic.** Steam joins never reach a sleeping server directly, so it wakes on repeated server-list queries — occasionally from someone just browsing. Direct-IP joins always wake it. [Details.](docs/features.md#wake-on-demand)
-- **The item picker lists base-game items only.** Modded item ids are typed by hand.
-- **Character profiles are notes, not game data.** Nothing reads skills or survival time from the game; last-seen is the only synced fact.
-- **Some game paths are assumed**: the save directory, the Workshop content path, the launch script. All are configurable — check them first if a server will not start or a backup comes back empty.
-- **A server that keeps crashing on start** is marked `failed` and left alone; only the staff alert tells you.
-- **Test coverage is limited to core logic.** There are no tests for API routes or permissions yet.
+This software is still in alpha version. The initial architecture was prepared by a human and AI is been used for powering the core development. At the current state, features are still tested and finetuned, and AI generated code is still under review. Thus, bugs are expected and AI slop may still exist inside the code.
 
 ## Contributing
 
-Contributions are welcome — code, documentation, bug reports, and especially **community presets**: loot boxes and server templates that other communities can import in one click. To share one, export it from your panel, add the JSON file to [`community/`](community) with an entry in that folder's `list.json`, and open a pull request.
-
-For anything larger than a small fix, please open an issue first so we can agree on the approach. Code conventions and the architecture are described in [AGENTS.md](AGENTS.md).
+Contributions are welcome — code, documentation, bug reports, and especially **community presets**: loot boxes and server templates that other communities can import in one click. To share one, export it from your panel, add the JSON file to [`community/`](community) with an entry in that folder's `list.json`, and open a pull request. Code conventions and the architecture are described in [AGENTS.md](AGENTS.md).
 
 **Questions, bugs and ideas:** [open an issue](https://github.com/GramThanos/Project-Safezone/issues).
-
-**Security issues:** please don't open a public issue — report them privately from the repository's **Security** tab (**Report a vulnerability**).
 
 ## Credits
 
