@@ -62,10 +62,10 @@ It is free and open source, runs as a single Docker Compose stack, and suits any
 
 See **[all features](docs/features.md)** for the full tour.
 
-## Requirements
+## Recommend Host Specs
 
-- **A Linux host on x86-64 (amd64)** with **Docker** and **Compose v2** (`docker compose`). The Project Zomboid dedicated server has no ARM build, so a Raspberry Pi or an ARM cloud instance will not work. Docker Desktop on Windows or an Intel Mac is fine for trying it out.
-- **Memory**: 8 GB is comfortable for one game server; 4 GB will run a small one. The game gets half of the available memory (1–8 GB), and the rest of the stack needs about 1 GB. Below 4 GB the game is killed mid-boot and its log simply stops.
+- **A Linux host on x86-64 (amd64)** with **Docker**. Docker Desktop on Windows or an Intel Mac is fine for trying it out.
+- **Memory**: 8 GB is comfortable for one game server; 4 GB will run a small one. The game gets half of the available memory (1–8 GB), and the rest of the stack needs about 1 GB.
 - **Disk**: about 10 GB for the game, plus your worlds, mods and backups.
 - **CPU**: 2 cores work; 4 or more let the game use a better garbage collector.
 - **Network**: outbound internet for Steam downloads, and inbound **UDP 16261–16262** if players outside your network will connect.
