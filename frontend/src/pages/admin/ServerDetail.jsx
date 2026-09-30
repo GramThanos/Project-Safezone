@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
 import ServerConfig from './ServerConfig';
@@ -27,6 +28,7 @@ function ServerDetail() {
   const { serverId } = useParams();
   const navigate = useNavigate();
   const { token, isAdmin } = useAuth();
+  const { confirm } = useDialog();
 
   const [server, setServer] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -96,7 +98,11 @@ function ServerDetail() {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm(`Delete ${server.name}? This cannot be undone.`)) return;
+    if (!(await confirm({
+      title: 'Delete server?',
+      message: `Delete ${server.name}? This cannot be undone.`,
+      confirmLabel: 'Delete'
+    }))) return;
     try {
       await api.admin.servers.delete(token, serverId);
       navigate('/admin/servers');
@@ -155,7 +161,11 @@ function ServerDetail() {
   };
 
   const handleDeleteBackup = async (name) => {
-    if (!window.confirm(`Delete ${name}? This permanently removes the archive.`)) return;
+    if (!(await confirm({
+      title: 'Delete backup?',
+      message: `Delete ${name}? This permanently removes the archive.`,
+      confirmLabel: 'Delete'
+    }))) return;
     setBackupBusy(true);
     setBackupError('');
     setBackupMsg('');
@@ -190,10 +200,12 @@ function ServerDetail() {
   };
 
   const handleRestore = async (name) => {
-    if (!window.confirm(
-      `Restore ${name}? This replaces the current world on ${server.name}. `
-      + 'The server must be stopped. The world being replaced is kept aside, not deleted.'
-    )) return;
+    if (!(await confirm({
+      title: 'Restore backup?',
+      message: `Restore ${name}? This replaces the current world on ${server.name}. `
+        + 'The server must be stopped. The world being replaced is kept aside, not deleted.',
+      confirmLabel: 'Restore'
+    }))) return;
     setBackupBusy(true);
     setBackupError('');
     setBackupMsg('');

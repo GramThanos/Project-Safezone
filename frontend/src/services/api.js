@@ -425,6 +425,18 @@ export const api = {
         body: JSON.stringify({ character_id: characterId })
       });
       return handleResponse(response);
+    },
+    // Discards unsent items or clears used ones; in-flight ones are skipped.
+    remove: async (token, ids) => {
+      const response = await fetch(`${API_URL}/api/inventory/remove`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ ids })
+      });
+      return handleResponse(response);
     }
   },
 
@@ -456,6 +468,37 @@ export const api = {
         const url = role ? `${API_URL}/api/admin/users?role=${role}` : `${API_URL}/api/admin/users`;
         const response = await fetch(url, {
           headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // One account with its characters, unopened boxes and undelivered rewards.
+      get: async (token, userId) => {
+        const response = await fetch(`${API_URL}/api/admin/users/${userId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // `ids` is a list of user-box ids, or null for every unopened box.
+      removeBoxes: async (token, userId, ids = null) => {
+        const response = await fetch(`${API_URL}/api/admin/users/${userId}/boxes/remove`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(ids ? { ids } : { all: true })
+        });
+        return handleResponse(response);
+      },
+      // `ids` is a list of inventory item ids, or null for every undelivered one.
+      removeInventory: async (token, userId, ids = null) => {
+        const response = await fetch(`${API_URL}/api/admin/users/${userId}/inventory/remove`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(ids ? { ids } : { all: true })
         });
         return handleResponse(response);
       },
@@ -541,9 +584,38 @@ export const api = {
       }
     },
     // Staff alerts: the event catalog, and the channels events are routed to
-    // (Discord webhooks, the staff inbox, ops mail). A webhook's URL never
+    // (Discord webhooks, the staff feed, ops mail). A webhook's URL never
     // comes back in full — only masked — so an edit that leaves the target
     // blank means "keep the one you have".
+    // The staff feed: what alerts actually fired, and how far this account has
+    // read. Moderator-readable, unlike the channel configuration below it.
+    staffFeed: {
+      getAll: async (token, { limit, offset, event } = {}) => {
+        const params = new URLSearchParams();
+        if (limit !== undefined) params.set('limit', limit);
+        if (offset !== undefined) params.set('offset', offset);
+        if (event) params.set('event', event);
+        const query = params.toString();
+        const response = await fetch(
+          `${API_URL}/api/admin/staff-feed${query ? `?${query}` : ''}`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        return handleResponse(response);
+      },
+      unreadCount: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/staff-feed/unread-count`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      markRead: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/staff-feed/read`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
     alerts: {
       getAll: async (token) => {
         const response = await fetch(`${API_URL}/api/admin/alerts`, {
@@ -920,21 +992,44 @@ export const api = {
         return handleResponse(response);
       }
     },
-    boxPools: {
-      getAll: async (token, size) => {
-        const url = size ? `${API_URL}/api/admin/box-pools?size=${size}` : `${API_URL}/api/admin/box-pools`;
-        const response = await fetch(url, {
+    // Named boxes: a box has a name, a draw count and a loot pool.
+    boxes: {
+      getAll: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/boxes`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
       },
+      create: async (token, data) => {
+        const response = await fetch(`${API_URL}/api/admin/boxes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      update: async (token, id, data) => {
+        const response = await fetch(`${API_URL}/api/admin/boxes/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      remove: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/boxes/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
+    // A box's loot pool: which rewards can drop from it, and how likely each is.
+    boxPools: {
       add: async (token, data) => {
         const response = await fetch(`${API_URL}/api/admin/box-pools`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify(data)
         });
         return handleResponse(response);
@@ -950,36 +1045,79 @@ export const api = {
       setWeight: async (token, id, weight) => {
         const response = await fetch(`${API_URL}/api/admin/box-pools/${id}`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({ weight })
+        });
+        return handleResponse(response);
+      },
+      // How many of an item reward this box drops when the entry is picked.
+      setCount: async (token, id, count) => {
+        const response = await fetch(`${API_URL}/api/admin/box-pools/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ count })
         });
         return handleResponse(response);
       }
     },
-    boxTypes: {
+    // Events: what grants a box (daily, weekly bonus, custom) and which boxes
+    // take part with what pick weight.
+    events: {
       getAll: async (token) => {
-        const response = await fetch(`${API_URL}/api/admin/box-types`, {
+        const response = await fetch(`${API_URL}/api/admin/events`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
       },
-      update: async (token, size, data) => {
-        const response = await fetch(`${API_URL}/api/admin/box-types/${size}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
+      create: async (token, data) => {
+        const response = await fetch(`${API_URL}/api/admin/events`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      update: async (token, id, data) => {
+        const response = await fetch(`${API_URL}/api/admin/events/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      remove: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/events/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      addBox: async (token, eventId, data) => {
+        const response = await fetch(`${API_URL}/api/admin/events/${eventId}/boxes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      setBoxWeight: async (token, eventId, entryId, weight) => {
+        const response = await fetch(`${API_URL}/api/admin/events/${eventId}/boxes/${entryId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ weight })
+        });
+        return handleResponse(response);
+      },
+      removeBox: async (token, eventId, entryId) => {
+        const response = await fetch(`${API_URL}/api/admin/events/${eventId}/boxes/${entryId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
       }
     },
     // Community loot-box configs: browse the GitHub list, preview one, and
-    // apply it to a size's pool. Import also accepts a config parsed from a
+    // apply it to a box's pool. Import also accepts a config parsed from a
     // local file — the backend validates either source the same way.
     rewardBoxes: {
       list: async (token, refresh) => {
@@ -1009,8 +1147,8 @@ export const api = {
         return handleResponse(response);
       },
       // Returns the config JSON for the caller to download.
-      export: async (token, { size, name, description }) => {
-        const params = new URLSearchParams({ size, name: name || '', description: description || '' });
+      export: async (token, { box_id, name, description }) => {
+        const params = new URLSearchParams({ box_id, name: name || '', description: description || '' });
         const response = await fetch(`${API_URL}/api/admin/reward-boxes/export?${params}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -1120,6 +1258,20 @@ export const api = {
         const response = await fetch(`${API_URL}/api/admin/installation/app-info`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // Queue a delete of the installed game files. Server configs and worlds
+      // are kept regardless; downloaded Workshop mods are kept unless
+      // `keepMods` is explicitly false.
+      uninstall: async (token, keepMods = true) => {
+        const response = await fetch(`${API_URL}/api/admin/installation/uninstall`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ keep_mods: keepMods })
         });
         return handleResponse(response);
       }

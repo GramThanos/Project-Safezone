@@ -7,19 +7,25 @@ function PlayerActivityChart({ history = [], height = 170 }) {
 	const canvasRef = useRef(null);
 	const chartRef = useRef(null);
 
+	// A new server has no recorded activity yet; render a flat zero baseline
+	// so the chart still shows instead of an empty placeholder.
+	const series = history.length > 0
+		? history
+		: [{ t: Date.now(), count: 0 }, { t: Date.now(), count: 0 }];
+
 	useEffect(() => {
 		const Chart = window.Chart;
-		if (!Chart || !canvasRef.current || history.length === 0) return undefined;
+		if (!Chart || !canvasRef.current) return undefined;
 
 		chartRef.current = new Chart(canvasRef.current, {
 			type: 'line',
 			data: {
-				labels: history.map((p) =>
+				labels: series.map((p) =>
 					new Date(p.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 				),
 				datasets: [{
 					label: 'online',
-					data: history.map((p) => p.count),
+					data: series.map((p) => p.count),
 					borderColor: ACCENT,
 					backgroundColor: 'rgba(220, 53, 69, 0.18)',
 					fill: true,
@@ -54,10 +60,6 @@ function PlayerActivityChart({ history = [], height = 170 }) {
 			chartRef.current = null;
 		};
 	}, [history]);
-
-	if (history.length === 0) {
-		return <p className="text-body-secondary small mb-0">No activity recorded yet.</p>;
-	}
 
 	return (
 		<div style={{ height }}>

@@ -20,6 +20,10 @@ class InventoryItem(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     reward_id = Column(Integer, ForeignKey('rewards.id', ondelete='CASCADE'), nullable=False, index=True)
+    # How many of the item this holding delivers. Captured from the box's loot
+    # pool entry when the box is opened, because the quantity lives on the pool
+    # (not the reward) and the entry may change afterwards. 1 for usables.
+    count = Column(Integer, nullable=False, default=1)
     source = Column(String(16), nullable=False, default=SOURCE_BOX)
     source_box_id = Column(Integer)
     status = Column(String(16), nullable=False, default=STATUS_HELD, index=True)
@@ -35,6 +39,7 @@ class InventoryItem(Base):
             'id': self.id,
             'user_id': self.user_id,
             'reward_id': self.reward_id,
+            'count': self.count if self.count is not None else 1,
             'source': self.source,
             'status': self.status,
             'character_id': self.character_id,

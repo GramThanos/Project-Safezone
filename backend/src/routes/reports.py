@@ -103,7 +103,7 @@ def create_report():
             # it waits until there is something to be told about.
             #
             # Which staff, and where, is the channel configuration's problem
-            # now - the staff inbox is subscribed to this by default, so the
+            # now - the staff feed is subscribed to this by default, so the
             # notification that used to be written here still arrives.
             #
             # `detail` carries the opening lines to the inbox and to ops mail

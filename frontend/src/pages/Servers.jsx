@@ -54,6 +54,8 @@ function Servers() {
 		const statusMap = {
 			'running': 'success',
 			'sleeping': 'warning',
+			'restarting': 'info',
+			'failed': 'danger',
 			'stopped': 'secondary'
 		};
 		return statusMap[state?.toLowerCase()] || 'secondary';

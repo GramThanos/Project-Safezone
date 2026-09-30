@@ -162,7 +162,7 @@ function Home() {
 
 			{/* CALL TO ACTION — signed-out only */}
 			{!user && (
-				<section className="py-5 border-top">
+				<section className="pt-5 border-top">
 					<div className="container text-center">
 						<h3 className="text-uppercase font-display mb-3">Join the Safezone</h3>
 						<p className="text-body-secondary mb-4">

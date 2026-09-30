@@ -52,14 +52,7 @@ function About() {
               </p>
               <dl className="row mb-0">
                 <dt className="col-sm-4 text-body-secondary fw-normal">Version</dt>
-                <dd className="col-sm-8 font-monospace">{health?.version || '—'}</dd>
-
-                <dt className="col-sm-4 text-body-secondary fw-normal">API status</dt>
-                <dd className="col-sm-8 mb-0">
-                  <span className={`badge text-bg-${dotColour(health?.status)}`}>
-                    {health?.status || 'unknown'}
-                  </span>
-                </dd>
+                <dd className="col-sm-8 mb-0 font-monospace">{health?.version || '—'}</dd>
               </dl>
             </div>
           </div>

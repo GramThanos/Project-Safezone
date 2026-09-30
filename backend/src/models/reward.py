@@ -6,6 +6,11 @@ commands (optionally interleaved with executor-side ``sleep``/``wait`` steps),
 with a ``{{USERNAME}}`` placeholder for the recipient. The admin UI presents the
 two kinds as separate lists.
 
+How *many* of an item drops is not a property of the reward: it lives on the
+box's loot pool entry (see :class:`~src.models.box_loot_pool.BoxLootPool`), so
+the same item can drop in different quantities from different boxes. The quantity
+is captured onto the inventory item when the box is opened.
+
 Command text is admin-authored and trusted; the game-server is still the command
 boundary, validating the sequence when a reward is saved (via its reward preview
 endpoint) and re-validating the one player-influenced value - the recipient's
@@ -34,7 +39,6 @@ class Reward(Base):
     description = Column(Text)
     icon = Column(String(512))
     in_game_id = Column(String(64))        # for items (e.g. "Base.Axe")
-    count = Column(Integer, nullable=False, default=1)  # how many, for items
     commands = Column(Text)                # for usables: free-text command sequence
     action_id = Column(String(64))         # legacy usables: game-server action catalog id
     action_params = Column(JSON)           # legacy usables: validated action parameters
@@ -52,7 +56,6 @@ class Reward(Base):
             'description': self.description,
             'icon': self.icon,
             'in_game_id': self.in_game_id,
-            'count': self.count if self.count is not None else 1,
             'commands': self.commands,
             'action_id': self.action_id,
             'action_params': self.action_params or {},

@@ -61,17 +61,12 @@ REGISTRY = {
         'label': 'Invitations per player',
         'help': 'How many unused invitations one player may have outstanding.',
     },
-    'streak_bonus_enabled': {
-        'config': 'STREAK_BONUS_ENABLED',
-        'type': 'bool',
-        'label': 'Weekly streak bonus',
-        'help': 'Grant a bonus box to accounts that collected enough daily boxes last week.',
-    },
     'streak_threshold': {
         'config': 'STREAK_THRESHOLD',
         'type': 'int',
         'label': 'Daily boxes needed for the bonus',
-        'help': 'Out of seven. The default is five.',
+        'help': 'Out of seven. The default is five. Switch the bonus on or off from '
+                'the weekly bonus event on the Events screen.',
     },
     'captcha_enabled': {
         'config': 'CAPTCHA_ENABLED',
@@ -114,6 +109,14 @@ REGISTRY = {
         'type': 'int',
         'label': 'Audit retention (days)',
         'help': 'How long audit entries are kept. 0 keeps them forever.',
+    },
+    'staff_alert_retention_days': {
+        'config': 'STAFF_ALERT_RETENTION_DAYS',
+        'type': 'int',
+        'label': 'Staff feed retention (days)',
+        'help': 'How long entries in the staff feed are kept. 0 keeps them forever. '
+                'Unlike the audit log this is a feed rather than a record, so it '
+                'defaults to a month.',
     },
 
     # --- Mail ---------------------------------------------------------------

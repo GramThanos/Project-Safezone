@@ -29,7 +29,10 @@ function Navbar() {
 	return (
 		<nav className="navbar navbar-expand-lg bg-body-tertiary border-bottom py-3">
 			<div className="container">
-				<Link className="navbar-brand text-uppercase font-display fw-bold" to="/">{brand}</Link>
+				<Link className="navbar-brand d-flex align-items-center gap-2 text-uppercase font-display fw-bold" to="/">
+					<img src={`${process.env.PUBLIC_URL}/assets/images/safezone-logo.png`} alt="" width="32" height="32"/>
+					{brand}
+				</Link>
 				<button
 					className="navbar-toggler"
 					type="button"

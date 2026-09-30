@@ -7,7 +7,7 @@ saying, none of which knew about the others, and no screen where an operator
 could see the whole set.
 
 So: **one registry of events, one dispatcher, and channels as rows in a table.**
-A channel is a place messages go - a Discord webhook, the staff inbox, an ops
+A channel is a place messages go - a Discord webhook, the staff feed, an ops
 mailbox - and it subscribes to the events it wants. Adding a fourth kind of
 channel later means writing one sender, not a fourth event list.
 
@@ -70,7 +70,7 @@ FAILURE_LIMIT = 10
 
 # The cooldown gate lives here too - see `should_fire`. It is keyed per
 # condition, not per channel: "this is already known" is a fact about the
-# problem, and letting Discord and the staff inbox fall out of step over it
+# problem, and letting Discord and the staff feed fall out of step over it
 # would make two accounts of the same outage that disagree about when it began.
 COOLDOWN_PREFIX = 'alert:'
 
@@ -131,7 +131,7 @@ EVENTS = {
     'report.created': {
         'group': 'Moderation', 'color': AMBER,
         'label': 'Report or appeal submitted',
-        'help': 'The staff inbox and ops mail see the opening lines; a Discord '
+        'help': 'The staff feed and ops mail see the opening lines; a Discord '
                 'channel gets only who filed it and about whom.',
     },
     'reward.delivered': {
@@ -229,7 +229,7 @@ def dispatch(event, title, description=None, detail=None, fields=None,
              server_id=None, link=None):
     """Send one event to every channel subscribed to it. Needs an app context.
 
-    ``detail`` is for internal channels only - the staff inbox and ops mail get
+    ``detail`` is for internal channels only - the staff feed and ops mail get
     it, an external channel never does. That is what lets one event carry the
     opening lines of a report to the moderators who act on it while the Discord
     copy says only that a report exists.
@@ -250,6 +250,10 @@ def dispatch(event, title, description=None, detail=None, fields=None,
         'fields': [(name, value) for name, value in (fields or [])
                    if value not in (None, '')],
         'link': link,
+        # Carried so the staff feed can say which server a scoped event was
+        # about. The external senders ignore it; they already put the server in
+        # a field where it needs to be readable.
+        'server_id': server_id,
         'color': spec.get('color', BLURPLE),
     }
 

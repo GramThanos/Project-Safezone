@@ -27,6 +27,55 @@ STEAM_INSTALL_DIR = os.getenv('STEAM_INSTALL_DIR', '/opt/steam-apps')
 # $ZOMBOID_DATA_DIR/Saves/Multiplayer/<server name> - the one path here most
 # likely to differ between installs.
 ZOMBOID_DATA_DIR = os.getenv('ZOMBOID_DATA_DIR', '/home/steam/Zomboid')
+
+# Game version reported by the sleeping-server emulator to the Steam/PZ server
+# browser (in the A2S_INFO and RakNet-pong replies). A wrong or missing value
+# shows as ping -1 / no player count and the client will not attempt to join,
+# so the sleeping server can never be woken.
+#
+# Build 42 does not write its version to any file on disk - it is compiled into
+# the game - so the reliable automatic source is the server's own boot log: the
+# game prints its version there every time it starts (including the one-off
+# first-boot that provisions a new server). The manager scans that log while the
+# server is up, captures the version, and persists it so it can be replayed
+# while the server sleeps.
+#
+# Resolution order, highest priority first:
+#   1. GAME_VERSION            - explicit override, pins the value outright.
+#   2. captured-from-log value - written to GAME_VERSION_CACHE_FILE at boot.
+#   3. GAME_VERSION_FILE       - a file to scan, if some install ever ships one.
+#   4. GAME_VERSION_FALLBACK   - last resort so a never-yet-booted server is
+#                                still well-formed enough to show a ping.
+GAME_VERSION = os.getenv('GAME_VERSION', '')
+GAME_VERSION_FILE = os.getenv('GAME_VERSION_FILE', '')
+GAME_VERSION_FALLBACK = os.getenv('GAME_VERSION_FALLBACK', '42.20.4')
+# Where the version captured from the boot log is persisted, so it survives both
+# the server sleeping and this manager restarting. Install-wide, not per-server.
+GAME_VERSION_CACHE_FILE = os.getenv(
+    'GAME_VERSION_CACHE_FILE', os.path.join(ZOMBOID_DATA_DIR, '.game_version')
+)
+# How the version is recognised in a boot-log line. Captures the dotted version
+# in group 1. Override if a future build changes the wording. Java/JVM version
+# lines are filtered out separately before this is applied.
+GAME_VERSION_LOG_PATTERN = os.getenv(
+    'GAME_VERSION_LOG_PATTERN',
+    r'(?i)version\D{0,24}?(\d+\.\d+(?:\.\d+){0,2})'
+)
+
+# Wake heuristic for a sleeping server. A Steam client's join is brokered by
+# Steam's network and never reaches the game port as a packet, so the only wake
+# signal is the client's A2S query. WAKE_A2S_THRESHOLD authenticated A2S_INFO
+# queries from one source within WAKE_A2S_WINDOW seconds count as a join attempt.
+# 1 wakes on first contact (a server-list refresh wakes it too); higher waits
+# for the repeated queries a player makes while sitting on the connect screen.
+WAKE_A2S_THRESHOLD = int(os.getenv('WAKE_A2S_THRESHOLD', '2'))
+WAKE_A2S_WINDOW = float(os.getenv('WAKE_A2S_WINDOW', '60'))
+# Trace every datagram the sleeping listener sees, with its source address and
+# first bytes. Off by default and meant for diagnosing a server that will not
+# wake: the game port is public, so anything scanning it writes a log line, and
+# those lines record player IP addresses. Turn it on to capture a handshake,
+# then turn it back off.
+WAKE_DEBUG = os.getenv('WAKE_DEBUG', 'false').lower() == 'true'
 # The game server runs beside this manager in the same container, so RCON is a
 # loopback connection.
 RCON_HOST = os.getenv('RCON_HOST', '127.0.0.1')

@@ -1,5 +1,6 @@
-// Admin › Users: view accounts and change roles (admin only).
+// Admin › Users: view accounts, what loot they hold, and change roles (admin only).
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { getRoleBadge, Spinner } from './helpers';
@@ -32,38 +33,6 @@ function Users() {
       setError('Failed to load users');
     }
     setLoading(false);
-  };
-
-  // Mails a one-time link rather than setting a password: an admin should never
-  // learn a user's credentials, and a password handed over in chat is worse than
-  // the problem it solves.
-  const handleResetPassword = async (user) => {
-    if (!window.confirm(`Email a password reset link to ${user.username}?`)) return;
-    setError('');
-    setNotice('');
-    try {
-      const data = await api.admin.users.resetPassword(token, user.id);
-      setNotice(data.message || `Reset link sent to ${user.username}.`);
-    } catch (err) {
-      console.error('Reset password error:', err);
-      setError(err.message || 'Could not send the reset link');
-    }
-  };
-
-  // The way back in for a user who lost their authenticator: with no recovery
-  // codes, an admin clearing the factor is the only key left.
-  const handleDisable2fa = async (user) => {
-    if (!window.confirm(`Turn off two-factor authentication for ${user.username}?`)) return;
-    setError('');
-    setNotice('');
-    try {
-      const data = await api.admin.users.disable2fa(token, user.id);
-      setNotice(data.message || `Two-factor auth cleared for ${user.username}.`);
-      loadData();
-    } catch (err) {
-      console.error('Disable 2FA error:', err);
-      setError(err.message || 'Could not turn off two-factor auth');
-    }
   };
 
   const openBan = async (user) => {
@@ -234,14 +203,16 @@ function Users() {
                 <th>Confirmed</th>
                 <th>2FA</th>
                 <th>Role</th>
+                <th>Boxes</th>
+                <th>Rewards</th>
                 <th>Created</th>
-                <th>Actions</th>
+                <th className="text-end">Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="text-center">No users found</td>
+                  <td colSpan="9" className="text-center">No users found</td>
                 </tr>
               ) : (
                 users.map((user) => (
@@ -263,33 +234,41 @@ function Users() {
                         {user.role}
                       </span>
                     </td>
+                    <td>
+                      {user.unopened_boxes > 0 ? (
+                        <span title={`${user.unopened_boxes} unopened box(es)`} className="text-nowrap">
+                          <i className="fas fa-box-open text-warning me-1"></i>{user.unopened_boxes}
+                        </span>
+                      ) : <span className="text-body-secondary">-</span>}
+                    </td>
+                    <td>
+                      {user.held_rewards > 0 ? (
+                        <span title={`${user.held_rewards} undelivered reward(s)`} className="text-nowrap">
+                          <i className="fas fa-gift text-warning me-1"></i>{user.held_rewards}
+                        </span>
+                      ) : <span className="text-body-secondary">-</span>}
+                    </td>
                     <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</td>
                     <td>
-                      <select
-                        className="form-select form-select-sm"
-                        value={user.role}
-                        onChange={(e) => handleRoleUpdate(user, e.target.value)}
-                        style={{ width: 'auto' }}
-                      >
-                        <option value="player">Player</option>
-                        <option value="moderator">Moderator</option>
-                        <option value="admin">Admin</option>
-                        <option value="banned">Banned</option>
-                      </select>
-                      <button
-                        className="btn btn-sm btn-outline-secondary mt-2"
-                        onClick={() => handleResetPassword(user)}
-                      >
-                        Send reset link
-                      </button>
-                      {user.totp_enabled && (
-                        <button
-                          className="btn btn-sm btn-outline-warning mt-2 ms-2"
-                          onClick={() => handleDisable2fa(user)}
+                      <div className="d-flex align-items-center justify-content-end gap-2">
+                        <select
+                          className="form-select form-select-sm"
+                          value={user.role}
+                          onChange={(e) => handleRoleUpdate(user, e.target.value)}
+                          style={{ width: 'auto' }}
                         >
-                          Disable 2FA
-                        </button>
-                      )}
+                          <option value="player">Player</option>
+                          <option value="moderator">Moderator</option>
+                          <option value="admin">Admin</option>
+                          <option value="banned">Banned</option>
+                        </select>
+                        <Link
+                          to={`/admin/users/${user.id}`}
+                          className="btn btn-sm btn-outline-primary text-nowrap"
+                        >
+                          <i className="fas fa-user-gear me-1"></i>Manage
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))

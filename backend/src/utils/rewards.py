@@ -13,9 +13,24 @@ from src.utils.game_server import gs_request
 
 ITEM_ID_RE = re.compile(r'^[A-Za-z0-9_.]{1,64}$')
 
-# `count` reaches an `additem` console command, so it is bounded like any other
-# parameter that crosses that boundary rather than trusted from the panel.
+# A reward's item quantity reaches an `additem` console command, so it is bounded
+# like any other parameter that crosses that boundary rather than trusted from the
+# panel. The quantity itself lives on the box's loot pool entry, not the reward,
+# so it is validated where the pool is written (see ``validate_item_count``).
 MAX_ITEM_COUNT = 1000
+
+
+def validate_item_count(count):
+    """Validate an item drop quantity (a box pool entry's ``count``).
+
+    Returns an error string or None. Shared by the box-pool routes and the
+    box-config importer so an external config faces the same bound as the panel.
+    """
+    if isinstance(count, bool) or not isinstance(count, int):
+        return 'count must be a whole number'
+    if count < 1 or count > MAX_ITEM_COUNT:
+        return f'count must be between 1 and {MAX_ITEM_COUNT}'
+    return None
 
 
 def validate_reward_payload(data, partial=False):
@@ -31,13 +46,6 @@ def validate_reward_payload(data, partial=False):
             return 'name is required'
         if data.get('kind') not in Reward.KINDS:
             return 'kind must be item or usable'
-
-    if 'count' in data:
-        count = data['count']
-        if isinstance(count, bool) or not isinstance(count, int):
-            return 'count must be a whole number'
-        if count < 1 or count > MAX_ITEM_COUNT:
-            return f'count must be between 1 and {MAX_ITEM_COUNT}'
 
     kind = data.get('kind')
     if kind == Reward.KIND_ITEM and 'in_game_id' in data:

@@ -10,11 +10,12 @@
 //   - The light theme is set on <html>, not on a wrapper, so the whole page
 //     changes - footer, scrollbars and any Bootstrap layer that renders
 //     outside this tree included.
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useSite } from '../../context/SiteContext';
 import SubNav from '../../components/SubNav';
+import api from '../../services/api';
 
 // `adminOnly` links are hidden from moderators. `icon` is a Bootstrap Icons
 // name; the first link of a group is where its label leads, so About sits at
@@ -45,6 +46,7 @@ const NAV_GROUPS = [
     links: [
       { to: '/admin/rewards', text: 'Rewards', icon: 'gift' },
       { to: '/admin/boxes', text: 'Loot Boxes', icon: 'box2' },
+      { to: '/admin/events', text: 'Events', icon: 'calendar-event' },
       { to: '/admin/give', text: 'Give Item', icon: 'send' }
     ]
   },
@@ -61,6 +63,9 @@ const NAV_GROUPS = [
     icon: 'gear',
     links: [
       { to: '/admin/about', text: 'About', icon: 'info-circle' },
+      // Moderator-visible: this is where the notifications moderators used to
+      // get in the player bell now live.
+      { to: '/admin/staff-feed', text: 'Staff Feed', icon: 'activity', badgeKey: 'staffFeed' },
       { to: '/admin/audit', text: 'Audit Log', icon: 'journal-text' },
       { to: '/admin/jobs', text: 'Scheduled Jobs', icon: 'clock-history', adminOnly: true },
       { to: '/admin/alerts', text: 'Alerts', icon: 'megaphone', adminOnly: true },
@@ -70,13 +75,35 @@ const NAV_GROUPS = [
 ];
 
 function AdminLayout() {
-  const { isAdmin, isModerator } = useAuth();
+  const { isAdmin, isModerator, token } = useAuth();
   const { brand_name: brand } = useSite();
 
   // Light while the panel is mounted, and whatever it was before on the way
   // out - restored from the attribute rather than hardcoded back to dark, so
   // this keeps working if the site ever gains a theme switch.
   const staff = isModerator();
+
+  // The staff feed's unread count, for the nav badge. Polled rather than
+  // pushed, like every other count in this app - the alternative is a websocket
+  // layer for a number. Cheap: one indexed count against a timestamp.
+  const [staffUnread, setStaffUnread] = useState(0);
+  useEffect(() => {
+    if (!staff || !token) return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const data = await api.admin.staffFeed.unreadCount(token);
+        if (!cancelled) setStaffUnread(data.unread || 0);
+      } catch (err) {
+        // A badge is not worth an error banner over the whole panel.
+        console.error('Staff feed unread count error:', err);
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 60000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [staff, token]);
+
   useEffect(() => {
     // Only where the panel actually renders: somebody who lands here without
     // access sees the site's own navbar over the refusal, and a light page
@@ -104,16 +131,20 @@ function AdminLayout() {
     );
   }
 
-  // SubNav knows nothing about roles; the section decides what is visible.
+  // SubNav knows nothing about roles or counts; the section decides both.
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
-    links: group.links.map((link) => ({ ...link, hidden: link.adminOnly && !isAdmin() }))
+    links: group.links.map((link) => ({
+      ...link,
+      hidden: link.adminOnly && !isAdmin(),
+      count: link.badgeKey === 'staffFeed' ? staffUnread : undefined
+    }))
   }));
 
   return (
     <>
       {/* The brand is the way out: this is the only navbar in the section. */}
-      <SubNav title={brand} titleTo="/" badge="Admin" groups={groups} />
+      <SubNav title={brand} titleTo="/" logo badge="Admin" groups={groups} />
 
       <section className="py-4" style={{ minHeight: '50vh' }}>
         <div className="container">

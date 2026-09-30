@@ -7,6 +7,11 @@ import threading
 import subprocess
 import select
 import json
+import hashlib
+import hmac
+import re
+import secrets
+import struct
 
 # Custom modules
 import config
@@ -69,44 +74,34 @@ class GameManager:
         self.onwake_thread = None
         self._onwake_stop_event = threading.Event()
 
-        # Wake gating. Any datagram at all used to trigger a wake, which meant
-        # the game ports being scanned - and, on a Steam-enabled server, queried
-        # by every browser refreshing its list - was enough to boot the whole
-        # game server. 16261/16262 are a known PZ signature and are swept
-        # constantly, so in practice a sleeping server woke itself within
-        # minutes for nobody.
-        #
-        # Two filters remove nearly all of that without knowing PZ's wire
-        # format. Source/A2S queries are dropped outright: somebody looking at
-        # the server in a browser is not somebody joining it. And a lone packet
-        # is ignored, because a real client retries its handshake for as long as
-        # the player sits on "Connecting...", arriving many times from one
-        # address, while a sweep sends one packet and moves on.
-        #
-        # Deliberately protocol-agnostic. `_is_query_packet` is the single place
-        # a real PZ handshake signature belongs once one has been captured.
-        #
-        # The numbers are deliberately biased towards waking, because the two
-        # errors are not equal: a false wake costs one boot that idle-sleep then
-        # undoes on its own, while a missed wake is a player who cannot get in
-        # and has no way to ask. Two packets inside a minute is enough to reject
-        # the single-probe sweep that dominates the noise, and loose enough that
-        # it holds whatever PZ's retry interval turns out to be - which is the
-        # one assumption here that a packet capture would settle.
-        self.wake_packet_threshold = 2
-        self.wake_packet_window = 60.0
-        # Sources seen inside the window, pruned when the map grows rather than
-        # on every packet. Bounds memory under a sweep without making one
-        # quadratic.
-        self.wake_sources_max = 4096
-        self._wake_packets = {}
         # Set when the listener cannot bind a single port, which means the
         # server cannot be woken at all. Retried on an interval instead of every
         # reconcile pass, so a held port is not a five-second respawn loop.
         self.wake_bind_retry_interval = 60
         self._wake_bind_failed = False
         self._wake_retry_after = 0.0
-        
+
+        # A2S-intent wake heuristic. A Steam client's actual join is brokered by
+        # Steam's networking layer, not sent as a UDP packet to the game port, so
+        # a sleeping server never sees the join itself - the only signal it gets
+        # that somebody wants in is the client's A2S query. So the wake is keyed
+        # on that: a source that completes the IP-bound challenge (proving it is a
+        # real client, not a spoofed amplification probe) and issues at least
+        # `wake_a2s_threshold` authenticated A2S_INFO queries inside
+        # `wake_a2s_window` seconds is treated as a join attempt.
+        #
+        # The threshold is the browse-vs-join dial. 1 wakes on first contact
+        # (most eager - a server-list refresh wakes it too); higher values wait
+        # for the repeated queries a client makes while a player sits on the
+        # connect screen. A false wake costs one boot that idle-sleep undoes; a
+        # missed wake is a player who cannot get in, so this is biased low.
+        self.wake_a2s_threshold = config.WAKE_A2S_THRESHOLD
+        self.wake_a2s_window = config.WAKE_A2S_WINDOW
+        # Sources seen inside the window, pruned when the map grows rather than on
+        # every packet, so a query flood cannot make this quadratic.
+        self.wake_sources_max = 4096
+        self._wake_a2s_hits = {}
+
         self.resource_lock = threading.Lock() # Guards ports and process spawning
         self.server_log_handle = None
         # The process whose exit has already been explained, so a death is
@@ -121,8 +116,11 @@ class GameManager:
         # the current generation is allowed to keep polling.
         self.roster_interval = 30
         self.online_players = []
-        # The last state published to the cache, so a *change* can be announced.
-        # None until the first publish: a manager restart re-publishing what was
+        # The last *stable* state announced as a webhook event, so a change can
+        # be announced once. Transient "restarting" is deliberately never stored
+        # here: it is shown to the UI but not paged, so a crash that recovers
+        # leaves this pointing at the last real state and emits nothing. None
+        # until the first publish: a manager restart re-publishing what was
         # already true is not something to wake anybody for.
         self._published_state = None
         self.roster_thread = None
@@ -142,6 +140,9 @@ class GameManager:
         self.idle_sleep_seconds = idle_sleep_seconds or 0
         self._roster_ready = False
         self._idle_since = None
+        # Whether the game version has been captured from the current launch's
+        # boot log yet. Reset on every launch so a game update is re-captured.
+        self._version_captured = False
 
         self.game_server_quit_timeout = 60
         self.running_healthcheck_timeout = 5
@@ -362,12 +363,25 @@ class GameManager:
             # and could not bind the ports to listen on. Distinct from
             # "stopped", which means somebody asked for it.
             actual = "failed"
+        elif self.state in ("running", "initializing"):
+            # Dead, but nobody asked for it down: the reconciler is about to
+            # relaunch it this pass, or is backing off between attempts (and
+            # first-boot provisioning is the same coming-up case). Reporting
+            # "stopped" here would flap the UI and page every webhook on a
+            # transient hiccup, so this is its own state - shown, not paged.
+            actual = "restarting"
         else:
             actual = "stopped"
         # TTL well above the reconcile interval so the key survives between loops
         # but expires if this manager dies.
         cache.set_value(f"server:{self.server_id}:state", actual, ttl=30)
 
+        # "restarting" is a transient the UI shows but subscribers are not paged
+        # for: skip the event and leave _published_state on the last real state,
+        # so a crash that recovers emits nothing while one that gives up still
+        # emits server.failed from the branch above once _failed latches.
+        if actual == "restarting":
+            return
         if actual != self._published_state:
             if self._published_state is not None:
                 # "failed" is its own event because it is the one an operator
@@ -447,6 +461,12 @@ class GameManager:
                     # Wait for the server to print the response before reading.
                     if self._roster_stop_event.wait(timeout=self.roster_interval):
                         break
+                    # A newer launch may have superseded us during that wait. Bail
+                    # before touching the shared roster, so a retired generation
+                    # cannot publish a stale sample or emit phantom join/leave
+                    # events over its replacement's roster.
+                    if self._roster_generation != generation:
+                        break
                     try:
                         new_text = reader.read()
                     except Exception as e:
@@ -503,53 +523,294 @@ class GameManager:
                     # We wait briefly for the thread to close sockets
                     self.onwake_thread.join(timeout=3.0) 
 
-    # Every Source-engine query and reply is a "connectionless" packet, which
-    # the protocol marks with this four-byte header. On a Steam-enabled server
-    # these arrive constantly - from the master server, and from anybody whose
-    # server browser is refreshing - and not one of them is a join attempt.
-    A2S_CONNECTIONLESS_PREFIX = b'\xff\xff\xff\xff'
 
-    @classmethod
-    def _is_query_packet(cls, data):
-        """Whether a datagram is a server-browser query rather than a join.
+    # Protocol Constants
+    A2S_HEADER = b"\xff\xff\xff\xff"
+    RAKNET_MAGIC = b"\x00\xff\xff\x00\xfe\xfe\xfe\xfe\xfd\xfd\xfd\xfd\x12\x34\x56\x78"
 
-        The one place that knows anything about packet contents. A captured PZ
-        handshake signature belongs here too, as a positive test - until then
-        the negative test plus the retry threshold carries the filtering.
+    # A2S query request types (the byte after the 0xffffffff header). A full
+    # server-browser refresh sends all three; answering only INFO leaves the
+    # browser showing no player count and no ping detail, and some clients will
+    # not treat the server as fully reachable until PLAYER/RULES also answer.
+    A2S_INFO_REQ = ord("T")    # 0x54 -> reply 'I' (0x49)
+    A2S_PLAYER_REQ = ord("U")  # 0x55 -> reply 'D' (0x44)
+    A2S_RULES_REQ = ord("V")   # 0x56 -> reply 'E' (0x45)
+    A2S_QUERY_TYPES = (A2S_INFO_REQ, A2S_PLAYER_REQ, A2S_RULES_REQ)
+    A2S_CHALLENGE_REPLY = ord("A")  # 0x41, the S2C_CHALLENGE header byte
+    # The "I have no challenge yet" placeholder a client sends in its first
+    # PLAYER/RULES request; the reply is a challenge for it to echo back.
+    A2S_NO_CHALLENGE = b"\xff\xff\xff\xff"
+
+    # RakNet Packet IDs
+    RAKNET_ID_UNCONNECTED_PING = 0x01
+    RAKNET_ID_UNCONNECTED_PING_OPEN = 0x02
+    RAKNET_ID_UNCONNECTED_PONG = 0x1C
+    RAKNET_ID_OPEN_CONNECTION_REQUEST_1 = 0x05  # Actual client join initiation
+
+    def _is_server_info_request(self, data: bytes) -> bool:
+        """Returns True for any Steam A2S query or a RakNet Unconnected Ping."""
+        is_a2s = (data.startswith(self.A2S_HEADER) and len(data) >= 5
+                  and data[4] in self.A2S_QUERY_TYPES)
+        is_raknet = len(data) >= 25 and data[0] in (
+            self.RAKNET_ID_UNCONNECTED_PING,
+            self.RAKNET_ID_UNCONNECTED_PING_OPEN,
+        )
+        return is_a2s or is_raknet
+
+    def _player_trying_to_connect(self, data: bytes) -> bool:
+        """Detects explicit RakNet join attempts (OPEN_CONNECTION_REQUEST_1).
+
+        This is the direct-IP / non-Steam path, where the join really is a UDP
+        packet on the game port. Steam clients never reach here (their join goes
+        over Steam's network); those are handled by the A2S-intent heuristic.
         """
-        return data.startswith(cls.A2S_CONNECTIONLESS_PREFIX)
+        return len(data) >= 18 and data[0] == self.RAKNET_ID_OPEN_CONNECTION_REQUEST_1
 
-    def _note_wake_packet(self, source):
-        """Record a candidate wake packet; True once one source has sent enough.
+    def _note_a2s_intent(self, ip: str) -> bool:
+        """Record an authenticated A2S_INFO from ``ip``; True once it wants in.
 
-        Keyed by source address, so one host retrying - which is exactly what a
-        client stuck on "Connecting..." does - counts toward the threshold,
-        while a sweep touching the port once from each of a thousand addresses
-        never reaches it.
+        Keyed by source address so one client's repeated queries accumulate while
+        a sweep touching many addresses once never does. Returns True when the
+        source has reached ``wake_a2s_threshold`` hits inside ``wake_a2s_window``.
         """
         now = time.monotonic()
-        cutoff = now - self.wake_packet_window
-        seen = self._wake_packets
+        cutoff = now - self.wake_a2s_window
+        hits = self._wake_a2s_hits
 
-        # Pruned on growth rather than per packet: pruning every packet would
-        # make a flood quadratic in the number of sources.
-        if len(seen) > self.wake_sources_max:
-            for address in list(seen):
-                fresh = [t for t in seen[address] if t > cutoff]
+        # Pruned on growth, not per packet: pruning every packet would make a
+        # query flood quadratic in the number of sources.
+        if len(hits) > self.wake_sources_max:
+            for address in list(hits):
+                fresh = [t for t in hits[address] if t > cutoff]
                 if fresh:
-                    seen[address] = fresh
+                    hits[address] = fresh
                 else:
-                    del seen[address]
+                    del hits[address]
 
-        times = [t for t in seen.get(source, []) if t > cutoff]
-        times.append(now)
-        seen[source] = times
-        return len(times) >= self.wake_packet_threshold
+        recent = [t for t in hits.get(ip, ()) if t > cutoff]
+        recent.append(now)
+        hits[ip] = recent
+        return len(recent) >= self.wake_a2s_threshold
+
+    STEAM_APP_ID = 380870  # Project Zomboid dedicated server AppID
+
+    # A dotted version token: 42, 42.20, 42.20.4, 42.20.4.1 all match. Anchored
+    # to a non-digit boundary so a build id (24775771) is not mistaken for one.
+    _VERSION_RE = re.compile(r'(?<!\d)(\d+(?:\.\d+){1,3})(?!\d)')
+    # Lines that carry a *Java/JVM* version, not the game's - filtered out before
+    # the game-version pattern is applied so "java.version=17.0.9" cannot win.
+    _JAVA_LINE_RE = re.compile(r'(?i)\b(java|jre|jdk|jvm|openjdk|hotspot)\b')
+
+    def _scan_log_for_version(self, text: str):
+        """Return the game version found in boot-log ``text``, or None."""
+        pattern = re.compile(config.GAME_VERSION_LOG_PATTERN)
+        for line in text.splitlines():
+            if self._JAVA_LINE_RE.search(line):
+                continue
+            match = pattern.search(line)
+            if match:
+                return match.group(1)
+        return None
+
+    def _maybe_capture_version(self):
+        """Capture the game version from the boot log, once per launch.
+
+        The game prints its version early in boot, before the roster worker
+        (which tails from the end of the log) is even listening, so this reads
+        the whole current log from the top. On success the value is persisted to
+        ``GAME_VERSION_CACHE_FILE`` - surviving the server sleeping and this
+        manager restarting - and published for the web UI. Guarded by
+        ``_version_captured`` so it scans at most once per server launch.
+        """
+        if self._version_captured:
+            return
+        try:
+            with open(self.server_log_path, 'r', encoding='utf-8',
+                      errors='replace') as handle:
+                text = handle.read()
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            self.log(f"[version] could not read server log: {e}")
+            self._version_captured = True  # don't retry a broken read every pass
+            return
+
+        version = self._scan_log_for_version(text)
+        if not version:
+            return  # version line may not have been printed yet; try next pass
+
+        self._version_captured = True
+        cache.set_value("game:version", version)  # no TTL: it changes only on update
+        try:
+            with open(config.GAME_VERSION_CACHE_FILE, 'w', encoding='utf-8') as handle:
+                handle.write(version + "\n")
+            self.log(f"[version] captured game version {version} from boot log.")
+        except OSError as e:
+            self.log(f"[version] captured {version} but could not persist it "
+                     f"to {config.GAME_VERSION_CACHE_FILE}: {e}")
+
+    def _resolve_game_version(self) -> str:
+        """The game version to advertise while sleeping.
+
+        See config.py for the resolution order: explicit GAME_VERSION override,
+        then the value captured from the boot log, then an optional install file,
+        then the fallback. Resolved once per sleep cycle onto ``_emu_version``.
+        """
+        if config.GAME_VERSION:
+            return config.GAME_VERSION
+
+        for path in (config.GAME_VERSION_CACHE_FILE, config.GAME_VERSION_FILE):
+            if not path:
+                continue
+            try:
+                with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+                    match = self._VERSION_RE.search(handle.read(8192))
+                if match:
+                    return match.group(1)
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                self.log(f"[version] could not read {path}: {e}")
+
+        self.log(f"[version] no captured version yet; advertising fallback "
+                 f"{config.GAME_VERSION_FALLBACK}. It is captured on first boot.")
+        return config.GAME_VERSION_FALLBACK
+
+    def _build_a2s_info_response(self) -> bytes:
+        """Constructs an A2S_INFO payload reporting 0 active players."""
+        payload = bytearray(self.A2S_HEADER + b"I")
+        payload.append(17)  # Protocol version
+        payload.extend(self._emu_server_name.encode("utf-8") + b"\x00")
+        payload.extend(b"Muldraugh, KY\x00")  # Map name
+        payload.extend(b"projectzomboid\x00")  # Folder
+        payload.extend(b"Project Zomboid\x00")  # Game
+        # The 16-bit AppID field only holds the low word; the full AppID goes in
+        # the 64-bit GameID field below (Extra Data Flag 0x01).
+        payload.extend(struct.pack("<H", self.STEAM_APP_ID & 0xFFFF))  # Steam AppID
+        payload.append(0)  # Current players
+        payload.append(self._emu_max_players)  # Max players
+        payload.append(0)  # Bots
+        payload.append(ord("d"))  # Server type (Dedicated)
+        payload.append(ord("l"))  # OS (Linux = 'l', Windows = 'w')
+        payload.append(0)  # Password required (0 = No)
+        payload.append(1)  # VAC enabled
+        # Version string (null-terminated). REQUIRED by the A2S_INFO layout and
+        # sits between the VAC byte and the Extra Data Flag - omitting it shifts
+        # every following byte, so the client reads the EDF/GameID as the version
+        # string and rejects the packet (ping -1, no player count).
+        payload.extend(self._emu_version.encode("utf-8") + b"\x00")
+        payload.append(0x01)  # Extra Data Flag: GameID present
+        payload.extend(struct.pack("<Q", self.STEAM_APP_ID))  # 64-bit GameID
+        return bytes(payload)
+
+    def _build_a2s_player_response(self) -> bytes:
+        """A2S_PLAYER reply for a sleeping (empty) server: zero players."""
+        # header + 'D' + player count (0). Per-player records follow when >0.
+        return self.A2S_HEADER + b"D" + bytes([0])
+
+    def _build_a2s_rules_response(self) -> bytes:
+        """A2S_RULES reply advertising the game version as the sole rule."""
+        rules = {b"version": self._emu_version.encode("utf-8")}
+        payload = bytearray(self.A2S_HEADER + b"E")
+        payload.extend(struct.pack("<H", len(rules)))  # rule count (short)
+        for name, value in rules.items():
+            payload.extend(name + b"\x00")
+            payload.extend(value + b"\x00")
+        return bytes(payload)
+
+    def _build_raknet_pong(self, data: bytes) -> bytes:
+        """Constructs a RakNet RAKNET_ID_UNCONNECTED_PONG payload."""
+        client_timestamp = data[1:9] if len(data) >= 9 else b"\x00" * 8
+        server_guid = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+
+        pong_str = (
+            f"{self._emu_server_name};0;{self._emu_max_players};"
+            f"v{self._emu_version};0".encode("utf-8")
+        )
+        str_len = struct.pack(">H", len(pong_str))
+
+        return (
+            bytes([self.RAKNET_ID_UNCONNECTED_PONG])
+            + client_timestamp
+            + server_guid
+            + self.RAKNET_MAGIC
+            + str_len
+            + pong_str
+        )
+
+    def _generate_challenge(self, ip: str) -> bytes:
+        """Computes a 4-byte HMAC derived from the client IP and secret."""
+        return hmac.new(self._emu_secret, ip.encode("utf-8"), hashlib.sha256).digest()[
+            :4
+        ]
+
+    def _a2s_received_challenge(self, data: bytes, qtype: int):
+        """The challenge a client echoed back, or None if it has none yet.
+
+        The three query types carry the challenge differently: INFO appends it
+        after the "Source Engine Query\\0" string (so a bare request is 25 bytes
+        and a challenged one is longer), while PLAYER and RULES put a 4-byte
+        challenge field right after the type byte, using 0xffffffff to mean "send
+        me one". Returning None means "no challenge yet -> reply with one".
+        """
+        if qtype == self.A2S_INFO_REQ:
+            return data[-4:] if len(data) > 25 else None
+        # PLAYER / RULES: 4-byte challenge field at offset 5.
+        field = data[5:9]
+        if len(field) < 4 or field == self.A2S_NO_CHALLENGE:
+            return None
+        return field
+
+    def _handle_server_info_request(self, data: bytes, s, addr) -> bool:
+        """Answer a Steam A2S query or RakNet ping. True if it is a join intent.
+
+        Returns True only when an authenticated A2S_INFO pushes the source over
+        the wake threshold - the loop turns that into a wake. Every other case
+        (a challenge round-trip, PLAYER/RULES, a RakNet pong) returns False: it
+        is answered to stay visible, but it is not by itself somebody joining.
+        """
+        ip = addr[0]
+
+        # Handle the Steam A2S query family (INFO / PLAYER / RULES). All three
+        # are gated behind the same IP-bound HMAC challenge: a first request with
+        # no challenge is answered with one, and only a request echoing the
+        # correct challenge gets the real payload. This is the anti-spoofing /
+        # anti-amplification step every modern Source query server does.
+        if data.startswith(self.A2S_HEADER) and len(data) >= 5 \
+                and data[4] in self.A2S_QUERY_TYPES:
+            qtype = data[4]
+            challenge = self._generate_challenge(ip)
+            received = self._a2s_received_challenge(data, qtype)
+
+            if received is None or not hmac.compare_digest(received, challenge):
+                # No challenge yet, or a wrong/spoofed one: (re)issue a fresh one.
+                s.sendto(self.A2S_HEADER + bytes([self.A2S_CHALLENGE_REPLY])
+                         + challenge, addr)
+                return False
+
+            if qtype == self.A2S_INFO_REQ:
+                s.sendto(self._build_a2s_info_response(), addr)
+                # An authenticated INFO is a real client asking about this server
+                # right now - the only join signal a Steam client ever gives us.
+                return self._note_a2s_intent(ip)
+            elif qtype == self.A2S_PLAYER_REQ:
+                s.sendto(self._build_a2s_player_response(), addr)
+            else:  # A2S_RULES_REQ
+                s.sendto(self._build_a2s_rules_response(), addr)
+            return False
+
+        # Handle RakNet Direct IP Ping. Unlike the A2S branch above, this answers
+        # without an IP-bound challenge: RakNet's unconnected ping has no
+        # challenge/response step, and the pong's amplification factor is low
+        # (~1.4x). Intentionally unauthenticated - consistent with the project's
+        # no-rate-limiting stance; do not assume parity with the A2S hardening.
+        elif data[0] in (self.RAKNET_ID_UNCONNECTED_PING, self.RAKNET_ID_UNCONNECTED_PING_OPEN):
+            s.sendto(self._build_raknet_pong(data), addr)
+        return False
 
     def _onwake_worker(self):
         """Asynchronous UDP listener thread logic."""
         sockets = []
-        self._wake_packets = {}
         try:
             for port in self.server_ports:
                 try:
@@ -561,20 +822,23 @@ class GameManager:
                 except Exception as e:
                     self.log(f"Bind Error {port}: {e}")
 
-            # Binding nothing means the server can never be woken. Saying so and
-            # standing down beats the old behaviour, where the thread announced
-            # itself, died immediately, and was respawned every reconcile pass
-            # forever while the panel showed a cleanly stopped server.
+            # Binding nothing means the server can never be woken
             if not sockets:
                 self._wake_bind_failed = True
                 self._wake_retry_after = time.monotonic() + self.wake_bind_retry_interval
                 self.log(f"On-Wake listener could not bind any of {self.server_ports}; "
-                         f"this server cannot be woken. Something else is holding the "
-                         f"ports. Retrying in {self.wake_bind_retry_interval}s.")
+                         f"Retrying in {self.wake_bind_retry_interval}s.")
                 return
-
             self._wake_bind_failed = False
             self._wake_retry_after = 0.0
+
+            # Prepare server emulation info
+            self._emu_server_name = self.server_name + ' (sleeping)'
+            self._emu_max_players = 32
+            self._emu_secret = secrets.token_bytes(16)
+            self._emu_version = self._resolve_game_version()
+            self.log(f"On-Wake emulation reporting game version {self._emu_version}.")
+
             self.log(f"On-Wake listener active on {[s.getsockname()[1] for s in sockets]}.")
             while not self._onwake_stop_event.is_set() and self.state == "sleeping":
                 readable, _, _ = select.select(sockets, [], [], 0.5)
@@ -584,15 +848,63 @@ class GameManager:
                     except OSError as e:
                         self.log(f"Wake listener read error: {e}")
                         continue
-                    if not data or self._is_query_packet(data):
+
+                    if not data:
                         continue
-                    if not self._note_wake_packet(addr[0]):
+
+                    # --- WAKE DEBUG TRACE ---------------------------------------
+                    # Every datagram the sleeping listener sees, so a join
+                    # handshake can be captured. `local` is the port it arrived
+                    # on (game vs query), `head` the first bytes in hex. Behind
+                    # config.WAKE_DEBUG: the game port is public, so unguarded
+                    # this logs a line per scan packet and records player IPs.
+                    if config.WAKE_DEBUG:
+                        local_port = s.getsockname()[1]
+                        head = data[:32].hex(" ")
+                        self.log(
+                            f"[wake-debug] rx {len(data)}B on :{local_port} "
+                            f"from {addr[0]}:{addr[1]} first32=[{head}]"
+                        )
+                    # -----------------------------------------------------------
+
+                    # Direct-IP / non-Steam join: the join really is a UDP packet
+                    # on the game port, so wake on it immediately.
+                    if self._player_trying_to_connect(data):
+                        self.log(f"Wake triggered by connection request from {addr[0]}:{addr[1]}")
+                        self.state = "running"
+                        return  # Exit thread so ports are freed
+
+                    # Steam browser/client A2S query (or RakNet ping): answer it to
+                    # stay visible. A Steam client's real join never reaches us as a
+                    # packet, so the handler also decides - from repeated
+                    # authenticated A2S_INFO queries - when a source is a join
+                    # attempt rather than a passing browse, and we wake on that.
+                    if self._is_server_info_request(data):
+                        try:
+                            wake = self._handle_server_info_request(data, s, addr)
+                            if config.WAKE_DEBUG:
+                                self.log(f"[wake-debug] answered A2S/ping "
+                                         f"(byte0=0x{data[0]:02x}) wake={wake}")
+                        except Exception as e:
+                            wake = False
+                            self.log(f"Emulated server info sent to {addr[0]}:{addr[1]} failed: {e}")
+                        if wake:
+                            self.log(f"Wake triggered by A2S join intent from {addr[0]}:{addr[1]}")
+                            self.state = "running"
+                            return  # Exit thread so ports are freed
                         continue
-                    self.log(f"Wake triggered by {addr[0]}: "
-                             f"{self.wake_packet_threshold} packets within "
-                             f"{self.wake_packet_window:.0f}s.")
-                    self.state = "running"
-                    return  # Exit thread so ports are freed
+
+                    # Neither a join nor a known info query: this is where a real
+                    # client's handshake would land if its signature is not the
+                    # one `_player_trying_to_connect` expects, and so the packet
+                    # to look at when a server will not wake. Same gate - on a
+                    # public port this is otherwise one line per stray scan.
+                    if config.WAKE_DEBUG:
+                        self.log(
+                            f"[wake-debug] DROPPED (no wake, no reply) "
+                            f"byte0=0x{data[0]:02x} len={len(data)} from {addr[0]}:{addr[1]}"
+                        )
+
         finally:
             for s in sockets:
                 s.close()
@@ -933,6 +1245,33 @@ class GameManager:
             self.log(f"The game server exited with status {code}. The tail of "
                      f"{self.server_log_path} should say why.")
 
+    # A restart appends to the same /tmp log rather than truncating, so the
+    # previous crash's tail survives for _report_exit to point at. Left unchecked
+    # it grows without bound across a long-lived manager, so roll it to a single
+    # `.1` companion once it crosses this size - keeping the last two generations
+    # and no more.
+    SERVER_LOG_MAX_BYTES = 50 * 1024 * 1024
+
+    def _roll_server_log(self):
+        """Rotate the game-server log if it has grown past the cap.
+
+        Best effort: a rotation that fails just leaves the log to grow, which is
+        never worth failing a launch over. Safe while the roster worker holds the
+        old file open - the rename leaves that reader on the old inode and the
+        launch opens a fresh one.
+        """
+        try:
+            if os.path.getsize(self.server_log_path) < self.SERVER_LOG_MAX_BYTES:
+                return
+        except OSError:
+            return
+        try:
+            os.replace(self.server_log_path, self.server_log_path + ".1")
+            self.log(f"Rolled {self.server_log_path} (over "
+                     f"{self.SERVER_LOG_MAX_BYTES // (1024 * 1024)}MB) to .1")
+        except OSError as e:
+            self.log(f"Could not roll the server log {self.server_log_path}: {e}")
+
     def manage_server_process(self, start=True):
         """Starts or stops the game server subprocess."""
         with self.resource_lock:
@@ -958,6 +1297,7 @@ class GameManager:
 
                     self._ensure_data_dirs()
                     self._apply_launch_params()
+                    self._roll_server_log()
                     self.server_log_handle = open(self.server_log_path, "a")
                     cmd = [self.server_script, "-servername", self.server_name]
                     self.server_process = subprocess.Popen(
@@ -974,6 +1314,8 @@ class GameManager:
                     # re-arms from scratch rather than inheriting the last run's.
                     self._roster_ready = False
                     self._idle_since = None
+                    # A fresh launch may be a fresh game version; re-capture it.
+                    self._version_captured = False
                     self.roster_thread = threading.Thread(
                         target=self._roster_worker, args=(generation,), daemon=True
                     )
@@ -1012,6 +1354,11 @@ class GameManager:
 
             # Publish the observed runtime state so the web UI reflects reality.
             self._publish_live_state()
+
+            # While the server is up its boot log carries the game version;
+            # capture it once per launch so it can be advertised while sleeping.
+            if game_alive:
+                self._maybe_capture_version()
 
             if current_goal == "initializing":
                 self._reconcile_initializing(game_alive)

@@ -336,29 +336,29 @@ function Characters() {
 
 				</div>
 
-				
-				<div className="card mb-4" id="claim">
-					<div className="card-body">
-							{claims.length > 0 && (
-								<div className="mt-0">
-									<div className="text-body-secondary mb-2">My character links</div>
-									<ul className="list-group">
-										{claims.map((c) => (
-											<li key={c.id} className="list-group-item d-flex justify-content-between align-items-center">
-												<span>
-													{c.in_game_username} @ {serverName(c.server_id)}
-													{c.reason && (
-														<small className="d-block text-body-secondary">{c.reason}</small>
-													)}
-												</span>
-												<span className={`badge text-bg-${claimStatusBadge(c.status)}`}>{c.status}</span>
-											</li>
-										))}
-									</ul>
-								</div>
-							)}
+				{/* List any links */}
+				{claims.length > 0 && (
+					<div className="card mb-4" id="claim">
+						<div className="card-body">
+							<div className="mt-0">
+								<div className="text-body-secondary mb-2">My character links</div>
+								<ul className="list-group">
+									{claims.map((c) => (
+										<li key={c.id} className="list-group-item d-flex justify-content-between align-items-center">
+											<span>
+												{c.in_game_username} @ {serverName(c.server_id)}
+												{c.reason && (
+													<small className="d-block text-body-secondary">{c.reason}</small>
+												)}
+											</span>
+											<span className={`badge text-bg-${claimStatusBadge(c.status)}`}>{c.status}</span>
+										</li>
+									))}
+								</ul>
+							</div>
+						</div>
 					</div>
-				</div>
+				)}
 
 				{unlinking && (
 					<ConfirmDialog

@@ -42,6 +42,12 @@ class User(Base):
     totp_enabled = Column(Boolean, nullable=False, default=False)
     # Who vouched for this account, when it arrived through an invitation.
     invited_by = Column(Integer)
+    # How far this account has read the staff feed (see models/staff_alert.py).
+    # A column rather than a `staff_alert_reads` table because it is one scalar
+    # per account and always exactly one: a table keyed by user_id whose only
+    # other column is a timestamp *is* a column. Null means "never opened it",
+    # which reads as everything unread.
+    staff_alerts_read_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     def __repr__(self):

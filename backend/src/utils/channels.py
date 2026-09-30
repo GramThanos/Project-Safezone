@@ -1,25 +1,24 @@
 """The three places an alert can go, and how each one is written.
 
 One event, three renderings, on purpose. A Discord channel gets an embed with a
-colour and named fields. The staff inbox gets a notification row per moderator,
-with a link into the panel. An ops mailbox gets plain text that has to make
-sense on a phone at 3am with no context around it.
+colour and named fields. The staff feed gets one row, shared by everyone who can
+read it, with a link into the panel. An ops mailbox gets plain text that has to
+make sense on a phone at 3am with no context around it.
 
 `deliver()` is the only entry point; `alerting.py` decides *who*, this decides
 *how*. Adding a fourth kind of channel means adding a sender here and a row in
 `KINDS` - not another event list.
 
 **Internal versus external is a real distinction here.** `detail` - the opening
-lines of a report, say - reaches the inbox and the mailbox and never leaves the
+lines of a report, say - reaches the feed and the mailbox and never leaves the
 deployment. Discord channels frequently have a wider membership than the staff
 table does, so what goes there is deliberately thinner.
 """
 import logging
 import re
 
-from src.models.notification import Notification
-from src.models.user import User
-from src.utils import mailer, notify, settings
+from src.models.staff_alert import StaffAlert
+from src.utils import mailer, settings
 
 logger = logging.getLogger(__name__)
 
@@ -137,26 +136,32 @@ def _now_iso():
 
 
 # ---------------------------------------------------------------------------
-# The staff inbox
+# The staff feed
 # ---------------------------------------------------------------------------
 
 def _send_inapp(session, channel, message):
-    """Write a notification for every moderator and admin.
+    """Append one row to the staff feed.
 
-    Uses the caller's session, so the rows commit with whatever transaction the
+    One row, not one per moderator. The message is identical for everybody who
+    can read it, so writing it per-person was pure amplification - ten
+    moderators meant ten rows per player join - and it put staff alerts in the
+    same inbox, and the same unread badge, as the messages a player gets about
+    their own account. Those are different things and they now live in different
+    places; `users.staff_alerts_read_at` carries the only part that really is
+    per-person.
+
+    Uses the caller's session, so the row commits with whatever transaction the
     event happened in. `detail` is included: this never leaves the deployment,
     and a moderator reading "a report was filed" without the opening lines has
     to go and look it up, which is the friction this is supposed to remove.
     """
-    staff = [row.id for row in session.query(User)
-             .filter(User.role.in_([User.ROLE_MODERATOR, User.ROLE_ADMIN])).all()]
-    if not staff:
-        return False, 'There are no moderators or admins to notify', None
-
-    notify.broadcast(session, staff, Notification.KIND_MODERATION,
-                     str(message['title'])[:140],
-                     body=_body(message, include_detail=True),
-                     link=message.get('link'))
+    session.add(StaffAlert(
+        event=message.get('event') or 'unknown',
+        title=str(message['title'])[:140],
+        body=_body(message, include_detail=True),
+        link=message.get('link'),
+        server_id=message.get('server_id'),
+    ))
     return True, None, None
 
 

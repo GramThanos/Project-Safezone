@@ -7,6 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
 
@@ -32,6 +33,7 @@ const renderValue = (value) => {
 
 function Tasks() {
   const { token } = useAuth();
+  const { confirm } = useDialog();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -76,7 +78,11 @@ function Tasks() {
   };
 
   const handleClearTasks = async () => {
-    if (!window.confirm('Remove every pending and completed task? Tasks currently processing are kept.')) return;
+    if (!(await confirm({
+      title: 'Clear tasks?',
+      message: 'Remove every pending and completed task? Tasks currently processing are kept.',
+      confirmLabel: 'Clear'
+    }))) return;
     setError('');
     try {
       const data = await api.admin.tasks.clear(token);

@@ -67,6 +67,48 @@ def update_server(data):
     data['data'] = output if output else '-'
     return ok
 
+def uninstall_server(data):
+    """Delete the installed game files, keeping configs, worlds and mods.
+
+    The counterpart to :func:`update_server`. Server configs and saved worlds
+    live under a different tree (``ZOMBOID_DATA_DIR``) and are never touched;
+    downloaded Workshop mods are kept unless ``keep_mods`` is explicitly false.
+
+    Every server has to be in a state that will not launch the game while the
+    files are going. That is an allowlist, not "not running": a *sleeping*
+    server starts the game the moment a player queries it, a *restarting* one is
+    between relaunch attempts, and a state key that has expired means this
+    manager is not reporting - any of which can put a live process on top of a
+    half-deleted install.
+    """
+    keep_mods = data.get('keep_mods', True)
+
+    # Safe to delete under: the operator asked it down, or it gave up trying to
+    # come up (which is the broken-install case this exists to repair).
+    SAFE_STATES = ('stopped', 'failed')
+
+    blocking = []
+    for server in servers.get_all():
+        state = cache.get_value(f"server:{server['id']}:state")
+        if state not in SAFE_STATES:
+            blocking.append(f"{server['name']} ({state or 'state unknown'})")
+    if blocking:
+        data['message'] = ('Every server must be stopped before the game files '
+                           'can be removed. Still active: ' + ', '.join(blocking))
+        return False
+
+    _log(f"steam.app_uninstall(install_dir='{config.STEAM_INSTALL_DIR}', "
+         f"keep_workshop={keep_mods})")
+    ok, err, output = steam.app_uninstall(
+        install_dir=config.STEAM_INSTALL_DIR, keep_workshop=keep_mods)
+    if not ok:
+        data['message'] = err or 'Uninstall failed'
+    else:
+        data['message'] = 'Game files removed' + (
+            '' if keep_mods else ' (including Workshop content)')
+    data['data'] = output if output else '-'
+    return ok
+
 # Similar info can be get from
 # https://api.steamcmd.net/v1/info/380870
 def get_app_info(data):
@@ -458,6 +500,7 @@ def download_workshop(data):
 
 ACTIONS = {
     'update_server': update_server,
+    'uninstall_server': uninstall_server,
     'get_app_info': get_app_info,
     'give_reward': give_reward,
     # Same handler, honest name: staff-initiated catalog actions (bans, kicks)

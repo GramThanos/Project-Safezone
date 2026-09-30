@@ -60,7 +60,6 @@ def create_reward(current_user):
                 description=data.get('description', ''),
                 icon=data.get('icon', ''),
                 in_game_id=data.get('in_game_id') if not is_usable else None,
-                count=data.get('count', 1) if not is_usable else 1,
                 commands=data.get('commands') if is_usable else None,
                 active=data.get('active', True)
             )
@@ -99,7 +98,7 @@ def update_reward(current_user, reward_id):
                 if error:
                     return jsonify({'error': error}), status
 
-            fields = ('kind', 'name', 'description', 'icon', 'in_game_id', 'count',
+            fields = ('kind', 'name', 'description', 'icon', 'in_game_id',
                       'commands', 'action_id', 'action_params', 'active')
             changed = [f for f in fields if f in data]
             for field in changed:

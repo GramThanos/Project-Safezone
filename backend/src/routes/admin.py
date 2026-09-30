@@ -5,13 +5,19 @@ task operations are proxied to the game-server API, which owns those tables.
 """
 import logging
 from datetime import datetime, timedelta
+from sqlalchemy import func, or_
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from src.database import db
 from src.models.user import User
 from src.models.character import Character
 from src.models.claim_request import ClaimRequest
 from src.models.reward import Reward
+from src.models.box import Box
+from src.models.event import Event
+from src.models.event_box import EventBox
 from src.models.box_loot_pool import BoxLootPool
+from src.models.user_box import UserBox
+from src.models.inventory_item import InventoryItem
 from src.models.audit_log import AuditLog
 from src.models.notification import Notification
 from src.models.ban import Ban
@@ -20,9 +26,10 @@ from src.middleware.auth import moderator_required, admin_required
 from src.utils.game_server import gs_request, gs_stream
 from src.utils.redis_utils import apply_live_state
 from src.utils import (loot, audit, settings, mailer, paging, notify, jobs, moderation,
-                       box_types, alerting, channels)
+                       alerting, channels)
 from src.utils.actions import fetch_catalog, role_allows, validate_action
-from src.utils.rewards import validate_reward_payload, validate_usable_commands
+from src.utils.rewards import (validate_reward_payload, validate_usable_commands,
+                               validate_item_count)
 
 logger = logging.getLogger(__name__)
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -48,13 +55,195 @@ def get_users(current_user):
             if role:
                 query = query.filter_by(role=role)
             users, total = paging.page(query, limit, offset)
+            loot_held = _loot_summary(session, [u.id for u in users])
 
             return jsonify({
-                'users': [u.to_dict() for u in users],
+                'users': [dict(u.to_dict(), **loot_held[u.id]) for u in users],
                 'pagination': paging.meta(total, limit, offset)
             }), 200
     except Exception as e:
         logger.error(f"Get users error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+# Loot an account still holds: boxes it has not opened, and rewards it has not
+# sent. Expired rows are left out even before the sweep marks them, matching
+# what the player's own pages offer.
+_PENDING_ITEM_STATUSES = (InventoryItem.STATUS_HELD, InventoryItem.STATUS_FAILED)
+
+
+def _not_expired(model, now):
+    return or_(model.expires_at.is_(None), model.expires_at > now)
+
+
+def _pending_boxes(session, user_ids, now):
+    return (session.query(UserBox)
+            .filter(UserBox.user_id.in_(user_ids),
+                    UserBox.status == UserBox.STATUS_UNOPENED,
+                    _not_expired(UserBox, now)))
+
+
+def _pending_items(session, user_ids, now):
+    return (session.query(InventoryItem)
+            .filter(InventoryItem.user_id.in_(user_ids),
+                    InventoryItem.status.in_(_PENDING_ITEM_STATUSES),
+                    _not_expired(InventoryItem, now)))
+
+
+def _loot_summary(session, user_ids):
+    """``{user_id: {unopened_boxes, held_rewards}}``.
+
+    Two grouped queries for the whole page rather than two per user.
+    """
+    out = {uid: {'unopened_boxes': 0, 'held_rewards': 0} for uid in user_ids}
+    if not user_ids:
+        return out
+    now = datetime.utcnow()
+
+    box_counts = (_pending_boxes(session, user_ids, now)
+                  .with_entities(UserBox.user_id, func.count(UserBox.id))
+                  .group_by(UserBox.user_id))
+    for uid, n in box_counts:
+        out[uid]['unopened_boxes'] = n
+
+    item_counts = (_pending_items(session, user_ids, now)
+                   .with_entities(InventoryItem.user_id, func.count(InventoryItem.id))
+                   .group_by(InventoryItem.user_id))
+    for uid, n in item_counts:
+        out[uid]['held_rewards'] = n
+    return out
+
+
+@admin_bp.route('/users/<int:user_id>', methods=['GET'])
+@admin_required
+def get_user_detail(current_user, user_id):
+    """One account with everything its manage page acts on (admin only).
+
+    Characters, unopened boxes and undelivered rewards. The loot is listed row
+    by row, since that is the level removal works at.
+    """
+    try:
+        with db.get_db() as session:
+            user = session.query(User).filter_by(id=user_id).first()
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            now = datetime.utcnow()
+
+            characters = (session.query(Character)
+                          .filter_by(user_id=user_id)
+                          .order_by(Character.id.asc())
+                          .all())
+            boxes = (_pending_boxes(session, [user_id], now)
+                     .order_by(UserBox.granted_at.desc())
+                     .all())
+            items = (_pending_items(session, [user_id], now)
+                     .order_by(InventoryItem.created_at.desc())
+                     .all())
+            boxes_by_id = {b.id: b for b in session.query(Box).all()}
+            reward_ids = {i.reward_id for i in items}
+            rewards_by_id = ({r.id: r for r in
+                              session.query(Reward).filter(Reward.id.in_(reward_ids))}
+                             if reward_ids else {})
+
+            return jsonify({
+                'user': dict(user.to_dict(), **_loot_summary(session, [user_id])[user_id]),
+                'characters': [c.to_dict() for c in characters],
+                'boxes': [b.to_dict(box=boxes_by_id.get(b.box_id)) for b in boxes],
+                'inventory': [i.to_dict(reward=rewards_by_id.get(i.reward_id)) for i in items],
+            }), 200
+    except Exception as e:
+        logger.error(f"Get user detail error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+def _selected_ids(data):
+    """``(ids, error)`` from a removal body: a list of ids, or ``all: true``.
+
+    ``None`` for ids means "all of them". Parsed before any session opens, for
+    the same reason as :func:`_parse_ban_duration`.
+    """
+    if data.get('all') is True:
+        return None, None
+    ids = data.get('ids')
+    if not isinstance(ids, list) or not ids:
+        return None, 'Give ids to remove, or all: true'
+    try:
+        return {int(i) for i in ids}, None
+    except (TypeError, ValueError):
+        return None, 'ids must be whole numbers'
+
+
+@admin_bp.route('/users/<int:user_id>/boxes/remove', methods=['POST'])
+@admin_required
+def remove_user_boxes(current_user, user_id):
+    """Take unopened boxes away from an account (admin only).
+
+    The rows are marked revoked, not deleted: each is also the guard that stops
+    the same event granting the same period twice, so deleting it would hand the
+    box straight back on the player's next claim - and take a day off their
+    streak with it.
+    """
+    ids, error = _selected_ids(request.get_json(silent=True) or {})
+    if error:
+        return jsonify({'error': error}), 400
+    try:
+        with db.get_db() as session:
+            user = session.query(User).filter_by(id=user_id).first()
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            query = (session.query(UserBox)
+                     .filter_by(user_id=user_id, status=UserBox.STATUS_UNOPENED))
+            if ids is not None:
+                query = query.filter(UserBox.id.in_(ids))
+            # Locked for the same reason opening locks: a box opened while it
+            # is being revoked must end up one or the other, not both.
+            rows = query.with_for_update().all()
+            for row in rows:
+                row.status = UserBox.STATUS_REVOKED
+            if rows:
+                audit.record(session, current_user['user_id'], 'user.boxes_removed',
+                             target=f'user:{user_id}',
+                             detail=f"{len(rows)} unopened box(es) removed from {user.username}")
+            return jsonify({'message': f'Removed {len(rows)} box(es) from {user.username}.',
+                            'removed': len(rows)}), 200
+    except Exception as e:
+        logger.error(f"Remove user boxes error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/users/<int:user_id>/inventory/remove', methods=['POST'])
+@admin_required
+def remove_user_inventory(current_user, user_id):
+    """Delete undelivered rewards from an account (admin only).
+
+    Only held or failed ones: a reward mid-delivery has a task on the manager
+    that may still land in game, and deleting its row would lose the record of
+    it rather than stop it.
+    """
+    ids, error = _selected_ids(request.get_json(silent=True) or {})
+    if error:
+        return jsonify({'error': error}), 400
+    try:
+        with db.get_db() as session:
+            user = session.query(User).filter_by(id=user_id).first()
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            query = (session.query(InventoryItem)
+                     .filter(InventoryItem.user_id == user_id,
+                             InventoryItem.status.in_(_PENDING_ITEM_STATUSES)))
+            if ids is not None:
+                query = query.filter(InventoryItem.id.in_(ids))
+            rows = query.with_for_update().all()
+            for row in rows:
+                session.delete(row)
+            if rows:
+                audit.record(session, current_user['user_id'], 'user.inventory_removed',
+                             target=f'user:{user_id}',
+                             detail=f"{len(rows)} undelivered reward(s) removed from {user.username}")
+            return jsonify({'message': f'Removed {len(rows)} reward(s) from {user.username}.',
+                            'removed': len(rows)}), 200
+    except Exception as e:
+        logger.error(f"Remove user inventory error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -894,65 +1083,197 @@ def revoke_claim(current_user, claim_id):
 
 
 # ---------------------------------------------------------------------------
-# Loot box pool configuration (which rewards each box size can contain)
+# Boxes (a named box with a draw count) and their loot pools
 # ---------------------------------------------------------------------------
 
-@admin_bp.route('/box-pools', methods=['GET'])
+def _box_health(box, entries, rewards_by_id):
+    """Pool health for one box, so an empty pool is surfaced to an admin rather
+    than discovered by a player who cannot open a box."""
+    mine = [e for e in entries if e.box_id == box.id]
+    live = [e for e in mine
+            if (rewards_by_id.get(e.reward_id) is not None
+                and rewards_by_id[e.reward_id].active
+                and (e.weight or 0) > 0)]
+    return {
+        'box_id': box.id,
+        'name': box.name,
+        'draws': box.draws,
+        'entries': len(mine),
+        'droppable': len(live),
+        # A box drawing more than its pool holds still works (it repeats), but
+        # it is thin and worth flagging.
+        'thin': 0 < len(live) < box.draws,
+        'empty': len(live) == 0,
+    }
+
+
+@admin_bp.route('/boxes', methods=['GET'])
 @moderator_required
-def get_box_pools(current_user):
-    """List box loot pool entries (with reward details), optionally per size."""
+def get_boxes(current_user):
+    """Every box with its loot pool and pool health."""
     try:
-        size = request.args.get('size')
         with db.get_db() as session:
-            query = session.query(BoxLootPool)
-            if size:
-                query = query.filter_by(size=size)
-            entries = query.all()
+            boxes = session.query(Box).order_by(Box.name).all()
+            entries = session.query(BoxLootPool).all()
             rewards_by_id = {r.id: r for r in session.query(Reward).all()}
-            result = []
+
+            pools_by_box = {}
             for e in entries:
                 row = e.to_dict()
                 reward = rewards_by_id.get(e.reward_id)
                 row['reward'] = reward.to_dict() if reward else None
-                result.append(row)
+                pools_by_box.setdefault(e.box_id, []).append(row)
 
-            # Pool health, so an empty pool is something an admin is told about
-            # rather than something a player discovers by failing to open a box.
-            health = []
-            all_entries = session.query(BoxLootPool).all()
-            for box_size, spec in box_types.all_types().items():
-                mine = [e for e in all_entries if e.size == box_size]
-                live = [e for e in mine
-                        if (rewards_by_id.get(e.reward_id) is not None
-                            and rewards_by_id[e.reward_id].active
-                            and (e.weight or 0) > 0)]
-                health.append({
-                    'size': box_size,
-                    'label': spec.get('label', box_size.title()),
-                    'draws': spec.get('draws', 0),
-                    'entries': len(mine),
-                    'droppable': len(live),
-                    # A box drawing more than its pool holds still works (it
-                    # repeats), but it is thin and worth flagging.
-                    'thin': 0 < len(live) < spec.get('draws', 0),
-                    'empty': len(live) == 0,
+            # Which events each box takes part in, for the "Events" column.
+            events_by_box = {}
+            event_rows = (session.query(EventBox, Event)
+                          .join(Event, EventBox.event_id == Event.id)
+                          .order_by(Event.system.desc(), Event.type, Event.id).all())
+            for link, event in event_rows:
+                events_by_box.setdefault(link.box_id, []).append(
+                    {'id': event.id, 'name': event.name, 'type': event.type})
+
+            result = []
+            for box in boxes:
+                result.append({
+                    **box.to_dict(),
+                    'pool': pools_by_box.get(box.id, []),
+                    'events': events_by_box.get(box.id, []),
+                    'health': _box_health(box, entries, rewards_by_id),
                 })
-
-            return jsonify({'pools': result, 'health': health}), 200
+            return jsonify({'boxes': result}), 200
     except Exception as ex:
-        logger.error(f"Get box pools error: {ex}")
+        logger.error(f"Get boxes error: {ex}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+def _validate_box_fields(data, require_name=True):
+    """Return ``(fields, error)`` for a box create/update payload."""
+    fields = {}
+    if 'name' in data or require_name:
+        name = (data.get('name') or '').strip()
+        if not name:
+            return None, 'name is required'
+        if len(name) > 64:
+            return None, 'name must be 64 characters or fewer'
+        fields['name'] = name
+    if 'description' in data:
+        fields['description'] = (data.get('description') or '').strip() or None
+    if 'draws' in data or require_name:
+        try:
+            draws = int(data.get('draws', 1))
+        except (TypeError, ValueError):
+            return None, 'draws must be a whole number'
+        if draws < 0 or draws > 20:
+            return None, 'draws must be between 0 and 20'
+        fields['draws'] = draws
+    return fields, None
+
+
+@admin_bp.route('/boxes', methods=['POST'])
+@admin_required
+def create_box(current_user):
+    """Create a box (admin only)."""
+    data = request.get_json(silent=True) or {}
+    fields, error = _validate_box_fields(data, require_name=True)
+    if error:
+        return jsonify({'error': error}), 400
+    try:
+        with db.get_db() as session:
+            if session.query(Box).filter(Box.name == fields['name']).first():
+                return jsonify({'error': 'A box with that name already exists'}), 409
+            box = Box(**fields)
+            session.add(box)
+            session.flush()
+            audit.record(session, current_user['user_id'], 'box.create',
+                         target=f'box:{box.id}', detail=f"'{box.name}'")
+            return jsonify({'message': 'Box created', 'box': box.to_dict()}), 201
+    except Exception as ex:
+        logger.error(f"Create box error: {ex}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/boxes/<int:box_id>', methods=['PUT'])
+@admin_required
+def update_box(current_user, box_id):
+    """Edit a box's name, description or draw count (admin only)."""
+    data = request.get_json(silent=True) or {}
+    fields, error = _validate_box_fields(data, require_name=False)
+    if error:
+        return jsonify({'error': error}), 400
+    try:
+        with db.get_db() as session:
+            box = session.get(Box, box_id)
+            if not box:
+                return jsonify({'error': 'Box not found'}), 404
+            if 'name' in fields:
+                clash = (session.query(Box)
+                         .filter(Box.name == fields['name'], Box.id != box_id).first())
+                if clash:
+                    return jsonify({'error': 'A box with that name already exists'}), 409
+            for key, value in fields.items():
+                setattr(box, key, value)
+            audit.record(session, current_user['user_id'], 'box.update',
+                         target=f'box:{box_id}', detail=', '.join(fields) or 'nothing')
+            result = box.to_dict()
+            return jsonify({'message': 'Box updated', 'box': result}), 200
+    except Exception as ex:
+        logger.error(f"Update box error: {ex}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/boxes/<int:box_id>', methods=['DELETE'])
+@admin_required
+def delete_box(current_user, box_id):
+    """Delete a box (admin only).
+
+    Any event line-ups the box is part of are removed with it, so deleting a box
+    also takes it out of every event it was dropping from. It is still refused
+    once the box has been granted to a player: removing it would orphan a grant
+    somebody is holding. Its loot pool is owned by the box and goes with it.
+    """
+    try:
+        with db.get_db() as session:
+            box = session.get(Box, box_id)
+            if not box:
+                return jsonify({'error': 'Box not found'}), 404
+
+            granted = session.query(UserBox).filter_by(box_id=box_id).count()
+            if granted:
+                return jsonify({'error': 'This box has already been granted to players, so '
+                                         'it cannot be deleted. Remove it from its events to '
+                                         'stop it dropping.'}), 409
+
+            # Take it out of every event first: the box is going away, so its
+            # event line-up entries go with it rather than blocking the delete.
+            removed_from = (session.query(EventBox).filter_by(box_id=box_id).delete())
+
+            name = box.name
+            session.delete(box)   # box_loot_pools cascade with it
+            detail = f"'{name}'"
+            if removed_from:
+                detail += f" (removed from {removed_from} event{'s' if removed_from != 1 else ''})"
+            audit.record(session, current_user['user_id'], 'box.delete',
+                         target=f'box:{box_id}', detail=detail)
+            return jsonify({'message': 'Box deleted'}), 200
+    except Exception as ex:
+        logger.error(f"Delete box error: {ex}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+# ---------------------------------------------------------------------------
+# Loot box pool configuration (which rewards each box can contain)
+# ---------------------------------------------------------------------------
 
 @admin_bp.route('/box-pools', methods=['POST'])
 @admin_required
 def add_box_pool(current_user):
-    """Add a reward to a box size's loot pool (admin only)."""
+    """Add a reward to a box's loot pool (admin only)."""
     data = request.get_json() or {}
-    size = data.get('size')
+    box_id = data.get('box_id')
     reward_id = data.get('reward_id')
-    if size not in box_types.all_types():
-        return jsonify({'error': 'Invalid box size'}), 400
+    if not box_id:
+        return jsonify({'error': 'box_id is required'}), 400
     if not reward_id:
         return jsonify({'error': 'reward_id is required'}), 400
 
@@ -963,20 +1284,29 @@ def add_box_pool(current_user):
         return jsonify({'error': 'weight must be a number'}), 400
     if weight < 0 or weight > 1000:
         return jsonify({'error': 'weight must be between 0 and 1000'}), 400
+
+    count = data.get('count', 1)
+    count_error = validate_item_count(count)
+    if count_error:
+        return jsonify({'error': count_error}), 400
     try:
         with db.get_db() as session:
+            box = session.get(Box, box_id)
+            if not box:
+                return jsonify({'error': 'Box not found'}), 404
             reward = session.query(Reward).filter_by(id=reward_id).first()
             if not reward:
                 return jsonify({'error': 'Reward not found'}), 404
-            existing = session.query(BoxLootPool).filter_by(size=size, reward_id=reward_id).first()
+            existing = session.query(BoxLootPool).filter_by(box_id=box_id, reward_id=reward_id).first()
             if existing:
                 return jsonify({'error': 'Reward already in this pool'}), 409
-            entry = BoxLootPool(size=size, reward_id=reward_id, weight=weight)
+            entry = BoxLootPool(box_id=box_id, reward_id=reward_id, weight=weight, count=count)
             session.add(entry)
             session.flush()
             audit.record(session, current_user['user_id'], 'box_pool.add',
                          target=f'pool:{entry.id}',
-                         detail=f"'{reward.name}' added to the {size} pool at weight {weight}")
+                         detail=f"'{reward.name}' added to the '{box.name}' pool "
+                                f"at weight {weight}, count {count}")
             return jsonify({'message': 'Added to pool', 'pool': entry.to_dict()}), 201
     except Exception as ex:
         logger.error(f"Add box pool error: {ex}")
@@ -993,12 +1323,13 @@ def delete_box_pool(current_user, entry_id):
             if not entry:
                 return jsonify({'error': 'Pool entry not found'}), 404
             # Read the details before the row goes away.
-            size = entry.size
+            box = session.get(Box, entry.box_id)
             reward = session.query(Reward).filter_by(id=entry.reward_id).first()
             session.delete(entry)
             audit.record(session, current_user['user_id'], 'box_pool.remove',
                          target=f'pool:{entry_id}',
-                         detail=f"'{reward.name if reward else entry_id}' removed from the {size} pool")
+                         detail=(f"'{reward.name if reward else entry_id}' removed from the "
+                                 f"'{box.name if box else entry.box_id}' pool"))
             return jsonify({'message': 'Removed from pool'}), 200
     except Exception as ex:
         logger.error(f"Delete box pool error: {ex}")
@@ -1010,9 +1341,12 @@ def delete_box_pool(current_user, entry_id):
 # the current one)
 #
 # A box config is a portable description of one size's loot pool: a list of
-# rewards, each carrying its full definition plus a drop weight. Importing it
-# creates any reward the catalog is missing (matched by name + kind, never
-# mutating an existing one) and sets this size's pool weights. The community
+# rewards, each carrying its full definition plus a drop weight, and the box's
+# own draw count. Importing it creates any reward the catalog is missing
+# (matched by name + kind, never mutating an existing one) and sets this box's
+# pool weights; `draws` is applied only when the config creates the box, since
+# silently rewriting an existing box's draw count is not what "import a pool"
+# should mean. The community
 # list is fetched by the game-server - the backend has no egress - and applied
 # here; a local-file import skips the fetch and posts the same JSON directly.
 # ---------------------------------------------------------------------------
@@ -1084,13 +1418,15 @@ def get_server_template(current_user, template_id):
 
 
 def _prepare_config_reward(entry, index):
-    """Validate one config reward. Returns ``(payload, weight, error, status)``.
+    """Validate one config reward. Returns ``(payload, weight, count, error, status)``.
 
     Applies the exact rules a hand-authored reward faces, so an external config
-    can never introduce a reward the panel itself would have rejected.
+    can never introduce a reward the panel itself would have rejected. ``count``
+    is the item drop quantity, which belongs to the box's pool entry rather than
+    the reward, so it is returned separately from the reward ``payload``.
     """
     if not isinstance(entry, dict):
-        return None, None, f'reward {index} is malformed', 400
+        return None, None, None, f'reward {index} is malformed', 400
 
     kind = entry.get('kind')
     name = (entry.get('name') or '').strip()
@@ -1102,27 +1438,34 @@ def _prepare_config_reward(entry, index):
     }
     if kind == Reward.KIND_ITEM:
         payload['in_game_id'] = (entry.get('in_game_id') or '').strip()
-        payload['count'] = entry.get('count', 1)
     elif kind == Reward.KIND_USABLE:
         payload['commands'] = entry.get('commands')
 
     label = name or f'#{index}'
     error = validate_reward_payload(payload)
     if error:
-        return None, None, f'reward "{label}": {error}', 400
+        return None, None, None, f'reward "{label}": {error}', 400
     error, status = validate_usable_commands(payload)
     if error:
-        return None, None, f'reward "{label}": {error}', status
+        return None, None, None, f'reward "{label}": {error}', status
+
+    # Quantity is only meaningful for items; usables always run once.
+    count = 1
+    if kind == Reward.KIND_ITEM:
+        count = entry.get('count', 1)
+        count_error = validate_item_count(count)
+        if count_error:
+            return None, None, None, f'reward "{label}": {count_error}', 400
 
     weight = entry.get('weight', 1)
     try:
         weight = float(weight)
     except (TypeError, ValueError):
-        return None, None, f'reward "{label}": weight must be a number', 400
+        return None, None, None, f'reward "{label}": weight must be a number', 400
     if weight < 0 or weight > MAX_POOL_WEIGHT:
-        return None, None, f'reward "{label}": weight must be between 0 and {MAX_POOL_WEIGHT}', 400
+        return None, None, None, f'reward "{label}": weight must be between 0 and {MAX_POOL_WEIGHT}', 400
 
-    return payload, weight, None, 200
+    return payload, weight, count, None, 200
 
 
 @admin_bp.route('/reward-boxes/import', methods=['POST'])
@@ -1131,18 +1474,18 @@ def import_reward_box(current_user):
     """Apply a box config to a size's loot pool (admin only).
 
     The config may come from the community list or a local file; either way it
-    arrives here as ``{size, config, replace?}`` and is fully re-validated. With
+    arrives here as ``{box_id, config, replace?}`` and is fully re-validated. With
     ``replace`` the pool is made to match the config exactly (entries absent from
     it are removed); otherwise the import merges - it adds and reweights without
     dropping rewards the config does not mention.
     """
     data = request.get_json(silent=True) or {}
-    size = data.get('size')
+    box_id = data.get('box_id')
     config = data.get('config')
     replace = bool(data.get('replace'))
 
-    if size not in box_types.all_types():
-        return jsonify({'error': 'Invalid box size'}), 400
+    if not box_id:
+        return jsonify({'error': 'box_id is required'}), 400
     if not isinstance(config, dict):
         return jsonify({'error': 'config is required'}), 400
     rewards_in = config.get('rewards')
@@ -1154,15 +1497,28 @@ def import_reward_box(current_user):
     # Validate everything before writing anything, so a bad entry halfway down
     # cannot leave a half-imported pool behind.
     prepared = []
+    # Rewards are matched to the catalog by (name, kind), so two entries sharing
+    # one would resolve to the same reward and then to the same pool row - which
+    # trips the (box_id, reward_id) unique key at commit and surfaces as an
+    # opaque 500. Caught here instead, where it can say which name is doubled.
+    seen_keys = set()
     for index, entry in enumerate(rewards_in, start=1):
-        payload, weight, error, status = _prepare_config_reward(entry, index)
+        payload, weight, count, error, status = _prepare_config_reward(entry, index)
         if error:
             return jsonify({'error': error}), status
-        prepared.append((payload, weight))
+        key = (payload['name'].lower(), payload['kind'])
+        if key in seen_keys:
+            return jsonify({'error': f"the config lists '{payload['name']}' "
+                                     f"({payload['kind']}) more than once"}), 400
+        seen_keys.add(key)
+        prepared.append((payload, weight, count))
 
     try:
         summary = {'created': 0, 'reused': 0, 'added': 0, 'reweighted': 0, 'removed': 0}
         with db.get_db() as session:
+            box = session.get(Box, box_id)
+            if not box:
+                return jsonify({'error': 'Box not found'}), 404
             # Match on name + kind: reusing an item reward for a usable of the
             # same name would put the wrong thing in the pool.
             existing = {}
@@ -1171,7 +1527,7 @@ def import_reward_box(current_user):
 
             config_reward_ids = set()
             pool_targets = []
-            for payload, weight in prepared:
+            for payload, weight, count in prepared:
                 is_item = payload['kind'] == Reward.KIND_ITEM
                 key = (payload['name'].lower(), payload['kind'])
                 reward = existing.get(key)
@@ -1182,7 +1538,6 @@ def import_reward_box(current_user):
                         description=payload.get('description', ''),
                         icon=payload.get('icon', ''),
                         in_game_id=payload.get('in_game_id') if is_item else None,
-                        count=payload.get('count', 1) if is_item else 1,
                         commands=payload.get('commands') if not is_item else None,
                         active=True,
                     )
@@ -1192,18 +1547,20 @@ def import_reward_box(current_user):
                     summary['created'] += 1
                 else:
                     summary['reused'] += 1
-                pool_targets.append((reward.id, weight))
+                pool_targets.append((reward.id, weight, count))
                 config_reward_ids.add(reward.id)
 
             pool_by_reward = {e.reward_id: e for e in
-                              session.query(BoxLootPool).filter_by(size=size).all()}
-            for reward_id, weight in pool_targets:
+                              session.query(BoxLootPool).filter_by(box_id=box_id).all()}
+            for reward_id, weight, count in pool_targets:
                 entry = pool_by_reward.get(reward_id)
                 if entry is None:
-                    session.add(BoxLootPool(size=size, reward_id=reward_id, weight=weight))
+                    session.add(BoxLootPool(box_id=box_id, reward_id=reward_id,
+                                            weight=weight, count=count))
                     summary['added'] += 1
-                elif entry.weight != weight:
+                elif entry.weight != weight or entry.count != count:
                     entry.weight = weight
+                    entry.count = count
                     summary['reweighted'] += 1
 
             if replace:
@@ -1213,8 +1570,8 @@ def import_reward_box(current_user):
                         summary['removed'] += 1
 
             audit.record(session, current_user['user_id'], 'reward_box.import',
-                         target=f'box:{size}',
-                         detail=(f"'{(config.get('name') or 'config')}' -> {size}: "
+                         target=f'box:{box_id}',
+                         detail=(f"'{(config.get('name') or 'config')}' -> '{box.name}': "
                                  f"{summary['created']} created, {summary['added']} added, "
                                  f"{summary['reweighted']} reweighted, {summary['removed']} removed"))
         return jsonify({'message': 'Box config imported', 'summary': summary}), 200
@@ -1231,15 +1588,18 @@ def export_reward_box(current_user):
     Returns the same ``box-config/v1`` shape the importer accepts, so a box can
     be exported here, committed to the community repo, and imported elsewhere.
     """
-    size = request.args.get('size')
+    box_id = request.args.get('box_id')
     name = (request.args.get('name') or '').strip()
     description = (request.args.get('description') or '').strip()
-    if size not in box_types.all_types():
-        return jsonify({'error': 'Invalid box size'}), 400
+    if not box_id:
+        return jsonify({'error': 'box_id is required'}), 400
 
     try:
         with db.get_db() as session:
-            entries = session.query(BoxLootPool).filter_by(size=size).all()
+            box = session.get(Box, int(box_id)) if str(box_id).isdigit() else None
+            if not box:
+                return jsonify({'error': 'Box not found'}), 404
+            entries = session.query(BoxLootPool).filter_by(box_id=box.id).all()
             rewards_by_id = {r.id: r for r in session.query(Reward).all()}
             rewards_out = []
             for e in entries:
@@ -1256,15 +1616,21 @@ def export_reward_box(current_user):
                 }
                 if is_item:
                     out['in_game_id'] = reward.in_game_id
-                    out['count'] = reward.count or 1
+                    out['count'] = e.count or 1
                 else:
                     out['commands'] = reward.commands or ''
                 rewards_out.append(out)
 
         return jsonify({
             'schema': 'safezone.box-config/v1',
-            'name': name or f'{size} box',
+            'name': name or box.name,
             'description': description,
+            # Carried so a config describes the whole box, not just its pool: a
+            # three-draw box that round-tripped as a one-draw box was a silent
+            # downgrade nobody would notice until players opened it. Only used
+            # when the config creates a box; importing into an existing box
+            # leaves that box's own draw count alone.
+            'draws': box.draws,
             'rewards': rewards_out,
         }), 200
     except Exception as ex:
@@ -1485,6 +1851,35 @@ def queue_installation_update(current_user):
                             detail=(f"branch: {task['beta'] or 'public'}"
                                     if 'beta' in task else 'configured branch'))
     return jsonify({'message': 'Update queued', 'task': payload.get('data')}), 202
+
+
+@admin_bp.route('/installation/uninstall', methods=['POST'])
+@admin_required
+def queue_installation_uninstall(current_user):
+    """Queue a delete of the installed game files (admin only).
+
+    Removes what SteamCMD installed so a clean or fresh install can follow.
+    Server configs and saved worlds live in a separate tree and are never
+    touched. Downloaded Workshop mods are kept unless the caller sends
+    `keep_mods: false`. Admin rather than moderator for the same reason as the
+    update: it changes the binaries every server runs.
+    """
+    data = request.get_json(silent=True) or {}
+    task = {'action': 'uninstall_server'}
+    # Only forwarded when the caller opts out of the default (keep the mods), so
+    # the game-server task keeps ownership of the default.
+    if data.get('keep_mods') is False:
+        task['keep_mods'] = False
+
+    payload, status = gs_request('POST', '/api/tasks', json=task)
+    if status not in (200, 201):
+        return jsonify({'error': payload.get('error', 'Could not queue the uninstall')}), status
+
+    audit.record_standalone(current_user['user_id'], 'installation.uninstall',
+                            detail=('including Workshop content'
+                                    if task.get('keep_mods') is False
+                                    else 'game files only'))
+    return jsonify({'message': 'Uninstall queued', 'task': payload.get('data')}), 202
 
 
 @admin_bp.route('/installation/app-info', methods=['POST'])
@@ -1969,7 +2364,272 @@ def run_job_now(current_user, job_id):
 @admin_bp.route('/box-pools/<int:entry_id>', methods=['PUT'])
 @admin_required
 def update_box_pool(current_user, entry_id):
-    """Change a pool entry's drop weight (admin only)."""
+    """Change a pool entry's drop weight and/or item quantity (admin only)."""
+    data = request.get_json(silent=True) or {}
+
+    weight = None
+    if 'weight' in data:
+        try:
+            weight = float(data['weight'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'weight must be a number'}), 400
+        if weight < 0 or weight > 1000:
+            return jsonify({'error': 'weight must be between 0 and 1000'}), 400
+
+    count = None
+    if 'count' in data:
+        count = data['count']
+        count_error = validate_item_count(count)
+        if count_error:
+            return jsonify({'error': count_error}), 400
+
+    if weight is None and count is None:
+        return jsonify({'error': 'weight or count is required'}), 400
+
+    try:
+        with db.get_db() as session:
+            entry = session.query(BoxLootPool).filter_by(id=entry_id).first()
+            if not entry:
+                return jsonify({'error': 'Pool entry not found'}), 404
+            box = session.get(Box, entry.box_id)
+            where = f"the '{box.name if box else entry.box_id}' pool"
+            changes = []
+            if weight is not None:
+                changes.append(f"weight {entry.weight} -> {weight}")
+                entry.weight = weight
+            if count is not None:
+                changes.append(f"count {entry.count} -> {count}")
+                entry.count = count
+            audit.record(session, current_user['user_id'], 'box_pool.update',
+                         target=f'pool:{entry_id}',
+                         detail=f"{', '.join(changes)} in {where}")
+            return jsonify({'message': 'Pool entry updated', 'pool': entry.to_dict()}), 200
+    except Exception as e:
+        logger.error(f"Update box pool error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+# ---------------------------------------------------------------------------
+# Events (what grants a box, and which boxes take part)
+# ---------------------------------------------------------------------------
+
+def _event_payload(session, event, boxes_by_id):
+    """One event with its box line-up and each box's pick chance."""
+    entries = (session.query(EventBox)
+               .filter_by(event_id=event.id).order_by(EventBox.id).all())
+    total = sum(e.weight for e in entries
+                if e.weight > 0 and boxes_by_id.get(e.box_id))
+    boxes = []
+    for e in entries:
+        box = boxes_by_id.get(e.box_id)
+        droppable = bool(box and e.weight > 0)
+        boxes.append({
+            'id': e.id,
+            'box_id': e.box_id,
+            'name': box.name if box else f'#{e.box_id}',
+            'draws': box.draws if box else 0,
+            'weight': e.weight,
+            'pick_chance': (e.weight / total) if (droppable and total > 0) else 0.0,
+        })
+    return {**event.to_dict(), 'boxes': boxes}
+
+
+@admin_bp.route('/events', methods=['GET'])
+@moderator_required
+def get_events(current_user):
+    """Every event with its box line-up. System events first, then customs."""
+    try:
+        with db.get_db() as session:
+            boxes_by_id = {b.id: b for b in session.query(Box).all()}
+            ordered = (session.query(Event)
+                       .order_by(Event.system.desc(), Event.type, Event.id).all())
+            return jsonify({'events': [_event_payload(session, e, boxes_by_id)
+                                       for e in ordered]}), 200
+    except Exception as e:
+        logger.error(f"Get events error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+def _parse_dt(value):
+    """Parse an ISO datetime (accepting a trailing Z), or None. Raises ValueError."""
+    if value in (None, ''):
+        return None
+    return datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
+
+
+@admin_bp.route('/events', methods=['POST'])
+@admin_required
+def create_event(current_user):
+    """Create a custom event (admin only).
+
+    Only custom events can be created; the daily and weekly-bonus events are
+    seeded once and edited in place.
+    """
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name is required'}), 400
+    if len(name) > 80:
+        return jsonify({'error': 'name must be 80 characters or fewer'}), 400
+
+    cadence = data.get('cadence', Event.CADENCE_DAILY)
+    if cadence not in (Event.CADENCE_DAILY, Event.CADENCE_ONCE):
+        return jsonify({'error': "cadence must be 'daily' or 'once'"}), 400
+
+    try:
+        starts_at = _parse_dt(data.get('starts_at'))
+        ends_at = _parse_dt(data.get('ends_at'))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'starts_at and ends_at must be ISO datetimes'}), 400
+    if starts_at and ends_at and ends_at <= starts_at:
+        return jsonify({'error': 'ends_at must be after starts_at'}), 400
+
+    try:
+        with db.get_db() as session:
+            event = Event(
+                type=Event.TYPE_CUSTOM,
+                name=name,
+                description=(data.get('description') or '').strip() or None,
+                enabled=bool(data.get('enabled', True)),
+                cadence=cadence,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                system=False,
+            )
+            session.add(event)
+            session.flush()
+            audit.record(session, current_user['user_id'], 'event.create',
+                         target=f'event:{event.id}', detail=f"'{name}' ({cadence})")
+            return jsonify({'message': 'Event created', 'event': event.to_dict()}), 201
+    except Exception as e:
+        logger.error(f"Create event error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/events/<int:event_id>', methods=['PUT'])
+@admin_required
+def update_event(current_user, event_id):
+    """Edit an event (admin only).
+
+    Every event can be enabled/disabled and renamed. The window and cadence
+    belong to custom events only; the two system events ignore them.
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        with db.get_db() as session:
+            event = session.get(Event, event_id)
+            if not event:
+                return jsonify({'error': 'Event not found'}), 404
+
+            changed = []
+            if 'name' in data:
+                name = (data.get('name') or '').strip()
+                if not name:
+                    return jsonify({'error': 'name cannot be empty'}), 400
+                if len(name) > 80:
+                    return jsonify({'error': 'name must be 80 characters or fewer'}), 400
+                event.name = name
+                changed.append('name')
+            if 'description' in data:
+                event.description = (data.get('description') or '').strip() or None
+                changed.append('description')
+            if 'enabled' in data:
+                event.enabled = bool(data['enabled'])
+                changed.append(f'enabled={event.enabled}')
+
+            if event.type == Event.TYPE_CUSTOM:
+                if 'cadence' in data:
+                    if data['cadence'] not in (Event.CADENCE_DAILY, Event.CADENCE_ONCE):
+                        return jsonify({'error': "cadence must be 'daily' or 'once'"}), 400
+                    event.cadence = data['cadence']
+                    changed.append('cadence')
+                try:
+                    if 'starts_at' in data:
+                        event.starts_at = _parse_dt(data.get('starts_at'))
+                        changed.append('starts_at')
+                    if 'ends_at' in data:
+                        event.ends_at = _parse_dt(data.get('ends_at'))
+                        changed.append('ends_at')
+                except (ValueError, TypeError):
+                    return jsonify({'error': 'starts_at and ends_at must be ISO datetimes'}), 400
+                if event.starts_at and event.ends_at and event.ends_at <= event.starts_at:
+                    return jsonify({'error': 'ends_at must be after starts_at'}), 400
+
+            audit.record(session, current_user['user_id'], 'event.update',
+                         target=f'event:{event_id}', detail=', '.join(changed) or 'nothing')
+            result = event.to_dict()
+            return jsonify({'message': 'Event updated', 'event': result}), 200
+    except Exception as e:
+        logger.error(f"Update event error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/events/<int:event_id>', methods=['DELETE'])
+@admin_required
+def delete_event(current_user, event_id):
+    """Delete a custom event (admin only). System events cannot be deleted."""
+    try:
+        with db.get_db() as session:
+            event = session.get(Event, event_id)
+            if not event:
+                return jsonify({'error': 'Event not found'}), 404
+            if event.system:
+                return jsonify({'error': 'The daily and weekly bonus events cannot be '
+                                         'deleted. Disable it instead.'}), 409
+            name = event.name
+            # event_boxes cascade; already-granted user_boxes keep their history
+            # with event_id set null.
+            session.delete(event)
+            audit.record(session, current_user['user_id'], 'event.delete',
+                         target=f'event:{event_id}', detail=f"'{name}'")
+            return jsonify({'message': 'Event deleted'}), 200
+    except Exception as e:
+        logger.error(f"Delete event error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/events/<int:event_id>/boxes', methods=['POST'])
+@admin_required
+def add_event_box(current_user, event_id):
+    """Attach a box to an event with a pick weight (admin only)."""
+    data = request.get_json(silent=True) or {}
+    box_id = data.get('box_id')
+    if not box_id:
+        return jsonify({'error': 'box_id is required'}), 400
+    weight = data.get('weight', 1)
+    try:
+        weight = float(weight)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'weight must be a number'}), 400
+    if weight < 0 or weight > 1000:
+        return jsonify({'error': 'weight must be between 0 and 1000'}), 400
+
+    try:
+        with db.get_db() as session:
+            event = session.get(Event, event_id)
+            if not event:
+                return jsonify({'error': 'Event not found'}), 404
+            box = session.get(Box, box_id)
+            if not box:
+                return jsonify({'error': 'Box not found'}), 404
+            if session.query(EventBox).filter_by(event_id=event_id, box_id=box_id).first():
+                return jsonify({'error': 'That box is already in this event'}), 409
+            entry = EventBox(event_id=event_id, box_id=box_id, weight=weight)
+            session.add(entry)
+            session.flush()
+            audit.record(session, current_user['user_id'], 'event.box.add',
+                         target=f'event:{event_id}',
+                         detail=f"'{box.name}' at weight {weight}")
+            return jsonify({'message': 'Box added to event', 'event_box': entry.to_dict()}), 201
+    except Exception as e:
+        logger.error(f"Add event box error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/events/<int:event_id>/boxes/<int:entry_id>', methods=['PUT'])
+@admin_required
+def update_event_box(current_user, event_id, entry_id):
+    """Change a box's pick weight within an event (admin only)."""
     data = request.get_json(silent=True) or {}
     if 'weight' not in data:
         return jsonify({'error': 'weight is required'}), 400
@@ -1982,109 +2642,34 @@ def update_box_pool(current_user, entry_id):
 
     try:
         with db.get_db() as session:
-            entry = session.query(BoxLootPool).filter_by(id=entry_id).first()
+            entry = session.query(EventBox).filter_by(id=entry_id, event_id=event_id).first()
             if not entry:
-                return jsonify({'error': 'Pool entry not found'}), 404
-            previous = entry.weight
+                return jsonify({'error': 'That box is not in this event'}), 404
             entry.weight = weight
-            audit.record(session, current_user['user_id'], 'box_pool.reweight',
-                         target=f'pool:{entry_id}',
-                         detail=f"{previous} -> {weight} in the {entry.size} pool")
-            return jsonify({'message': 'Weight updated', 'pool': entry.to_dict()}), 200
+            audit.record(session, current_user['user_id'], 'event.box.reweight',
+                         target=f'event:{event_id}', detail=f"box {entry.box_id} -> {weight}")
+            return jsonify({'message': 'Weight updated', 'event_box': entry.to_dict()}), 200
     except Exception as e:
-        logger.error(f"Update box pool error: {e}")
+        logger.error(f"Update event box error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
-# ---------------------------------------------------------------------------
-# Box types (how likely each size is, and how much it gives)
-# ---------------------------------------------------------------------------
-
-@admin_bp.route('/box-types', methods=['GET'])
-@moderator_required
-def get_box_types(current_user):
-    """Every box size with its draw count and daily-roll weight."""
-    from src.models.box_type import BoxType
-
-    try:
-        with db.get_db() as session:
-            rows = session.query(BoxType).all()
-            if not rows:
-                # Seed lazily, so a database created before this table still works.
-                box_types.seed(session)
-                session.flush()
-                rows = session.query(BoxType).all()
-
-            total = sum(r.weight for r in rows if r.active and r.weight > 0)
-            return jsonify({
-                'box_types': [
-                    dict(r.to_dict(),
-                         # Weight is relative; the resulting chance is what an
-                         # operator actually wants to reason about.
-                         daily_chance=(r.weight / total if total > 0 and r.active else 0.0))
-                    for r in rows
-                ]
-            }), 200
-    except Exception as e:
-        logger.error(f"Get box types error: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-@admin_bp.route('/box-types/<string:size>', methods=['PUT'])
+@admin_bp.route('/events/<int:event_id>/boxes/<int:entry_id>', methods=['DELETE'])
 @admin_required
-def update_box_type(current_user, size):
-    """Retune a box size (admin only)."""
-    from src.models.box_type import BoxType
-
-    data = request.get_json(silent=True) or {}
-
-    # Validated before anything is assigned: an error return still commits, so a
-    # bad weight would otherwise apply the new draw count and report failure.
-    draws = weight = None
-    if 'draws' in data:
-        try:
-            draws = int(data['draws'])
-        except (TypeError, ValueError):
-            return jsonify({'error': 'draws must be a whole number'}), 400
-        if draws < 0 or draws > 20:
-            return jsonify({'error': 'draws must be between 0 and 20'}), 400
-    if 'weight' in data:
-        try:
-            weight = float(data['weight'])
-        except (TypeError, ValueError):
-            return jsonify({'error': 'weight must be a number'}), 400
-        if weight < 0 or weight > 1000:
-            return jsonify({'error': 'weight must be between 0 and 1000'}), 400
-
+def delete_event_box(current_user, event_id, entry_id):
+    """Remove a box from an event (admin only)."""
     try:
         with db.get_db() as session:
-            row = session.query(BoxType).filter_by(size=size).first()
-            if not row:
-                return jsonify({'error': 'Box type not found'}), 404
-
-            changed = []
-            if draws is not None:
-                row.draws = draws
-                changed.append(f'draws={draws}')
-            if weight is not None:
-                row.weight = weight
-                changed.append(f'weight={weight}')
-            if 'active' in data:
-                row.active = bool(data['active'])
-                changed.append(f'active={row.active}')
-            if 'label' in data:
-                row.label = (data['label'] or '').strip() or None
-                changed.append('label')
-
-            audit.record(session, current_user['user_id'], 'box_type.update',
-                         target=f'box_type:{size}',
-                         detail=', '.join(changed) or 'nothing')
-            result = row.to_dict()
-
-        box_types.reset_cache()
-        return jsonify({'message': 'Box type updated', 'box_type': result}), 200
+            entry = session.query(EventBox).filter_by(id=entry_id, event_id=event_id).first()
+            if not entry:
+                return jsonify({'error': 'That box is not in this event'}), 404
+            box_id = entry.box_id
+            session.delete(entry)
+            audit.record(session, current_user['user_id'], 'event.box.remove',
+                         target=f'event:{event_id}', detail=f"box {box_id}")
+            return jsonify({'message': 'Box removed from event'}), 200
     except Exception as e:
-        logger.error(f"Update box type error: {e}")
+        logger.error(f"Delete event box error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -2180,7 +2765,7 @@ def resolve_report(current_user, report_id):
 
 
 # ---------------------------------------------------------------------------
-# Alert channels (Discord webhooks, the staff inbox, ops mail)
+# Alert channels (Discord webhooks, the staff feed, ops mail)
 # ---------------------------------------------------------------------------
 
 def _channel_payload(session, data, existing=None):
@@ -2195,14 +2780,14 @@ def _channel_payload(session, data, existing=None):
     if existing is None:
         if kind not in AlertChannel.KINDS:
             return None, f"kind must be one of: {', '.join(AlertChannel.KINDS)}"
-        # The staff inbox is one destination by definition - it always means
+        # The staff feed is one destination by definition - it always means
         # "every moderator and admin" - so a second row could only ever produce
         # duplicate notifications.
         if kind == AlertChannel.KIND_INAPP:
             existing_inapp = (session.query(AlertChannel)
                               .filter_by(kind=AlertChannel.KIND_INAPP).first())
             if existing_inapp:
-                return None, 'The staff inbox is already set up; edit that one'
+                return None, 'The staff feed is already set up; edit that one'
         values['kind'] = kind
     elif data.get('kind') and data['kind'] != existing.kind:
         # Changing kind would mean the target means something else entirely.
@@ -2381,4 +2966,102 @@ def test_alert_channel(current_user, channel_id):
         return jsonify({'message': 'Test message delivered'}), 200
     except Exception as e:
         logger.error(f"Test alert channel error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+# ---------------------------------------------------------------------------
+# The staff feed (what actually fired, and how far each person has read)
+# ---------------------------------------------------------------------------
+
+@admin_bp.route('/staff-feed', methods=['GET'])
+@moderator_required
+def get_staff_feed(current_user):
+    """Alerts that reached the staff feed, newest first.
+
+    Moderator rather than admin, because this is the replacement for the
+    notifications moderators already received - restricting it now would take
+    something away rather than reorganise it. The channel *configuration* stays
+    admin-only; reading what happened is not the same power as changing where it
+    goes.
+
+    The event catalog comes back alongside the rows so this screen renders
+    labels and groups without calling the admin-only `/alerts` endpoint.
+    """
+    from src.models.staff_alert import StaffAlert
+
+    try:
+        limit, offset = paging.params(default_limit=25)
+        event = request.args.get('event')
+        if event and event not in alerting.EVENTS:
+            return jsonify({'error': 'Unknown event'}), 400
+
+        with db.get_db() as session:
+            query = session.query(StaffAlert)
+            if event:
+                query = query.filter(StaffAlert.event == event)
+            query = query.order_by(StaffAlert.created_at.desc(), StaffAlert.id.desc())
+            rows, total = paging.page(query, limit, offset)
+
+            marker = _staff_read_marker(session, current_user['user_id'])
+            return jsonify({
+                'alerts': [r.to_dict() for r in rows],
+                'unread': _staff_unread(session, marker),
+                'read_at': marker.isoformat() if marker else None,
+                'events': alerting.describe(),
+                'pagination': paging.meta(total, limit, offset),
+            }), 200
+    except Exception as e:
+        logger.error(f"Get staff feed error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+def _staff_read_marker(session, user_id):
+    """How far this account has read the feed, or None if it never has."""
+    row = session.get(User, user_id)
+    return row.staff_alerts_read_at if row else None
+
+
+def _staff_unread(session, marker):
+    """How many alerts are newer than a read marker."""
+    from src.models.staff_alert import StaffAlert
+
+    query = session.query(StaffAlert)
+    if marker is not None:
+        query = query.filter(StaffAlert.created_at > marker)
+    return query.count()
+
+
+@admin_bp.route('/staff-feed/unread-count', methods=['GET'])
+@moderator_required
+def staff_feed_unread(current_user):
+    """Just the badge number - polled often, so it stays cheap."""
+    try:
+        with db.get_db() as session:
+            marker = _staff_read_marker(session, current_user['user_id'])
+            return jsonify({'unread': _staff_unread(session, marker)}), 200
+    except Exception as e:
+        logger.error(f"Staff feed unread count error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/staff-feed/read', methods=['POST'])
+@moderator_required
+def mark_staff_feed_read(current_user):
+    """Mark the feed read up to now.
+
+    One write per person per visit, rather than one per message: the feed is
+    shared, so "read" is a position in it and not a flag on every row. Stamped
+    with the server's clock rather than the newest row's, so an alert that
+    lands between the page rendering and this call is still counted as unread.
+    """
+    try:
+        with db.get_db() as session:
+            user = session.get(User, current_user['user_id'])
+            if not user:
+                return jsonify({'error': 'Account not found'}), 404
+            user.staff_alerts_read_at = datetime.utcnow()
+            return jsonify({'message': 'Feed marked read',
+                            'read_at': user.staff_alerts_read_at.isoformat()}), 200
+    except Exception as e:
+        logger.error(f"Mark staff feed read error: {e}")
         return jsonify({'error': 'Internal server error'}), 500

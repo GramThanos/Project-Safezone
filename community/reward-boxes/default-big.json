@@ -1,0 +1,80 @@
+{
+  "name": "Default Big Box",
+  "description": "A big crate with items.",
+  "draws": 3,
+  "rewards": [
+    {
+      "kind": "item",
+      "name": "Box of 12g Rounds",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/ShotgunAmmoBox.png",
+      "in_game_id": "Base.ShotgunShellsBox",
+      "description": "",
+      "count": 1,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Box of Nails",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/NailsBox.png",
+      "in_game_id": "Base.NailsBox",
+      "description": "",
+      "count": 1,
+      "weight": 25
+    },
+    {
+      "kind": "item",
+      "name": "Firefighter Axe",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Axe.png",
+      "in_game_id": "Base.Axe",
+      "description": "",
+      "count": 1,
+      "weight": 20
+    },
+    {
+      "kind": "item",
+      "name": "Military Backpack",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/AliceBag_SandCamo.png",
+      "in_game_id": "Base.Bag_ALICEpack_DesertCamo",
+      "description": "",
+      "count": 1,
+      "weight": 15
+    },
+    {
+      "kind": "item",
+      "name": "JS-2000 Shotgun",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Firearm_PumpShotgun.png",
+      "in_game_id": "Base.Shotgun",
+      "description": "",
+      "count": 1,
+      "weight": 15
+    },
+    {
+      "kind": "item",
+      "name": "Sledgehammer",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Sledgehammer2.png",
+      "in_game_id": "Base.Sledgehammer2",
+      "description": "",
+      "count": 1,
+      "weight": 8
+    },
+    {
+      "kind": "item",
+      "name": "Machete",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Machete_Forged.png",
+      "in_game_id": "Base.Machete",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Katana",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Katana.png",
+      "in_game_id": "Base.Katana",
+      "description": "",
+      "count": 1,
+      "weight": 2
+    }
+  ],
+  "schema": "safezone.box-config/v1"
+}

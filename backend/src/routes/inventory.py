@@ -190,7 +190,9 @@ def send_item(current_user, item_id):
                     return jsonify({'error': 'That reward is no longer deliverable'}), 409
             else:
                 payload['in_game_id'] = reward.in_game_id
-                payload['count'] = reward.count or 1
+                # Quantity was captured onto the holding when the box was opened
+                # (it lives on the box's pool entry, not the reward).
+                payload['count'] = item.count or 1
 
             resp, status = gs_request('POST', '/api/tasks', json=payload)
             if status not in (200, 201):
@@ -210,6 +212,45 @@ def send_item(current_user, item_id):
                             'item': item.to_dict(reward=reward)}), 200
     except Exception as e:
         logger.error(f"Send inventory item error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@inventory_bp.route('/remove', methods=['POST'])
+@token_required
+def remove_items(current_user):
+    """Discard unsent rewards, or clear away used and expired ones.
+
+    Anything in flight is left alone: its task on the manager may still land in
+    game, and deleting the row would lose the record of it rather than stop it.
+    """
+    ids = (request.get_json(silent=True) or {}).get('ids')
+    if not isinstance(ids, list) or not ids:
+        return jsonify({'error': 'ids is required'}), 400
+    try:
+        ids = {int(i) for i in ids}
+    except (TypeError, ValueError):
+        return jsonify({'error': 'ids must be whole numbers'}), 400
+
+    try:
+        with db.get_db() as session:
+            rows = (session.query(InventoryItem)
+                    .filter(InventoryItem.user_id == current_user['user_id'],
+                            InventoryItem.id.in_(ids),
+                            InventoryItem.status != InventoryItem.STATUS_SENDING)
+                    .with_for_update()
+                    .all())
+            discarded = sum(1 for r in rows if r.status in (InventoryItem.STATUS_HELD,
+                                                            InventoryItem.STATUS_FAILED))
+            for row in rows:
+                session.delete(row)
+            # Clearing used ones away is housekeeping; throwing away something
+            # that could still be sent is worth a line in the audit trail.
+            if discarded:
+                audit.record(session, current_user['user_id'], 'inventory.discard',
+                             detail=f'{discarded} unsent reward(s) discarded')
+            return jsonify({'removed': len(rows)}), 200
+    except Exception as e:
+        logger.error(f"Remove inventory items error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 

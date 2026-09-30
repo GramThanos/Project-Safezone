@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import { SiteProvider } from './context/SiteContext';
 import { ToastProvider } from './context/ToastContext';
 import { PlayerProvider } from './context/PlayerContext';
+import { DialogProvider } from './context/DialogContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import WelcomeBack from './components/WelcomeBack';
@@ -27,9 +28,12 @@ import AdminServerLogs from './pages/admin/ServerLogs';
 import AdminInstallations from './pages/admin/Installations';
 import AdminTasks from './pages/admin/Tasks';
 import AdminUsers from './pages/admin/Users';
+import AdminUserManage from './pages/admin/UserManage';
 import AdminClaims from './pages/admin/Claims';
 import AdminRewards from './pages/admin/Rewards';
 import AdminBoxes from './pages/admin/Boxes';
+import AdminEvents from './pages/admin/Events';
+import AdminStaffFeed from './pages/admin/StaffFeed';
 import AdminGive from './pages/admin/Give';
 import AdminAbout from './pages/admin/About';
 import AdminBranding from './pages/admin/Branding';
@@ -46,6 +50,7 @@ function App() {
 		<AuthProvider>
 			<SiteProvider>
 				<ToastProvider>
+				<DialogProvider>
 				<PlayerProvider>
 				<Router>
 					<div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -120,9 +125,12 @@ function App() {
 									<Route path="installations" element={<AdminInstallations />} />
 									<Route path="tasks" element={<AdminTasks />} />
 									<Route path="users" element={<AdminUsers />} />
+									<Route path="users/:userId" element={<AdminUserManage />} />
 									<Route path="claims" element={<AdminClaims />} />
 									<Route path="rewards" element={<AdminRewards />} />
 									<Route path="boxes" element={<AdminBoxes />} />
+									<Route path="events" element={<AdminEvents />} />
+									<Route path="staff-feed" element={<AdminStaffFeed />} />
 									<Route path="give" element={<AdminGive />} />
 									<Route path="branding" element={<AdminBranding />} />
 									<Route path="legal" element={<AdminLegalPages />} />
@@ -140,6 +148,7 @@ function App() {
 					</div>
 				</Router>
 				</PlayerProvider>
+				</DialogProvider>
 				</ToastProvider>
 			</SiteProvider>
 		</AuthProvider>

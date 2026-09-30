@@ -4,7 +4,16 @@ import { NavLink, Link, useLocation } from 'react-router-dom';
 
 const isUnder = (path, base) => path === base || path.startsWith(`${base}/`);
 
-function SubNav({ title, titleTo, badge, groups }) {
+// A link may carry `count`: an unread/outstanding number shown as a badge
+// beside its text. Zero and undefined both render nothing, so a caller can pass
+// a count straight through without guarding it. A group shows the total of its
+// visible links' counts.
+const groupCount = (group) => (group.links || [])
+	.filter((link) => !link.hidden)
+	.reduce((sum, link) => sum + (link.count || 0), 0);
+
+// `logo` puts the site logo before the title, for when the title is the brand.
+function SubNav({ title, titleTo, logo, badge, groups }) {
 	const location = useLocation();
 	const [expanded, setExpanded] = useState(false);
 
@@ -39,9 +48,12 @@ function SubNav({ title, titleTo, badge, groups }) {
 					{title && (
 						titleTo ? (
 							<Link
-								className="navbar-brand text-uppercase font-display fw-bold me-2"
+								className="navbar-brand d-flex align-items-center gap-2 text-uppercase font-display fw-bold me-2"
 								to={titleTo}
 							>
+								{logo && (
+									<img src={`${process.env.PUBLIC_URL}/assets/images/safezone-logo.png`} alt="" width="32" height="32"/>
+								)}
 								{title}
 							</Link>
 						) : (
@@ -72,6 +84,9 @@ function SubNav({ title, titleTo, badge, groups }) {
 											<NavLink to={link.to} className={linkClass}>
 												{link.icon && <i className={`bi bi-${link.icon} me-1`}></i>}
 												{link.text}
+												{link.count > 0 && (
+													<span className="badge text-bg-danger ms-1">{link.count}</span>
+												)}
 											</NavLink>
 										</li>
 									))
@@ -85,6 +100,13 @@ function SubNav({ title, titleTo, badge, groups }) {
 											>
 												{group.icon && <i className={`bi bi-${group.icon} me-1`}></i>}
 												{group.label}
+												{/* Rolled up from the group's pages: a count on a link
+												    inside a collapsed group is invisible until you have
+												    already gone looking for it, which defeats the point
+												    of having one. */}
+												{groupCount(group) > 0 && (
+													<span className="badge text-bg-danger ms-1">{groupCount(group)}</span>
+												)}
 											</Link>
 										</li>
 									))}
@@ -106,6 +128,9 @@ function SubNav({ title, titleTo, badge, groups }) {
 									<NavLink to={link.to} className={linkClass}>
 										{link.icon && <i className={`bi bi-${link.icon} me-1`}></i>}
 										{link.text}
+										{link.count > 0 && (
+											<span className="badge text-bg-danger ms-1">{link.count}</span>
+										)}
 									</NavLink>
 								</li>
 							))}

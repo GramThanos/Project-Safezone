@@ -10,6 +10,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
 
@@ -18,7 +19,7 @@ const WORKSHOP_URL = (id) => `https://steamcommunity.com/sharedfiles/filedetails
 
 // Task actions that touch the install. While one of these is in flight the page
 // polls, because the answer to "is it done" is the reason you are looking.
-const INSTALL_ACTIONS = ['update_server', 'get_app_info', 'download_workshop', 'update_mods'];
+const INSTALL_ACTIONS = ['update_server', 'uninstall_server', 'get_app_info', 'download_workshop', 'update_mods'];
 
 const fmtBytes = (n) => {
   if (n === null || n === undefined) return '—';
@@ -34,6 +35,7 @@ const fmtUnix = (seconds) => (seconds ? new Date(seconds * 1000).toLocaleString(
 
 function Installations() {
   const { token, isAdmin } = useAuth();
+  const { confirm } = useDialog();
   const admin = isAdmin();
 
   const [installation, setInstallation] = useState(null);
@@ -52,6 +54,9 @@ function Installations() {
   const [preview, setPreview] = useState(null);
   const [metadataError, setMetadataError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Opt-in, because the Workshop library survives a game reinstall and wiping
+  // it as a side effect of removing the base game is a costly surprise.
+  const [removeMods, setRemoveMods] = useState(false);
 
   // The branch to install. Empty string means public; `null` means "whatever is
   // configured", which is the default and is not the same thing.
@@ -135,16 +140,35 @@ function Installations() {
     }
   };
 
-  const handleUpdateGame = () => {
+  const handleUpdateGame = async () => {
     const target = branch === null ? 'the configured branch' : (branch || 'public');
     const warning = 'Install or update the game files from ' + target + '?\n\n'
       + 'This replaces the binaries every server runs and can take several '
       + 'minutes. Servers should be stopped first.';
-    if (!window.confirm(warning)) return;
+    if (!(await confirm({ title: 'Update game files?', message: warning, confirmLabel: 'Update' }))) return;
     run(
       () => api.admin.installation.update(token, branch === null ? undefined : branch),
       'Update queued'
     );
+  };
+
+  const handleUninstallGame = async () => {
+    // Spelled out per choice rather than generically: the difference between
+    // keeping and dropping the Workshop library is the difference between a
+    // ten-minute reinstall and re-downloading tens of gigabytes.
+    const mods = removeMods
+      ? 'Your downloaded Workshop mods go too, and will have to be '
+        + 'downloaded again.\n\n'
+      : 'Your downloaded Workshop mods are kept.\n\n';
+    const warning = 'Delete all installed game files?\n\n'
+      + 'This removes the game binaries every server runs. Server configs and '
+      + 'saved worlds are kept, and you can reinstall the game here '
+      + 'afterwards.\n\n'
+      + mods
+      + 'Servers must be stopped first.';
+    if (!(await confirm({ title: 'Uninstall game files?', message: warning, confirmLabel: 'Uninstall' }))) return;
+    run(() => api.admin.installation.uninstall(token, !removeMods),
+      'Uninstall queued');
   };
 
   // Split on whitespace and separators so a pasted list of URLs works as-is.
@@ -189,8 +213,12 @@ function Installations() {
       });
   };
 
-  const handleRemoveMod = (item) => {
-    if (!window.confirm(`Delete the downloaded files for Workshop item ${item.id}?`)) return;
+  const handleRemoveMod = async (item) => {
+    if (!(await confirm({
+      title: 'Delete Workshop item?',
+      message: `Delete the downloaded files for Workshop item ${item.id}?`,
+      confirmLabel: 'Delete'
+    }))) return;
     run(() => api.admin.mods.remove(token, item.id), 'Workshop item removed');
   };
 
@@ -352,6 +380,36 @@ function Installations() {
               >
                 Check for updates
               </button>
+              {installed && (
+                <div className="d-flex align-items-center gap-2 ms-auto">
+                  <div className="form-check mb-0">
+                    <input
+                      className="form-check-input"
+                      type="checkbox"
+                      id="uninstall-remove-mods"
+                      checked={removeMods}
+                      onChange={(e) => setRemoveMods(e.target.checked)}
+                      disabled={busy || anyRunning}
+                    />
+                    <label
+                      className="form-check-label small text-body-secondary"
+                      htmlFor="uninstall-remove-mods"
+                    >
+                      Also remove Workshop mods
+                    </label>
+                  </div>
+                  <button
+                    className="btn btn-outline-danger"
+                    onClick={handleUninstallGame}
+                    disabled={busy || anyRunning}
+                    title={anyRunning
+                      ? 'Stop your servers before uninstalling'
+                      : 'Delete the game files (configs and saved worlds are kept)'}
+                  >
+                    <i className="fas fa-trash"></i> Uninstall game
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-body-secondary mb-0">

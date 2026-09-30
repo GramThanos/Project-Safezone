@@ -79,17 +79,58 @@ def init_database():
     print("OK  Schema is up to date")
 
 
-def seed_box_types():
-    """Create any missing loot box type from the defaults. Idempotent."""
-    from src.utils import box_types
+def seed_boxes_and_events():
+    """On a fresh database, create the starter boxes and the two system events.
 
-    print("\nChecking loot box types...")
+    A fresh deployment needs a working economy: a daily event that can grant a
+    box, and a weekly bonus event for the streak job. Boxes start with empty
+    loot pools - an admin fills them - so the daily grant is live the moment a
+    reward is added to a box.
+
+    Gated on the daily system event already existing rather than looking boxes
+    up by name each boot: once seeded, an operator may rename or remove any of
+    these, and re-running must not resurrect them.
+    """
+    from src.models.box import Box
+    from src.models.event import Event
+    from src.models.event_box import EventBox
+
+    print("\nChecking loot boxes and events...")
     with db.get_db() as session:
-        added = box_types.seed(session)
-    if added:
-        print(f"OK  Seeded box types: {', '.join(added)}")
-    else:
-        print("OK  Box types already present")
+        if session.query(Event).filter_by(type=Event.TYPE_DAILY, system=True).first():
+            print("OK  Boxes and events already present")
+            return
+
+        # (name, draws, daily pick weight or None if bonus-only)
+        starter_boxes = [
+            ('Small', 1, 0.6),
+            ('Medium', 2, 0.3),
+            ('Big', 3, 0.1),
+            ('Weekly Bonus', 4, None),
+        ]
+        boxes = {}
+        for name, draws, _ in starter_boxes:
+            box = Box(name=name, draws=draws)
+            session.add(box)
+            boxes[name] = box
+
+        daily = Event(type=Event.TYPE_DAILY, name='Daily box', system=True,
+                      enabled=True, cadence=Event.CADENCE_DAILY,
+                      description='One box every day, picked by weight from the boxes below.')
+        weekly = Event(type=Event.TYPE_WEEKLY_BONUS, name='Weekly bonus', system=True,
+                       enabled=True, cadence=Event.CADENCE_WEEKLY,
+                       description='A bonus box for players who collected enough daily '
+                                   'boxes during the week.')
+        session.add(daily)
+        session.add(weekly)
+        session.flush()   # assign ids before wiring the line-ups
+
+        for name, _, weight in starter_boxes:
+            if weight is not None:
+                session.add(EventBox(event_id=daily.id, box_id=boxes[name].id, weight=weight))
+        session.add(EventBox(event_id=weekly.id, box_id=boxes['Weekly Bonus'].id, weight=1.0))
+
+    print("OK  Seeded starter boxes and the daily and weekly bonus events")
 
 
 def create_admin_user():
@@ -132,7 +173,7 @@ def main():
         with app.app_context():
             init_database()
             create_admin_user()
-            seed_box_types()
+            seed_boxes_and_events()
     except Exception as e:
         if is_connection_error(e):
             print(f"ERROR Database not reachable yet: {e}")

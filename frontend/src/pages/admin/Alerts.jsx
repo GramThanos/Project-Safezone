@@ -1,9 +1,14 @@
 // Admin › Alerts: what the site announces to staff, and where it goes.
 //
 // One list of events, three kinds of destination. A channel is a Discord
-// webhook, the staff inbox, or an ops mailbox, and each one ticks the events it
+// webhook, the staff feed, or an ops mailbox, and each one ticks the events it
 // wants — so player traffic can go to a busy Discord channel while the two
 // things worth waking up for go to mail.
+//
+// This screen is where alerts are *configured*. What actually fired is on the
+// Staff Feed page — worth saying, because "nothing arrived in Discord" and
+// "nothing happened" are different problems and this page cannot tell them
+// apart.
 //
 // What this page has to say out loud, or an operator is left guessing:
 //   - A webhook URL is a secret and is never shown again. It comes back masked,
@@ -15,6 +20,7 @@
 //     for a mailbox, so the checkbox says so before it is ticked.
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
 
@@ -32,12 +38,14 @@ const KINDS = {
       + 'a password and never shown again.'
   },
   inapp: {
-    label: 'Staff inbox',
-    icon: 'bell',
+    label: 'Staff feed',
+    icon: 'activity',
     badge: 'secondary',
     targetLabel: null,
-    help: 'Notifications in the panel, for every moderator and admin. There is '
-      + 'one of these and it needs no address.'
+    help: 'The Staff Feed page in this panel, readable by every moderator and '
+      + 'admin. There is one of these and it needs no address. Unlike the other '
+      + 'two it cannot fail to deliver, so it is the one to tick for anything '
+      + 'you must not miss.'
   },
   email: {
     label: 'Ops mail',
@@ -172,8 +180,8 @@ function ChannelForm({ initial, catalog, servers, isNew, saving, onSubmit, onCan
                       {event.help && <div className="form-text mt-0">{event.help}</div>}
                       {event.volume === 'high' && noisy && (
                         <div className="form-text mt-0 text-warning-emphasis">
-                          Fires on every player action — a lot of mail, or a lot of
-                          unread notifications.
+                          Fires on every player action — a lot of mail, or a
+                          staff feed nobody can read.
                         </div>
                       )}
                     </div>
@@ -228,6 +236,7 @@ function ChannelForm({ initial, catalog, servers, isNew, saving, onSubmit, onCan
 
 function Alerts() {
   const { token } = useAuth();
+  const { confirm } = useDialog();
   const [channels, setChannels] = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [servers, setServers] = useState([]);
@@ -335,7 +344,11 @@ function Alerts() {
   };
 
   const handleDelete = async (channel) => {
-    if (!window.confirm(`Remove ${channel.name}? Nothing changes at the destination — this only stops the messages.`)) return;
+    if (!(await confirm({
+      title: 'Remove channel?',
+      message: `Remove ${channel.name}? Nothing changes at the destination — this only stops the messages.`,
+      confirmLabel: 'Remove'
+    }))) return;
     setError('');
     setNotice('');
     setBusyId(channel.id);
@@ -557,15 +570,16 @@ function Alerts() {
           <p className="text-body-secondary mb-2 small">
             Messages carry in-game character names, account usernames and server
             names. They never carry email addresses, passwords or IP addresses.
-            The text of a report reaches the staff inbox and ops mail — never a
+            The text of a report reaches the staff feed and ops mail — never a
             Discord channel, which usually has a wider membership than the staff
             list does.
           </p>
           <p className="text-body-secondary mb-0 small">
             Messages to <em>players</em> about their own account — a reward
             arriving, a ban ending — are not configured here. They always go to
-            the person concerned, and account mail such as verification and
-            password resets is part of how those flows work rather than
+            the person concerned, land in that player's own notifications, and
+            never appear in the staff feed. Account mail such as verification
+            and password resets is part of how those flows work rather than
             something to switch on and off.
           </p>
         </div>

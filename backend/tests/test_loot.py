@@ -1,4 +1,4 @@
-"""Tests for loot box size selection and reward drawing."""
+"""Tests for weighted box selection and reward drawing."""
 import os
 import sys
 import random
@@ -9,20 +9,22 @@ import loot  # noqa: E402
 
 
 class TestLoot(unittest.TestCase):
-    def test_draw_counts(self):
-        self.assertEqual(loot.draw_count('small'), 1)
-        self.assertEqual(loot.draw_count('medium'), 2)
-        self.assertEqual(loot.draw_count('big'), 3)
-
-    def test_size_distribution(self):
+    def test_pick_weighted_distribution(self):
         rng = random.Random(42)
+        entries = [('small', 0.6), ('medium', 0.3), ('big', 0.1)]
         counts = {'small': 0, 'medium': 0, 'big': 0}
         n = 50000
         for _ in range(n):
-            counts[loot.pick_box_size(rng)] += 1
+            counts[loot.pick_weighted(entries, rng)] += 1
         self.assertAlmostEqual(counts['small'] / n, 0.6, delta=0.02)
         self.assertAlmostEqual(counts['medium'] / n, 0.3, delta=0.02)
         self.assertAlmostEqual(counts['big'] / n, 0.1, delta=0.02)
+
+    def test_pick_weighted_ignores_zero_and_empty(self):
+        self.assertEqual(loot.pick_weighted([(1, 0), (2, 0)]), None)
+        self.assertEqual(loot.pick_weighted([]), None)
+        # A single positive-weight entry always wins.
+        self.assertEqual(loot.pick_weighted([(1, 0), (2, 5)]), 2)
 
     def test_draw_without_replacement(self):
         rng = random.Random(1)
@@ -35,6 +37,16 @@ class TestLoot(unittest.TestCase):
 
     def test_empty_pool(self):
         self.assertEqual(loot.draw_rewards([], 2, random.Random(1)), [])
+
+    def test_draw_weighted_skips_zero_weight(self):
+        rng = random.Random(3)
+        drawn = loot.draw_weighted([(1, 0), (2, 5)], 4, rng)
+        self.assertTrue(all(rid == 2 for rid in drawn))
+
+    def test_odds_sum_to_one(self):
+        probs = dict(loot.odds([(1, 1), (2, 1), (3, 2)]))
+        self.assertAlmostEqual(sum(probs.values()), 1.0)
+        self.assertAlmostEqual(probs[3], 0.5)
 
 
 if __name__ == '__main__':

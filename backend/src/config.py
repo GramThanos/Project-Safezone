@@ -63,7 +63,6 @@ class Config:
     INVITES_ENABLED = os.getenv('INVITES_ENABLED', 'true').lower() == 'true'
     PLAYER_INVITES_ENABLED = os.getenv('PLAYER_INVITES_ENABLED', 'false').lower() == 'true'
     PLAYER_INVITE_QUOTA = int(os.getenv('PLAYER_INVITE_QUOTA', '3'))
-    STREAK_BONUS_ENABLED = os.getenv('STREAK_BONUS_ENABLED', 'true').lower() == 'true'
     STREAK_THRESHOLD = int(os.getenv('STREAK_THRESHOLD', '5'))
     CAPTCHA_ENABLED = os.getenv('CAPTCHA_ENABLED', 'true').lower() == 'true'
     ALERTS_ENABLED = os.getenv('ALERTS_ENABLED', 'true').lower() == 'true'
@@ -72,6 +71,7 @@ class Config:
     BOX_EXPIRY_DAYS = int(os.getenv('BOX_EXPIRY_DAYS', '0'))
     INVENTORY_EXPIRY_DAYS = int(os.getenv('INVENTORY_EXPIRY_DAYS', '0'))
     AUDIT_RETENTION_DAYS = int(os.getenv('AUDIT_RETENTION_DAYS', '0'))
+    STAFF_ALERT_RETENTION_DAYS = int(os.getenv('STAFF_ALERT_RETENTION_DAYS', '30'))
 
     # --- Site content -------------------------------------------------------
     # What the public pages say. Same mechanism as the settings above: these are

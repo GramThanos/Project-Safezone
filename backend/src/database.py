@@ -57,12 +57,12 @@ class Database:
         loaded detached and expired, so the next attribute read raised
         `DetachedInstanceError`.
 
-        That is not a hypothetical. The cached readers - `utils/settings.py` and
-        `utils/box_types.py` - open a session of their own on a cache miss, and
-        are called from inside routes that hold one. The failure therefore
-        appeared only on the first request after a cache entry expired, which is
-        exactly the shape of a bug that "happens sometimes": admin box pools and
-        box odds returned a 500, and daily grants and box opens could half-write.
+        That is not a hypothetical. The cached reader `utils/settings.py` opens
+        a session of its own on a cache miss, and is called from inside routes
+        that hold one. The failure therefore appeared only on the first request
+        after a cache entry expired, which is exactly the shape of a bug that
+        "happens sometimes": settings-dependent routes returned a 500, and daily
+        grants and box opens could half-write.
 
         So only the outermost block owns the transaction. Inner blocks join it
         and leave commit and close to the caller that opened it.

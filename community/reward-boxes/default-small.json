@@ -1,0 +1,107 @@
+{
+  "name": "Default Small Box",
+  "description": "A small crate with items.",
+  "draws": 1,
+  "rewards": [
+    {
+      "kind": "item",
+      "name": "Canned Beans (Open)",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/BeansOpen.png",
+      "in_game_id": "Base.OpenBeans",
+      "description": "",
+      "count": 2,
+      "weight": 9
+    },
+    {
+      "kind": "item",
+      "name": "Canned Carrots (Open)",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/CannedCarrotsOpen.png",
+      "in_game_id": "Base.CannedCarrotsOpen",
+      "description": "",
+      "count": 2,
+      "weight": 7
+    },
+    {
+      "kind": "item",
+      "name": "Canned Corn (Open)",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/CannedCornOpen.png",
+      "in_game_id": "Base.CannedCornOpen",
+      "description": "",
+      "count": 2,
+      "weight": 9
+    },
+    {
+      "kind": "item",
+      "name": "Cigarette",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Cigarette.png",
+      "in_game_id": "Base.CigaretteSingle",
+      "description": "",
+      "count": 5,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Matchbox",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Matchbox.png",
+      "in_game_id": "Base.Matchbox",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Screwdriver",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Screwdriver_Blue.png",
+      "in_game_id": "Base.Screwdriver",
+      "description": "",
+      "count": 1,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Claw Hammer",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Hammer.png",
+      "in_game_id": "Base.Hammer",
+      "description": "",
+      "count": 1,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Nightstick",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/NightStick.png",
+      "in_game_id": "Base.Nightstick",
+      "description": "",
+      "count": 1,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Box of 9x19mm Rounds",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/HandgunAmmoBox.png",
+      "in_game_id": "Base.Bullets9mmBox",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Tactical Walkie Talkie",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/WalkieTalkiePolice.png",
+      "in_game_id": "Base.WalkieTalkie4",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Bandage (Sterilized)",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Bandage.png",
+      "in_game_id": "Base.AlcoholBandage",
+      "description": "",
+      "count": 6,
+      "weight": 20
+    }
+  ],
+  "schema": "safezone.box-config/v1"
+}

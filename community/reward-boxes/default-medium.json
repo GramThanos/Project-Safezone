@@ -1,0 +1,125 @@
+{
+  "name": "Default Medium Box",
+  "description": "A medium crate with items.",
+  "draws": 2,
+  "rewards": [
+    {
+      "kind": "item",
+      "name": "Magazine: How to Use Generators",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/MagazineElectronics02.png",
+      "in_game_id": "Base.ElectronicsMag4",
+      "description": "",
+      "count": 1,
+      "weight": 1
+    },
+    {
+      "kind": "item",
+      "name": "Magazine: Outfit Apocalypse",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Magazine_War2.png",
+      "in_game_id": "Base.ArmorMag1",
+      "description": "",
+      "count": 1,
+      "weight": 1
+    },
+    {
+      "kind": "item",
+      "name": "Magazine: The Farmers Guide",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Magazine_Farming9.png",
+      "in_game_id": "Base.FarmingMag4",
+      "description": "",
+      "count": 1,
+      "weight": 1
+    },
+    {
+      "kind": "item",
+      "name": "M9 Pistol",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/HandGun3.png",
+      "in_game_id": "Base.Pistol",
+      "description": "",
+      "count": 1,
+      "weight": 7
+    },
+    {
+      "kind": "item",
+      "name": "Box of 12g Rounds",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/ShotgunAmmoBox.png",
+      "in_game_id": "Base.ShotgunShellsBox",
+      "description": "",
+      "count": 1,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Fruit Salad",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/TZ_CraftSalat.png",
+      "in_game_id": "Base.FruitSalad",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Salad",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/TZ_CraftSalat.png",
+      "in_game_id": "Base.Salad",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Duct Tape",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/DuctTape.png",
+      "in_game_id": "Base.DuctTape",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Wood Glue",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Woodglue.png",
+      "in_game_id": "Base.Woodglue",
+      "description": "",
+      "count": 1,
+      "weight": 5
+    },
+    {
+      "kind": "item",
+      "name": "Duffel Bag",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/DuffelbagMilitary.png",
+      "in_game_id": "Base.Bag_Military",
+      "description": "",
+      "count": 1,
+      "weight": 10
+    },
+    {
+      "kind": "item",
+      "name": "Hatchet",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/AxeHand.png",
+      "in_game_id": "Base.HandAxe",
+      "description": "",
+      "count": 1,
+      "weight": 15
+    },
+    {
+      "kind": "item",
+      "name": "Crowbar",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Crowbar.png",
+      "in_game_id": "Base.Crowbar",
+      "description": "",
+      "count": 1,
+      "weight": 15
+    },
+    {
+      "kind": "item",
+      "name": "First Aid Kit",
+      "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/FirstAid.png",
+      "in_game_id": "Base.FirstAidKit",
+      "description": "",
+      "count": 1,
+      "weight": 20
+    }
+  ],
+  "schema": "safezone.box-config/v1"
+}

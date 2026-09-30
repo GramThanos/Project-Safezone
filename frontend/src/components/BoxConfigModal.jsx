@@ -1,7 +1,7 @@
-// Import a loot-box configuration into a box size's pool — from the community
-// list on GitHub, or from a local file exported earlier. Both sources produce
-// the same config shape; the backend validates and applies either identically,
-// creating any missing rewards and setting the pool's weights.
+// Import a loot-box configuration into a box's pool — from the community list on
+// GitHub, or from a local file exported earlier. Both sources produce the same
+// config shape; the backend validates and applies either identically, creating
+// any missing rewards and setting the pool's weights.
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -17,7 +17,22 @@ const describeReward = (r) => {
   return lines.length > 1 ? `${lines[0]} +${lines.length - 1} more` : lines[0];
 };
 
-function BoxConfigModal({ sizes, onImported, onClose }) {
+// Sentinel target: create a brand-new box for this config rather than importing
+// into an existing one. This is the default so an operator can bootstrap a box
+// straight from a config without creating it first.
+const NEW_BOX = '__new__';
+
+// A config carries the box's draw count alongside its pool, so a three-draw box
+// exported and re-imported is still a three-draw box. Older configs (and the
+// community ones written before the field existed) have none, so fall back to
+// one rather than guessing. Bounded to what the API accepts.
+const configDraws = (cfg) => {
+  const draws = parseInt(cfg?.draws, 10);
+  if (!Number.isInteger(draws) || draws < 0) return 1;
+  return Math.min(draws, 20);
+};
+
+function BoxConfigModal({ boxes, onCreateBox, onDiscardBox, onImported, onClose }) {
   const { token } = useAuth();
   const [tab, setTab] = useState('community');
 
@@ -26,7 +41,8 @@ function BoxConfigModal({ sizes, onImported, onClose }) {
   const [listStale, setListStale] = useState('');
 
   const [config, setConfig] = useState(null);   // the loaded config being previewed
-  const [targetSize, setTargetSize] = useState(sizes[0]?.size || '');
+  const [targetBox, setTargetBox] = useState(NEW_BOX);
+  const [newBoxName, setNewBoxName] = useState('');
   const [replace, setReplace] = useState(false);
 
   const [error, setError] = useState('');
@@ -58,9 +74,12 @@ function BoxConfigModal({ sizes, onImported, onClose }) {
     setListLoading(false);
   };
 
-  // A config is size-agnostic; the admin chooses which box it lands in.
+  // A config is size-agnostic; the admin chooses which box it lands in. Prefill
+  // the new-box name from the config so the common "create a box from this" path
+  // is one click.
   const adoptConfig = (cfg) => {
     setConfig(cfg);
+    setNewBoxName(cfg.name || '');
     setError('');
   };
 
@@ -97,16 +116,48 @@ function BoxConfigModal({ sizes, onImported, onClose }) {
   };
 
   const doImport = async () => {
-    if (!config || !targetSize) return;
+    if (!config || !targetBox) return;
     setBusy(true);
     setError('');
+    // Tracked so a failed pool import does not strand the box it just made.
+    let createdBox = null;
     try {
+      let boxId = targetBox;
+      let boxName;
+      if (targetBox === NEW_BOX) {
+        const name = newBoxName.trim();
+        if (!name) {
+          setError('Give the new box a name');
+          setBusy(false);
+          return;
+        }
+        createdBox = await onCreateBox({
+          name,
+          description: config.description || '',
+          draws: configDraws(config)
+        });
+        boxId = createdBox.id;
+        boxName = createdBox.name;
+      } else {
+        boxName = boxes.find((b) => String(b.id) === String(targetBox))?.name || 'box';
+      }
       const data = await api.admin.rewardBoxes.import(token, {
-        size: targetSize, config, replace
+        box_id: boxId, config, replace
       });
-      onImported(data.summary, targetSize);
+      onImported(data.summary, boxName);
     } catch (err) {
       console.error('Import box config error:', err);
+      // The two steps are one action to the operator, so a failure in the
+      // second undoes the first: otherwise a retry hits "a box with that name
+      // already exists" and an empty box is left behind either way. The box is
+      // seconds old and cannot have been granted, so this always succeeds.
+      if (createdBox && onDiscardBox) {
+        try {
+          await onDiscardBox(createdBox);
+        } catch (cleanupErr) {
+          console.error('Could not remove the half-created box:', cleanupErr);
+        }
+      }
       setError(err.message || 'Failed to import that config');
       setBusy(false);
     }
@@ -211,7 +262,7 @@ function BoxConfigModal({ sizes, onImported, onClose }) {
                     />
                     <div className="form-text">
                       Same format as the community configs — the kind you get from
-                      Export below.
+                      a box's Export.
                     </div>
                   </div>
                 )}
@@ -260,33 +311,57 @@ function BoxConfigModal({ sizes, onImported, onClose }) {
                     <label className="form-label text-body-secondary">Import into box</label>
                     <select
                       className="form-select"
-                      value={targetSize}
-                      onChange={(e) => setTargetSize(e.target.value)}
+                      value={targetBox}
+                      onChange={(e) => setTargetBox(e.target.value)}
                     >
-                      {sizes.map((s) => (
-                        <option key={s.size} value={s.size}>{s.label}</option>
-                      ))}
+                      <option value={NEW_BOX}>Create a new box…</option>
+                      {boxes.length > 0 && (
+                        <optgroup label="Existing boxes">
+                          {boxes.map((b) => (
+                            <option key={b.id} value={b.id}>{b.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                   </div>
-                  <div className="col-md-6">
-                    <div className="form-check">
+                  {targetBox === NEW_BOX ? (
+                    <div className="col-md-6">
+                      <label className="form-label text-body-secondary">New box name</label>
                       <input
-                        className="form-check-input"
-                        type="checkbox"
-                        id="box-import-replace"
-                        checked={replace}
-                        onChange={(e) => setReplace(e.target.checked)}
+                        className="form-control"
+                        value={newBoxName}
+                        onChange={(e) => setNewBoxName(e.target.value)}
+                        placeholder="e.g. Halloween Crate"
                       />
-                      <label className="form-check-label" htmlFor="box-import-replace">
-                        Replace the pool (remove rewards not in this config)
-                      </label>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="col-md-6">
+                      <div className="form-check">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="box-import-replace"
+                          checked={replace}
+                          onChange={(e) => setReplace(e.target.checked)}
+                        />
+                        <label className="form-check-label" htmlFor="box-import-replace">
+                          Replace the pool (remove rewards not in this config)
+                        </label>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="form-text mt-2">
+                  {targetBox === NEW_BOX
+                    ? `A new box is created with this config’s pool, drawing `
+                      + `${configDraws(config)} reward`
+                      + `${configDraws(config) === 1 ? '' : 's'} per open. `
+                    : ''}
                   Rewards missing from the catalog are created; existing ones
-                  (matched by name) are reused. Leaving Replace off merges: it
-                  adds and reweights without removing anything.
+                  (matched by name) are reused.
+                  {targetBox === NEW_BOX
+                    ? ''
+                    : ' Leaving Replace off merges: it adds and reweights without removing anything.'}
                 </div>
               </>
             )}
@@ -295,8 +370,14 @@ function BoxConfigModal({ sizes, onImported, onClose }) {
           <div className="modal-footer">
             <button className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
             {config && (
-              <button className="btn btn-danger" onClick={doImport} disabled={busy || !targetSize}>
-                {busy ? 'Importing…' : 'Import'}
+              <button
+                className="btn btn-danger"
+                onClick={doImport}
+                disabled={busy || !targetBox || (targetBox === NEW_BOX && !newBoxName.trim())}
+              >
+                {busy
+                  ? (targetBox === NEW_BOX ? 'Creating…' : 'Importing…')
+                  : (targetBox === NEW_BOX ? 'Create box' : 'Import')}
               </button>
             )}
           </div>

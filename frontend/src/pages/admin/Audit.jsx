@@ -1,11 +1,13 @@
 // Admin › Audit Log: recent administrative actions.
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
 
 function Audit() {
   const { token, isAdmin } = useAuth();
+  const { confirm } = useDialog();
   const [auditEntries, setAuditEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -41,7 +43,11 @@ function Audit() {
     const what = days
       ? `Delete audit entries older than ${days} day(s)?`
       : 'Delete the ENTIRE audit log? Every record of what staff have done goes.';
-    if (!window.confirm(`${what}\n\nThis cannot be undone.`)) return;
+    if (!(await confirm({
+      title: 'Clear audit log?',
+      message: `${what}\n\nThis cannot be undone.`,
+      confirmLabel: 'Delete'
+    }))) return;
 
     setError('');
     setNotice('');

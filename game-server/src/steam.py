@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import pwd
+import shutil
 import subprocess
 import vdf
 
@@ -53,6 +54,15 @@ def clean_console_output(text):
         cleaned.append(line)
 
     return '\n'.join(cleaned).strip()
+
+
+def _first_error_line(text):
+    """The first line that looks like an error, for a short failure message."""
+    for line in (text or '').splitlines():
+        stripped = line.strip()
+        if stripped and 'error' in stripped.lower():
+            return stripped[:200]
+    return None
 
 
 def check_steamcmd():
@@ -179,31 +189,130 @@ def app_update(appid, beta=None, install_dir="/opt/steam-apps/"):
         "+login", "anonymous",
     ] + update_params + ["+quit"]
 
-    '''
     try:
-        # Stream output to the worker log so install progress is visible.
-        subprocess.run(cmd, check=True)
-        return True, None
-    except subprocess.CalledProcessError as e:
-        return False, f"SteamCMD update failed for AppID {appid} (rc={e.returncode})"
-    except Exception as e:
-        return False, f"SteamCMD could not be executed: {e}"
-    '''
-    try:
-        # Capture output (combining stdout and stderr into a single string)
+        # Capture output (stdout and stderr combined into one string).
+        #
+        # Deliberately NOT check=True. SteamCMD routinely exits non-zero even
+        # after a successful update - it returns the status of its last internal
+        # step, and a self-update or a CDN retry leaves that non-zero - which is
+        # the same reason app_info() avoids check=True. Trusting the exit code
+        # here made a perfectly good update report as an error. Success is read
+        # instead from SteamCMD's own "Success! App '<id>' ..." line, with the
+        # exit code kept only as a fallback signal.
         result = subprocess.run(
-            cmd, 
-            check=True, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.STDOUT, 
-            text=True
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=3600,
         )
-        return True, None, clean_console_output(result.stdout)
-    except subprocess.CalledProcessError as e:
-        # e.output holds the captured string even if the command fails
-        return False, f"SteamCMD update failed for AppID {appid} (rc={e.returncode})", clean_console_output(e.output)
+    except subprocess.TimeoutExpired:
+        return False, "SteamCMD timed out updating the game files", ''
     except Exception as e:
         return False, f"SteamCMD could not be executed: {e}", ""
+
+    output = clean_console_output(result.stdout)
+    succeeded = re.search(rf"Success!\s+App\s+'?{re.escape(str(appid))}'?",
+                          result.stdout or '', re.IGNORECASE)
+    if succeeded or result.returncode == 0:
+        return True, None, output
+
+    reason = _first_error_line(output) or f"exit code {result.returncode}"
+    return False, f"SteamCMD update failed for AppID {appid}: {reason}", output
+
+
+def app_uninstall(install_dir="/opt/steam-apps/", keep_workshop=True):
+    """Delete the installed game files. Returns ``(ok, error, output)``.
+
+    Unlike :func:`app_update` this takes no appid. There is a single
+    ``force_install_dir`` holding one app, so the unit being removed is the
+    directory, not an app within it - and an appid parameter that the body
+    never reads is a trap, since it makes ``app_uninstall(path)`` silently
+    target the default install dir instead of ``path``.
+
+    The companion to :func:`app_update`: it removes what SteamCMD laid down in
+    ``install_dir`` - the game binaries at the root and the app manifest under
+    ``steamapps/`` - so a broken install can be cleared or a fresh one started.
+
+    What it deliberately does NOT touch:
+
+    * **Server configs and saved worlds** - those live under
+      ``ZOMBOID_DATA_DIR``, an entirely separate tree, and are never reached
+      here regardless of this argument.
+    * **Downloaded Workshop content** - it lives under
+      ``steamapps/workshop`` and is kept by default (``keep_workshop``). It is a
+      separately managed library, often tens of gigabytes, that survives a game
+      reinstall; wiping it as a side effect of removing the base game would be a
+      nasty surprise. Pass ``keep_workshop=False`` to remove it too.
+
+    SteamCMD has no clean "uninstall" verb for a force_install_dir layout, so the
+    files are removed directly. Every path is confirmed to resolve inside
+    ``install_dir`` before deletion, so a stray symlink cannot lead the delete
+    out of the tree.
+    """
+    install_dir = os.path.abspath(install_dir)
+    if not os.path.isdir(install_dir):
+        return False, 'Nothing is installed', ''
+
+    root = os.path.realpath(install_dir)
+    steamapps = os.path.join(root, 'steamapps')
+    workshop = os.path.realpath(os.path.join(steamapps, 'workshop'))
+
+    def _contained(path):
+        real = os.path.realpath(path)
+        return real == root or real.startswith(root + os.sep)
+
+    removed = []
+    errors = []
+
+    def _remove(path):
+        # Symlink defence: never delete anything that resolves outside the
+        # install dir, and never step on the Workshop tree when it is being kept.
+        if not _contained(path):
+            return
+        if keep_workshop:
+            real = os.path.realpath(path)
+            if real == workshop or workshop.startswith(real + os.sep):
+                return
+        rel = os.path.relpath(path, root)
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            removed.append(rel)
+        except OSError as e:
+            errors.append(f'{rel}: {e}')
+
+    # Game binaries and everything else at the install root. `steamapps` is
+    # handled separately below so the Workshop tree inside it can be spared.
+    for name in os.listdir(root):
+        if name == 'steamapps':
+            continue
+        _remove(os.path.join(root, name))
+
+    # Inside steamapps: drop the app manifest and Steam's own files, keeping the
+    # workshop tree when asked. Remove steamapps itself once it is empty so the
+    # install dir looks truly clean afterwards.
+    if os.path.isdir(steamapps):
+        for name in os.listdir(steamapps):
+            if keep_workshop and name == 'workshop':
+                continue
+            _remove(os.path.join(steamapps, name))
+        try:
+            if not os.listdir(steamapps):
+                os.rmdir(steamapps)
+        except OSError:
+            pass
+
+    if errors:
+        return (False, 'Some files could not be removed: ' + '; '.join(errors),
+                '\n'.join(removed))
+    if not removed:
+        return False, 'Nothing was installed to remove', ''
+    kept = ' (Workshop content kept)' if keep_workshop else ''
+    return True, None, f"Removed {len(removed)} item(s) from {root}{kept}"
+
 
 if __name__ == "__main__":
     # Example usage:

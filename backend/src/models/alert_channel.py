@@ -1,6 +1,6 @@
 """Where staff alerts go.
 
-One row is one destination - a Discord webhook, the staff inbox, an ops mailbox
+One row is one destination - a Discord webhook, the staff feed, an ops mailbox
 - with the list of events it wants to hear about. Three kinds in one table
 rather than three tables, because everything except the sending is identical:
 they all subscribe to the same catalog, filter by the same servers, and fail in

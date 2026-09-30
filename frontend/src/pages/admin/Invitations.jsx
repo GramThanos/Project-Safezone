@@ -5,6 +5,7 @@
 // rather than letting someone assume they can come back for it.
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
 
@@ -12,6 +13,7 @@ const BLANK = { max_uses: '1', expires_in_days: '', note: '' };
 
 function Invitations() {
   const { token } = useAuth();
+  const { confirm } = useDialog();
   const [invitations, setInvitations] = useState([]);
   const [form, setForm] = useState(BLANK);
   const [issued, setIssued] = useState(null);
@@ -56,7 +58,11 @@ function Invitations() {
   };
 
   const handleRevoke = async (id) => {
-    if (!window.confirm('Revoke this invitation? Any unused link stops working.')) return;
+    if (!(await confirm({
+      title: 'Revoke invitation?',
+      message: 'Any unused link stops working.',
+      confirmLabel: 'Revoke'
+    }))) return;
     setError('');
     try {
       await api.invitations.revoke(token, id);

@@ -4,15 +4,18 @@
 // PlayerContext, so a player who never opens this page still gets their crate.
 // This page opens crates and sends what comes out.
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { usePlayer } from '../context/PlayerContext';
 import { useToast } from '../context/ToastContext';
 import api from '../services/api';
 import CrateReveal from '../components/CrateReveal';
+import SendRewardModal from '../components/SendRewardModal';
+import ConfirmDialog from '../components/ConfirmDialog';
 import usePageTitle from '../hooks/usePageTitle';
 
-const SIZE_BADGE = { small: 'secondary', medium: 'info', big: 'warning', bonus: 'warning' };
+// Crates are badged by where they came from, not by a fixed size.
+const SOURCE_BADGE = { daily: 'secondary', custom: 'info', bonus: 'warning' };
+const SOURCE_LABEL = { bonus: 'weekly bonus', custom: 'event' };
 
 // Player-facing words for the internal statuses. "held" and "sending" are how
 // the database thinks; they are not how anyone waiting for an axe thinks.
@@ -27,7 +30,6 @@ const STATUS = {
 // While anything is in flight, keep looking — delivery is a background job and
 // the player should not have to reload to learn it landed.
 const DELIVERY_POLL_MS = 4000;
-const LAST_TARGET_KEY = 'safezone.lastSendTarget';
 
 // A deadline is only useful if it reads like one.
 const expiresIn = (iso) => {
@@ -43,12 +45,11 @@ function Rewards() {
   usePageTitle('Rewards');
   const { token } = useAuth();
   const { push } = useToast();
-  const {
-    boxes, streak, onlineCharacters, characters, refresh, refreshCounts
-  } = usePlayer();
+  const { boxes, streak, refresh, refreshCounts } = usePlayer();
 
   const [inventory, setInventory] = useState([]);
-  const [target, setTarget] = useState(() => localStorage.getItem(LAST_TARGET_KEY) || '');
+  const [sending, setSending] = useState(null);       // the group whose send modal is open
+  const [discarding, setDiscarding] = useState(null); // the group awaiting a discard confirm
   const [reveal, setReveal] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -105,7 +106,11 @@ function Rewards() {
     setBusy(box.id);
     try {
       const data = await api.boxes.open(token, box.id);
-      setReveal({ items: data.items || [], size: box.size });
+      setReveal({
+        items: data.items || [],
+        boxId: box.box_id,
+        boxName: box.label || box.box_name
+      });
       await Promise.all([loadInventory(), refresh()]);
     } catch (err) {
       console.error('Open crate error:', err);
@@ -118,60 +123,92 @@ function Rewards() {
     await api.inventory.send(token, itemId, parseInt(characterId, 10));
   };
 
-  const handleSend = async (item) => {
-    if (!target) {
-      setError('Pick which character should receive it');
-      return;
+  // Stack identical rewards. Two items are "the same" when they are the same
+  // reward in the same state — a pile of three held axes reads as one box ×3,
+  // not three near-duplicate rows. Status is part of the key so a delivered
+  // axe never merges with one still waiting to send.
+  const inventoryGroups = React.useMemo(() => {
+    const map = new Map();
+    for (const item of inventory) {
+      const key = `${item.reward_id}|${item.status}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          key, status: item.status, reward: item.reward,
+          reward_id: item.reward_id, items: [], quantity: 0, soonest: null
+        });
+      }
+      const group = map.get(key);
+      group.items.push(item);
+      // What the player actually receives, which is not the number of rows: a
+      // single holding can deliver five of an item, because the quantity lives
+      // on the box's loot pool entry and was captured here when the box was
+      // opened. Counting rows showed five bandages as "×1".
+      group.quantity += item.count || 1;
+      // Surface the nearest deadline so a stack warns as early as its most
+      // urgent member would have.
+      if (item.expires_at && item.status === 'held'
+        && (!group.soonest || new Date(item.expires_at) < new Date(group.soonest))) {
+        group.soonest = item.expires_at;
+      }
     }
-    setError('');
-    setBusy(item.id);
-    try {
-      await sendOne(item.id, target);
-      localStorage.setItem(LAST_TARGET_KEY, target);
-      push(`Sending ${item.reward?.name || 'your reward'}…`);
-      loadInventory();
-    } catch (err) {
-      console.error('Send item error:', err);
-      setError(err.message || 'Could not send that');
-    }
-    setBusy(null);
-  };
+    return Array.from(map.values());
+  }, [inventory]);
 
-  const sendable = inventory.filter((i) => i.status === 'held' || i.status === 'failed');
-
-  const handleSendAll = async () => {
-    if (!target) {
-      setError('Pick which character should receive them');
-      return;
-    }
+  // Sending a stack sends every item in it; the box collapses as they leave
+  // 'held' and reappear under 'sending'. Partial success keeps the rest here.
+  const handleSendGroup = async (group, target) => {
     setError('');
-    setBusy('all');
+    setBusy(group.key);
+    // Counted in units delivered, not holdings sent: one holding can carry
+    // several of an item, and "Sending 2 × Bandage" for six bandages is wrong.
     let sent = 0;
-    for (const item of sendable) {
+    let quantity = 0;
+    let lastError = null;
+    for (const item of group.items) {
       try {
         await sendOne(item.id, target);
         sent += 1;
+        quantity += item.count || 1;
       } catch (err) {
         console.error('Send item error:', err);
+        lastError = err;
       }
     }
-    localStorage.setItem(LAST_TARGET_KEY, target);
-    push(sent === sendable.length
-      ? `Sending ${sent} reward${sent === 1 ? '' : 's'}…`
-      : `Sent ${sent} of ${sendable.length}. The rest are still here.`,
-    { kind: sent === sendable.length ? 'info' : 'error' });
+    const name = group.reward?.name || 'your reward';
+    const total = group.items.length;
+    push(sent === total
+      ? (quantity === 1 ? `Sending ${name}…` : `Sending ${quantity} × ${name}…`)
+      : sent === 0
+        ? (lastError?.message || `Could not send ${name}.`)
+        : `Sent ${sent} of ${total} ${name}. The rest are still here.`,
+    { kind: sent === total ? 'info' : 'error' });
     setBusy(null);
+    setSending(null);
     loadInventory();
     refreshCounts();
   };
 
-  // The target must still be online; a remembered choice can go stale.
-  const targetValid = onlineCharacters.some((c) => String(c.id) === String(target));
-  useEffect(() => {
-    if (!targetValid && onlineCharacters.length === 1) {
-      setTarget(String(onlineCharacters[0].id));
+  // Unsent rewards are thrown away (after a confirm); used and expired ones
+  // are just cleared off the page. Both are the same call.
+  const removeGroup = async (group) => {
+    setError('');
+    setBusy(`x:${group.key}`);
+    try {
+      await api.inventory.remove(token, group.items.map((i) => i.id));
+      const gone = new Set(group.items.map((i) => i.id));
+      setInventory((current) => current.filter((i) => !gone.has(i.id)));
+    } catch (err) {
+      console.error('Remove inventory error:', err);
+      push(err.message || 'Could not remove that reward.', { kind: 'error' });
     }
-  }, [targetValid, onlineCharacters]);
+    setBusy(null);
+    setDiscarding(null);
+  };
+
+  const onRemove = (group) => {
+    if (group.status === 'held' || group.status === 'failed') setDiscarding(group);
+    else removeGroup(group);
+  };
 
   return (
     <section className="py-5" style={{ minHeight: '50vh' }}>
@@ -238,9 +275,13 @@ function Rewards() {
                     <div className="card-body">
                       <i className="fas fa-box-open fa-2x mb-2"></i>
                       <div className="mb-2">
-                        <span className={`badge text-bg-${SIZE_BADGE[box.size] || 'secondary'}`}>{box.size}</span>
-                        {box.source === 'bonus' && (
-                          <span className="badge text-bg-warning ms-1">weekly bonus</span>
+                        <span className={`badge text-bg-${SOURCE_BADGE[box.source] || 'secondary'}`}>
+                          {box.label || box.box_name || 'Crate'}
+                        </span>
+                        {SOURCE_LABEL[box.source] && (
+                          <span className="badge text-bg-light text-dark ms-1">
+                            {SOURCE_LABEL[box.source]}
+                          </span>
                         )}
                       </div>
                       {deadline && (
@@ -263,61 +304,7 @@ function Rewards() {
           </div>
         )}
 
-        {/* Where things go */}
-        <div className="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
-          <h5 className="font-display mb-0">My Inventory</h5>
-          {sendable.length > 0 && (
-            <div className="d-flex flex-wrap align-items-center gap-2">
-              <label className="text-body-secondary small mb-0" htmlFor="send-target">
-                Send to
-              </label>
-              <select
-                id="send-target"
-                className="form-select form-select-sm"
-                style={{ width: 'auto' }}
-                value={targetValid ? target : ''}
-                onChange={(e) => setTarget(e.target.value)}
-                disabled={onlineCharacters.length === 0}
-              >
-                <option value="">
-                  {onlineCharacters.length === 0 ? 'Nobody online' : 'Pick a character…'}
-                </option>
-                {onlineCharacters.map((c) => (
-                  <option key={c.id} value={c.id}>{c.in_game_username}</option>
-                ))}
-              </select>
-              {sendable.length > 1 && (
-                <button
-                  className="btn btn-sm btn-outline-light"
-                  onClick={handleSendAll}
-                  disabled={!targetValid || busy === 'all'}
-                >
-                  {busy === 'all' ? 'Sending…' : `Send all ${sendable.length}`}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* The dead end this used to be: a disabled control and no way to learn why */}
-        {sendable.length > 0 && onlineCharacters.length === 0 && (
-          <div className="alert alert-warning">
-            {characters.length === 0 ? (
-              <>
-                <strong>You have no linked character yet.</strong> Rewards are
-                handed to a character in game, so link one first —{' '}
-                <Link to="/characters">claim a character</Link> while you are
-                online on the server.
-              </>
-            ) : (
-              <>
-                <strong>None of your characters is online.</strong> Rewards are
-                handed over in game, so log into the server as one of them and
-                the send button here will wake up. This page keeps checking.
-              </>
-            )}
-          </div>
-        )}
+        <h5 className="font-display mb-3">My Inventory</h5>
 
         {loading ? (
           <div className="d-flex flex-column gap-2" aria-hidden="true">
@@ -335,44 +322,71 @@ function Rewards() {
             )}
           </div>
         ) : (
-          <div className="d-flex flex-column gap-2">
-            {inventory.map((item) => {
-              const status = STATUS[item.status] || { label: item.status, badge: 'secondary' };
-              const deadline = item.expires_at && item.status === 'held'
-                ? expiresIn(item.expires_at)
-                : null;
-              const canSend = item.status === 'held' || item.status === 'failed';
+          <div className="row g-3">
+            {inventoryGroups.map((group) => {
+              const status = STATUS[group.status] || { label: group.status, badge: 'secondary' };
+              const deadline = group.soonest ? expiresIn(group.soonest) : null;
+              const canSend = group.status === 'held' || group.status === 'failed';
+              // `holdings` is how many separate sends this button makes;
+              // `quantity` is how many of the item arrive in game. They differ
+              // whenever a box drops an item in multiples.
+              const holdings = group.items.length;
+              const name = group.reward?.name || `Reward #${group.reward_id}`;
+              const isUsable = group.reward?.kind === 'usable';
+              // A usable runs once per holding, so its quantity is its holdings.
+              const quantity = isUsable ? holdings : group.quantity;
               return (
-                <div key={item.id} className="card">
-                  <div className="card-body d-flex flex-wrap align-items-center gap-3 py-2">
-                    {item.reward?.icon && (
-                      <img
-                        src={item.reward.icon}
-                        alt=""
-                        style={{ width: 32, height: 32, objectFit: 'contain' }}
-                      />
+                <div key={group.key} className="col-6 col-md-3">
+                  <div className="card text-center h-100 position-relative">
+                    {/* In flight has a task on the manager; it cannot be taken back. */}
+                    {group.status !== 'sending' && (
+                      <button
+                        type="button"
+                        className="btn-close position-absolute top-0 end-0 m-2"
+                        style={{ fontSize: '.65rem' }}
+                        aria-label={canSend ? `Discard ${name}` : `Clear ${name}`}
+                        title={canSend ? 'Discard' : 'Clear'}
+                        onClick={() => onRemove(group)}
+                        disabled={busy === `x:${group.key}`}
+                      ></button>
                     )}
-                    <div className="flex-grow-1" style={{ minWidth: '10rem' }}>
-                      <div>{item.reward?.name || `Reward #${item.reward_id}`}</div>
+                    <div className="card-body d-flex flex-column align-items-center">
+                      {group.reward?.icon ? (
+                        <img
+                          src={group.reward.icon}
+                          alt=""
+                          style={{ width: 48, height: 48, objectFit: 'contain' }}
+                          className="mb-2"
+                        />
+                      ) : (
+                        <i className="fas fa-gift fa-2x mb-2"></i>
+                      )}
+                      <div className="fw-semibold mb-1">
+                        {name}
+                        {quantity > 1 && (
+                          <span className="badge text-bg-light text-dark ms-1">×{quantity}</span>
+                        )}
+                      </div>
+                      <span className={`badge text-bg-${status.badge} mb-2`}>{status.label}</span>
                       {deadline && (
-                        <div className={`small ${deadline.urgent ? 'text-danger' : 'text-body-secondary'}`}>
+                        <div className={`small mb-2 ${deadline.urgent ? 'text-danger' : 'text-body-secondary'}`}>
                           {deadline.text}
                         </div>
                       )}
+                      {canSend && (
+                        <button
+                          className="btn btn-sm btn-danger w-100 mt-auto"
+                          onClick={() => setSending(group)}
+                          disabled={busy === group.key}
+                        >
+                          {busy === group.key
+                            ? 'Sending…'
+                            : isUsable
+                              ? (holdings > 1 ? `Activate all ${holdings}` : 'Activate')
+                              : (holdings > 1 ? 'Send all' : 'Send')}
+                        </button>
+                      )}
                     </div>
-                    <span className={`badge text-bg-${status.badge}`}>{status.label}</span>
-                    {canSend && (
-                      <button
-                        className="btn btn-sm btn-danger"
-                        onClick={() => handleSend(item)}
-                        disabled={!targetValid || busy === item.id}
-                        title={targetValid ? undefined : 'Pick an online character first'}
-                      >
-                        {busy === item.id
-                          ? 'Sending…'
-                          : item.reward?.kind === 'usable' ? 'Activate' : 'Send'}
-                      </button>
-                    )}
                   </div>
                 </div>
               );
@@ -384,9 +398,35 @@ function Rewards() {
       {reveal && (
         <CrateReveal
           items={reveal.items}
-          size={reveal.size}
+          boxId={reveal.boxId}
+          boxName={reveal.boxName}
           onClose={() => setReveal(null)}
         />
+      )}
+
+      {sending && (
+        <SendRewardModal
+          title={`${sending.reward?.kind === 'usable' ? 'Activate' : 'Send'} ${sending.reward?.name || 'reward'}`}
+          actionLabel={sending.reward?.kind === 'usable' ? 'Activate' : 'Send'}
+          busy={busy === sending.key}
+          onSend={(target) => handleSendGroup(sending, target)}
+          onCancel={() => setSending(null)}
+        />
+      )}
+
+      {discarding && (
+        <ConfirmDialog
+          title="Discard reward?"
+          confirmLabel="Discard"
+          busy={busy === `x:${discarding.key}`}
+          onConfirm={() => removeGroup(discarding)}
+          onCancel={() => setDiscarding(null)}
+        >
+          {discarding.items.length > 1
+            ? `All ${discarding.items.length} × ${discarding.reward?.name || 'this reward'} will be thrown away.`
+            : `${discarding.reward?.name || 'This reward'} will be thrown away.`}
+          {' '}It has not been sent yet, and this cannot be undone.
+        </ConfirmDialog>
       )}
     </section>
   );

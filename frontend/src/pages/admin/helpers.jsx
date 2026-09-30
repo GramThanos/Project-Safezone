@@ -36,6 +36,21 @@ export const getStatusBadge = (status) => {
   return statusMap[status?.toLowerCase()] || 'secondary';
 };
 
+// A reward's icon at a given size, or the gift glyph the player's page falls
+// back to when it has none.
+export function RewardIcon({ reward, size = 24 }) {
+  if (reward?.icon) {
+    return (
+      <img
+        src={reward.icon}
+        alt=""
+        style={{ width: size, height: size, objectFit: 'contain' }}
+      />
+    );
+  }
+  return <i className="fas fa-gift text-body-secondary" style={{ fontSize: size * 0.75 }}></i>;
+}
+
 // A centered Bootstrap spinner used while a page loads its data.
 export function Spinner() {
   return (

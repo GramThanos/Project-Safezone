@@ -2,10 +2,22 @@
   "schema": "safezone.box-list/v1",
   "boxes": [
     {
-      "id": "starter-kit",
-      "name": "Starter Kit",
-      "description": "Basic survival gear to get a new player through their first days.",
-      "rewards": 4
+      "id": "default-small.json",
+      "name": "Default Small Box",
+      "description": "A small crate with items.",
+      "rewards": 11
+    },
+    {
+      "id": "default-medium.json",
+      "name": "Default Medium Box",
+      "description": "A medium crate with items.",
+      "rewards": 13
+    },
+    {
+      "id": "default-big.json",
+      "name": "Default Big Box",
+      "description": "A big crate with items.",
+      "rewards": 8
     }
   ]
 }

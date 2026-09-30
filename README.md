@@ -35,7 +35,7 @@ It suits a range of setups. A small team running a private server for friends ca
 ## Features
 
 ### Accounts and characters
-- JWT sign in and sign up, with per-endpoint rate limiting
+- JWT sign in and sign up
 - Four roles: `banned` < `player` < `moderator` < `admin`, re-read from the database on every request so a ban or demotion takes effect immediately
 - **Controllable registration**: open, closed, behind a shared password, or by invitation — independent switches, all editable in the panel without a redeploy
 - **Invitation links**, single-use and/or time-limited. Players can issue them too, within a quota, if you allow it
@@ -78,7 +78,7 @@ It suits a range of setups. A small team running a private server for friends ca
 - Grouped routes under `/admin`: servers, installations, tasks, users, character links, invitations, rewards, boxes, give, reports, jobs, alerts, branding, legal pages, audit and settings
 - **Runtime settings**: registration posture, invite policy, loot expiry and retention are editable in the panel and take effect immediately, no restart
 - **Scheduled jobs**: the streak bonus, retention sweeps and recurring server maintenance, each switchable with its last result on show
-- **Alerts**: one list of events, and as many destinations as you like. A destination is a Discord webhook, the staff inbox, or an ops mailbox, and each one ticks what it wants to hear — players joining and leaving, servers starting or giving up, character links, signups, bans, reports, deliveries and operational alerts. Server-scoped events can be filtered to particular servers, so a per-server channel stays about that server. Busy events are labelled as such before you put them in a mailbox. A test button sends a sample and tells you what came back, a webhook URL is stored like a password and never shown again, and a destination that is gone for good is switched off rather than retried forever. The text of a report reaches the staff inbox and ops mail, never Discord
+- **Alerts**: one list of events, and as many destinations as you like. A destination is a Discord webhook, the **staff feed** in the panel, or an ops mailbox, and each one ticks what it wants to hear — players joining and leaving, servers starting or giving up, character links, signups, bans, reports, deliveries and operational alerts. Server-scoped events can be filtered to particular servers, so a per-server channel stays about that server. Busy events are labelled as such before you put them in a mailbox. A test button sends a sample and tells you what came back, a webhook URL is stored like a password and never shown again, and a destination that is gone for good is switched off rather than retried forever. The text of a report reaches the staff feed and ops mail, never Discord
 - Role-gated — moderators get servers, tasks, character links, and can switch *downloaded* mods on and off per server; admins additionally get user roles, server CRUD, the reward catalog, and everything that installs or deletes files
 - **Audit log** of every sensitive action: role changes, server lifecycle and console commands, claim decisions, reward and loot-pool edits, and deliveries
 
@@ -213,9 +213,6 @@ Keys marked ° are **seed values only** — an admin can change them live under 
 | `ALLOWED_ORIGINS` | localhost origins | CORS allow-list — set to your real origin |
 | `HTTPS_ENABLED` | `false` | Sends strict-transport headers; set true behind a TLS proxy |
 | `FLASK_DEBUG` | `false` | Never enable on a reachable host |
-| `RATELIMIT_DEFAULT` ° | `300 per minute;20000 per day` | Global per-IP. The interface polls live status, so keep it generous. Validated before it is stored, since a limit the limiter cannot parse would break every request |
-| `RATELIMIT_SIGNIN` ° / `RATELIMIT_SIGNUP` ° / `RATELIMIT_SIGNUP_CAPTCHA` ° | `5 per minute` / `3 per hour` / `30 per hour` | Per-endpoint. Sign-in is the brute-force gate |
-| `RATELIMIT_PASSWORD` ° / `RATELIMIT_PASSWORD_RESET` ° / `RATELIMIT_REPORT` ° | `5 per hour` / `5 per hour` / `10 per hour` | Password changes, reset requests, and reports — the last reaches a human |
 | `REACT_APP_API_URL` | — | Build-time only. Left unset, the frontend talks same-origin through Nginx, which is what you want |
 
 ### Game server
@@ -248,7 +245,7 @@ Keys marked ° are **seed values only** — an admin can change them live under 
 
 ### Alert delivery
 
-The channels themselves — which Discord webhooks or mailboxes exist, and what each hears — live in the database and are edited under **Admin → Alerts**. These are the knobs for the relay that carries them, all read by the **game-server** container.
+The channels themselves — which Discord webhooks or mailboxes exist, and what each hears — live in the database and are edited under **Admin → Alerts**. What actually fired is a separate screen, **Admin → Staff Feed**: every alert that reached staff, newest first, readable by moderators as well as admins. It is deliberately apart from the configuration, because "nothing arrived in Discord" and "nothing happened" are different problems and the Alerts screen cannot tell them apart. These are the knobs for the relay that carries them, all read by the **game-server** container.
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -271,7 +268,7 @@ The channels themselves — which Discord webhooks or mailboxes exist, and what 
 
 | Variable | Default | Notes |
 |---|---|---|
-| `STREAK_BONUS_ENABLED` ° / `STREAK_THRESHOLD` ° | `true` / `5` | Bonus box for collecting at least this many of the week's seven daily boxes |
+| `STREAK_THRESHOLD` ° | `5` | Daily boxes needed in a week to earn the weekly bonus. Switch the bonus itself on or off from the weekly bonus event on the admin Events screen |
 | `BOX_EXPIRY_DAYS` ° / `INVENTORY_EXPIRY_DAYS` ° | `0` / `0` | Expiry for unopened boxes and unsent rewards. `0` means never — expiry is opt-in |
 | `DORMANT_LINK_DAYS` ° | `0` | Warn a player when a character link has not been seen for this long. Never unlinks on its own |
 
@@ -290,6 +287,7 @@ The channels themselves — which Discord webhooks or mailboxes exist, and what 
 | `LOG_FORMAT` / `LOG_LEVEL` | `text` / `INFO` | Use `json` when something is collecting logs |
 | `ALERTS_ENABLED` ° / `ALERT_COOLDOWN_MINUTES` ° | `true` / `60` | Staff alerts for downed servers and failing deliveries |
 | `AUDIT_RETENTION_DAYS` ° | `0` | Prune audit entries older than this. `0` keeps them forever |
+| `STAFF_ALERT_RETENTION_DAYS` ° | `30` | Prune staff feed entries older than this. `0` keeps them forever — but this is a feed rather than a record, and it fills fastest from the busiest events |
 | `SCHEDULER_TICK_SECONDS` | `30` | How often the scheduler looks for due work |
 
 ## Roles

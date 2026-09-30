@@ -42,24 +42,35 @@ def job(kind, default_interval, description):
 @job('weekly_streak_bonus', 3600,
      'Grant a bonus loot box to accounts that collected enough daily boxes last week')
 def weekly_streak_bonus(session, params=None):
-    """Pay the 5-of-7 streak bonus for the week that has just ended.
+    """Pay the streak bonus for the week that has just ended.
 
     Runs hourly and does nothing most of the time: the work is keyed to a
     completed week, and the uniqueness constraint on
-    (user_id, grant_date, source) makes a repeat run a no-op rather than a
-    double payout.
+    (user_id, event_id, period_key) makes a repeat run a no-op rather than a
+    double payout. The box granted is a weighted pick from the weekly-bonus
+    event's line-up.
     """
-    if not settings.get('streak_bonus_enabled'):
-        return 'skipped: streak bonus is switched off'
+    from src.models.event import Event
+    from src.utils import events, loot
+
+    event = events.system_event(session, Event.TYPE_WEEKLY_BONUS)
+    if not event or not event.enabled:
+        return 'skipped: the weekly bonus event is switched off'
 
     threshold = settings.get('streak_threshold') or 5
-    size = (params or {}).get('size', 'bonus')
+
+    # The bonus event's box line-up, read once; each eligible account gets its
+    # own weighted pick from it.
+    entries = events.event_box_entries(session, event.id)
+    if not entries:
+        return 'skipped: the weekly bonus event has no box that can drop'
 
     # "Last week" in the primary server's timezone, so the boundary matches the
     # one players already experience for the daily reset.
     today = daily.today()
     week_end = today - timedelta(days=today.isoweekday())      # the most recent Sunday
     week_start = week_end - timedelta(days=6)                  # its Monday
+    period_key = week_end.isoformat()
 
     # Accounts with enough distinct daily grants inside that window.
     rows = (session.query(UserBox.user_id,
@@ -74,15 +85,18 @@ def weekly_streak_bonus(session, params=None):
     granted = 0
     for user_id, days in rows:
         already = (session.query(UserBox)
-                   .filter_by(user_id=user_id, grant_date=week_end,
-                              source=UserBox.SOURCE_BONUS)
+                   .filter_by(user_id=user_id, event_id=event.id, period_key=period_key)
                    .first())
         if already:
             continue
 
-        session.add(UserBox(user_id=user_id, size=size, grant_date=week_end,
-                            source=UserBox.SOURCE_BONUS,
-                            expires_at=expiry.box_deadline()))
+        box_id = loot.pick_weighted(entries)
+        if box_id is None:
+            continue
+
+        session.add(UserBox(user_id=user_id, box_id=box_id, event_id=event.id,
+                            source=UserBox.SOURCE_BONUS, period_key=period_key,
+                            grant_date=week_end, expires_at=expiry.box_deadline()))
         notify.send(session, user_id, Notification.KIND_LOOT,
                     'You earned a weekly bonus box',
                     body=f'You collected {days} of 7 daily boxes last week. '
@@ -250,7 +264,7 @@ def flag_dormant_links(session, params=None):
 def check_alerts(session, params=None):
     """Look at what the system already knows and say something when it is bad.
 
-    Detection only. Where an alert goes - the staff inbox, a Discord channel, an
+    Detection only. Where an alert goes - the staff feed, a Discord channel, an
     ops mailbox - is configured per channel in Admin > Alerts; this job decides
     *whether there is anything to say*, and the cooldown makes that decision
     once for every channel rather than per destination, so two channels never
@@ -272,7 +286,7 @@ def check_alerts(session, params=None):
             # Emitted knowing a Discord channel almost certainly will not hear
             # it: Discord is reached *through* the game-server, so the container
             # that cannot be reached is the one that would carry the news. The
-            # staff inbox and ops mail are unaffected, and it still succeeds for
+            # staff feed and ops mail are unaffected, and it still succeeds for
             # Discord in the case that matters - the manager process wedged
             # while the container itself still answers.
             alerting.emit('alert.raised', 'The game-server manager is unreachable',
@@ -349,6 +363,29 @@ def prune_auth_tokens(session, params=None):
                .filter((AuthToken.expires_at < cutoff) | (AuthToken.used_at < cutoff))
                .delete(synchronize_session=False))
     return f'removed {removed} spent token(s)'
+
+
+@job('prune_staff_alerts', 86400, 'Delete staff feed entries older than the retention window')
+def prune_staff_alerts(session, params=None):
+    """Keep the staff feed to its retention window.
+
+    Unlike the audit log, this one has a non-zero default. The feed is
+    operational - what fired, and is anything flowing - not a record of who did
+    what, so a month-old "player joined" has no value to anybody and the feed
+    fills fastest from exactly those high-volume events. Set the window to 0 to
+    keep everything anyway.
+    """
+    from src.models.staff_alert import StaffAlert
+
+    days = settings.get('staff_alert_retention_days') or 0
+    if days <= 0:
+        return 'skipped: staff feed entries are kept indefinitely'
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    removed = (session.query(StaffAlert)
+               .filter(StaffAlert.created_at < cutoff)
+               .delete(synchronize_session=False))
+    return f'removed {removed} staff feed entr{"y" if removed == 1 else "ies"} older than {days} days'
 
 
 @job('server_maintenance', 86400, 'Queue a maintenance task on a game server')

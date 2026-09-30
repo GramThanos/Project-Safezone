@@ -1,70 +1,31 @@
-"""Pure loot logic: which box you get, and what comes out of it.
+"""Pure loot logic: which box an event grants, and what comes out of it.
 
-Deliberately free of database access. The box configuration is *passed in* rather
-than read here, so this module stays testable without a stack and the same
-functions serve both the built-in defaults and an operator's tuned values.
-
-`src/utils/box_types.py` is what reads the configured types; these defaults are
-the seed for that table and the fallback if it cannot be read.
+Deliberately free of database access. The box/event configuration is *passed in*
+rather than read here, so this module stays testable without a stack.
 """
 import random
 
-# size -> {draws: rewards given on open, weight: daily-grant probability}
-#
-# `bonus` carries weight 0 and is deliberately absent from the daily roll: it is
-# only granted by the weekly streak job. It still needs a loot pool of its own,
-# which is why it is a size rather than a special case.
-DEFAULT_TYPES = {
-    'small': {'draws': 1, 'weight': 0.6, 'label': 'Small'},
-    'medium': {'draws': 2, 'weight': 0.3, 'label': 'Medium'},
-    'big': {'draws': 3, 'weight': 0.1, 'label': 'Big'},
-    'bonus': {'draws': 4, 'weight': 0.0, 'label': 'Weekly bonus'},
-}
 
-# Kept for callers that only need the set of known sizes.
-BOX_SIZES = DEFAULT_TYPES
+def pick_weighted(entries, rng=random):
+    """Pick one id from ``[(id, weight)]`` by weight. Returns ``None`` if empty.
 
-# The daily roll considers these, in this order.
-SIZE_ORDER = ['small', 'medium', 'big']
+    Weight is relative, not a percentage. Entries at or below zero weight are
+    ignored - that is how a box stays attached to an event without being rolled.
+    Used to choose which box an event grants.
+    """
+    pool = [(cid, float(weight or 0)) for cid, weight in entries]
+    pool = [(cid, weight) for cid, weight in pool if weight > 0]
+    if not pool:
+        return None
 
-
-def _resolve(types):
-    return types if types else DEFAULT_TYPES
-
-
-def daily_candidates(types=None):
-    """Sizes eligible for the daily roll: known, active, and with weight above zero."""
-    types = _resolve(types)
-    return [size for size in types
-            if types[size].get('weight', 0) > 0 and types[size].get('active', True)]
-
-
-def pick_box_size(rng=random, types=None):
-    """Pick a size by weight. Falls back to the smallest candidate."""
-    types = _resolve(types)
-    # Preserve the documented order where it applies, then append anything new
-    # an operator has added, so tuning stays predictable.
-    candidates = [s for s in SIZE_ORDER if s in daily_candidates(types)]
-    candidates += [s for s in daily_candidates(types) if s not in candidates]
-    if not candidates:
-        return SIZE_ORDER[0]
-
-    total = sum(types[s]['weight'] for s in candidates)
-    if total <= 0:
-        return candidates[0]
-
+    total = sum(weight for _, weight in pool)
     r = rng.random() * total
     cumulative = 0.0
-    for size in candidates:
-        cumulative += types[size]['weight']
+    for cid, weight in pool:
+        cumulative += weight
         if r < cumulative:
-            return size
-    return candidates[-1]
-
-
-def draw_count(size, types=None):
-    """How many rewards a box of this size yields when opened."""
-    return _resolve(types).get(size, {}).get('draws', 0)
+            return cid
+    return pool[-1][0]
 
 
 def draw_rewards(pool_ids, n, rng=random):

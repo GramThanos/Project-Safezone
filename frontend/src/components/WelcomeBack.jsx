@@ -1,6 +1,6 @@
 // What happened since last login
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { usePlayer } from '../context/PlayerContext';
 
@@ -9,6 +9,7 @@ const SEEN_KEY = 'safezone.welcome.seen';
 function WelcomeBack() {
 	const { user } = useAuth();
 	const { boxes, unread, streak, loading } = usePlayer();
+	const { pathname } = useLocation();
 	const [dismissed, setDismissed] = useState(false);
 
 	useEffect(() => {
@@ -28,6 +29,8 @@ function WelcomeBack() {
 	};
 
 	if (!user || dismissed || loading) return null;
+	// Staff at work in the admin panel are not there to collect crates.
+	if (pathname === '/admin' || pathname.startsWith('/admin/')) return null;
 
 	const crates = boxes.length;
 	const streakLive = streak?.enabled && !streak?.earned && streak?.remaining > 0;
