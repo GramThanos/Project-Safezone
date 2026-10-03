@@ -18,7 +18,7 @@ from src.models.audit_log import AuditLog
 from src.models.notification import Notification
 from src.models.user import User
 from src.models.user_box import UserBox
-from src.utils import alerting, daily, expiry, notify, settings
+from src.utils import alerting, daily, notify, settings
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +40,18 @@ def job(kind, default_interval, description):
 # ---------------------------------------------------------------------------
 
 @job('weekly_streak_bonus', 3600,
-     'Grant a bonus loot box to accounts that collected enough daily boxes last week')
+     'Catch up on weekly bonus boxes earned last week but not paid when they were earned')
 def weekly_streak_bonus(session, params=None):
-    """Pay the streak bonus for the week that has just ended.
+    """Pay any streak bonus for the week just ended that was missed at claim time.
 
-    Runs hourly and does nothing most of the time: the work is keyed to a
-    completed week, and the uniqueness constraint on
-    (user_id, event_id, period_key) makes a repeat run a no-op rather than a
-    double payout. The box granted is a weighted pick from the weekly-bonus
-    event's line-up.
+    The bonus is normally granted by the daily claim that collects the
+    threshold-th box (`events.grant_weekly_bonus`). This is the backstop for a
+    week whose last claim could not pay it - the bonus event was switched off or
+    had no droppable box at that moment. Both paths share the period key, so
+    anything already paid is skipped rather than paid twice.
     """
     from src.models.event import Event
-    from src.utils import events, loot
+    from src.utils import events
 
     event = events.system_event(session, Event.TYPE_WEEKLY_BONUS)
     if not event or not event.enabled:
@@ -59,22 +59,13 @@ def weekly_streak_bonus(session, params=None):
 
     threshold = settings.get('streak_threshold') or 5
 
-    # The bonus event's box line-up, read once; each eligible account gets its
-    # own weighted pick from it.
-    entries = events.event_box_entries(session, event.id)
-    if not entries:
-        return 'skipped: the weekly bonus event has no box that can drop'
-
     # "Last week" in the primary server's timezone, so the boundary matches the
     # one players already experience for the daily reset.
     today = daily.today()
-    week_end = today - timedelta(days=today.isoweekday())      # the most recent Sunday
-    week_start = week_end - timedelta(days=6)                  # its Monday
-    period_key = week_end.isoformat()
+    week_start, week_end = events.week_of(today - timedelta(days=7))
 
     # Accounts with enough distinct daily grants inside that window.
-    rows = (session.query(UserBox.user_id,
-                          func.count(func.distinct(UserBox.grant_date)).label('days'))
+    rows = (session.query(UserBox.user_id)
             .filter(UserBox.source == UserBox.SOURCE_DAILY,
                     UserBox.grant_date >= week_start,
                     UserBox.grant_date <= week_end)
@@ -82,31 +73,12 @@ def weekly_streak_bonus(session, params=None):
             .having(func.count(func.distinct(UserBox.grant_date)) >= threshold)
             .all())
 
-    granted = 0
-    for user_id, days in rows:
-        already = (session.query(UserBox)
-                   .filter_by(user_id=user_id, event_id=event.id, period_key=period_key)
-                   .first())
-        if already:
-            continue
-
-        box_id = loot.pick_weighted(entries)
-        if box_id is None:
-            continue
-
-        session.add(UserBox(user_id=user_id, box_id=box_id, event_id=event.id,
-                            source=UserBox.SOURCE_BONUS, period_key=period_key,
-                            grant_date=week_end, expires_at=expiry.box_deadline()))
-        notify.send(session, user_id, Notification.KIND_LOOT,
-                    'You earned a weekly bonus box',
-                    body=f'You collected {days} of 7 daily boxes last week. '
-                         f'Your bonus is waiting to be opened.',
-                    link='/rewards')
-        granted += 1
+    granted = sum(1 for (user_id,) in rows
+                  if events.grant_weekly_bonus(session, user_id, week_end, threshold))
 
     if not rows:
         return f'no accounts reached {threshold}/7 for the week ending {week_end}'
-    return f'granted {granted} bonus box(es) for the week ending {week_end}'
+    return f'granted {granted} missed bonus box(es) for the week ending {week_end}'
 
 
 @job('expire_loot', 3600, 'Expire unopened boxes and unsent rewards past their deadline')

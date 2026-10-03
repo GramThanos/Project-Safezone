@@ -1,6 +1,6 @@
 """Loot box routes: claiming due boxes, and opening them."""
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Blueprint, jsonify
 from sqlalchemy.exc import IntegrityError
 from src.database import db
@@ -83,6 +83,15 @@ def claim_daily(current_user):
 
                 box_row = session.get(Box, box_id)
                 granted.append(box.to_dict(box=box_row))
+
+            # The weekly bonus is paid the moment it is earned: on the claim
+            # that collects the threshold-th daily box of the week. Checked on
+            # every claim, after the daily grant above so today counts.
+            from src.utils import settings
+            bonus = events.grant_weekly_bonus(session, user_id, today,
+                                              settings.get('streak_threshold') or 5)
+            if bonus:
+                granted.append(bonus.to_dict(box=session.get(Box, bonus.box_id)))
 
             return jsonify({
                 'granted': bool(granted),
@@ -198,7 +207,7 @@ def open_box(current_user, box_id):
 def streak(current_user):
     """This week's collected days, and what they are worth.
 
-    The week matches the job that pays the bonus: Monday to Sunday in the
+    The week matches the one that pays the bonus: Monday to Sunday in the
     primary server's timezone, the same boundary as the daily reset. "Collected"
     counts distinct days on which the daily event granted a box.
     """
@@ -207,19 +216,11 @@ def streak(current_user):
         threshold = settings.get('streak_threshold') or 5
 
         today = daily.today()
-        week_start = today - timedelta(days=today.isoweekday() - 1)   # this Monday
-        week_end = week_start + timedelta(days=6)                     # its Sunday
+        week_start, week_end = events.week_of(today)
 
         with db.get_db() as session:
             enabled = events.weekly_bonus_enabled(session)
-            days = [row[0] for row in
-                    (session.query(UserBox.grant_date)
-                     .filter(UserBox.user_id == current_user['user_id'],
-                             UserBox.source == UserBox.SOURCE_DAILY,
-                             UserBox.grant_date >= week_start,
-                             UserBox.grant_date <= week_end)
-                     .distinct()
-                     .all())]
+            days = events.daily_days(session, current_user['user_id'], today)
 
         collected = len(days)
         return jsonify({

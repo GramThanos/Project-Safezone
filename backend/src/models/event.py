@@ -5,8 +5,9 @@ Three kinds:
 * ``daily``         - the once-a-day grant. A single, system-owned event; it can
                       be enabled/disabled and its box line-up tuned, but not
                       created or deleted.
-* ``weekly_bonus``  - the streak reward paid at the end of a week. Also a single
-                      system event, gated by the same streak threshold as before.
+* ``weekly_bonus``  - the streak reward, paid on the claim that collects the
+                      week's threshold-th daily box. Also a single system
+                      event, gated by the same streak threshold as before.
 * ``custom``        - operator-created and unlimited. Runs between ``starts_at``
                       and ``ends_at`` and grants either once for the whole window
                       (``once``) or every day inside it (``daily``).
@@ -33,7 +34,7 @@ class Event(Base):
 
     # How often a player can receive from this event.
     CADENCE_DAILY = 'daily'     # once per calendar day (daily event, custom-daily)
-    CADENCE_WEEKLY = 'weekly'   # once per week-end (weekly bonus)
+    CADENCE_WEEKLY = 'weekly'   # once per week (weekly bonus)
     CADENCE_ONCE = 'once'       # once for the whole window (custom one-time)
 
     # The `source` recorded on a granted box, kept short and stable for display

@@ -415,14 +415,18 @@ export const api = {
       });
       return handleResponse(response);
     },
-    send: async (token, id, characterId) => {
+    // `count` sends only part of a holding; the rest stays in the inventory.
+    // Omitted, the whole holding goes.
+    send: async (token, id, characterId, count) => {
       const response = await fetch(`${API_URL}/api/inventory/${id}/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ character_id: characterId })
+        body: JSON.stringify(
+          count === undefined ? { character_id: characterId } : { character_id: characterId, count }
+        )
       });
       return handleResponse(response);
     },

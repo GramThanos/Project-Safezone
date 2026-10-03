@@ -36,7 +36,7 @@ Most settings are changed live, by an admin, with no restart:
 | **Admin → Site → Branding** | The site's name, home page text and footer links |
 | **Admin → Site → Pages** | Server rules, terms, privacy and cookie pages |
 | **Admin → System → Alerts** | Discord webhooks, the staff feed and ops mailboxes, and which events each one receives |
-| **Admin → System → Scheduled Jobs** | The weekly bonus, retention sweeps and server maintenance |
+| **Admin → System → Scheduled Jobs** | The weekly bonus catch-up, retention sweeps and server maintenance |
 | **Admin → Servers** | Each server's ports, timezone, settings, mods and sleep behaviour |
 
 ## `docker-compose.yml`

@@ -9,8 +9,10 @@ test something else.
 Covered here:
 
   * `grant_events` - the daily event plus every live custom one, and nothing
-    else. The weekly bonus is deliberately absent; it is paid by a job keyed to
-    a completed week, not pulled when somebody logs in.
+    else. The weekly bonus is deliberately absent; it is earned by collecting
+    daily boxes, not pulled when somebody logs in.
+  * `grant_weekly_bonus` - paid on the claim that collects the threshold-th
+    daily box of the week, once per week, and never for days in another week.
   * `event_box_entries` / `pick_box_for_event` - a zero-weight box stays
     attached without ever being granted, and an event with nothing droppable
     picks nothing rather than granting an unopenable box.
@@ -21,6 +23,7 @@ import os
 import sys
 import unittest
 from datetime import date, datetime, timedelta
+from unittest import mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -43,6 +46,7 @@ class EventTestCase(unittest.TestCase):
 
     def setUp(self):
         self.engine = create_engine('sqlite://')
+        self.addCleanup(self.engine.dispose)
         Base.metadata.create_all(self.engine)
         self.session = sessionmaker(bind=self.engine)()
         self.addCleanup(self.session.close)
@@ -82,7 +86,7 @@ class TestGrantEvents(EventTestCase):
         self.assertEqual(events.grant_events(self.session, NOW), [])
 
     def test_the_weekly_bonus_is_never_granted_on_claim(self):
-        # It is paid by the streak job against a completed week. Pulling it here
+        # It is earned by the streak (`grant_weekly_bonus`). Pulling it here
         # would hand out a bonus box to anyone who pressed the button.
         self.event(Event.TYPE_DAILY, system=True)
         self.event(Event.TYPE_WEEKLY_BONUS, system=True)
@@ -186,6 +190,98 @@ class TestPickBoxForEvent(EventTestCase):
         for _ in range(20):
             self.assertEqual(events.pick_box_for_event(self.session, event.id),
                              live.id)
+
+
+class TestWeeklyBonus(EventTestCase):
+    """The bonus is paid when the threshold-th daily box of a week is collected."""
+
+    MONDAY = date(2026, 6, 15)
+
+    def setUp(self):
+        super().setUp()
+        # Deadlines read live settings; they are not what is under test.
+        patcher = mock.patch.object(events.expiry, 'box_deadline', return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        self.daily = self.event(Event.TYPE_DAILY, system=True)
+        self.attach(self.daily, self.box('Small'))
+        self.bonus = self.event(Event.TYPE_WEEKLY_BONUS, system=True,
+                                cadence=Event.CADENCE_WEEKLY)
+        self.bonus_box = self.box('Weekly Bonus', draws=4)
+        self.attach(self.bonus, self.bonus_box)
+
+    def collect(self, day, user_id=1):
+        """A daily box granted on ``day``, as `claim_daily` records it."""
+        self.session.add(UserBox(user_id=user_id, box_id=self.bonus_box.id,
+                                 event_id=self.daily.id, source=UserBox.SOURCE_DAILY,
+                                 period_key=day.isoformat(), grant_date=day))
+        self.session.flush()
+
+    def bonuses(self, user_id=1):
+        return (self.session.query(UserBox)
+                .filter_by(user_id=user_id, source=UserBox.SOURCE_BONUS).all())
+
+    def test_the_week_runs_monday_to_sunday(self):
+        self.assertEqual(events.week_of(date(2026, 6, 18)),
+                         (self.MONDAY, date(2026, 6, 21)))
+        self.assertEqual(events.week_of(date(2026, 6, 21)),
+                         (self.MONDAY, date(2026, 6, 21)))
+
+    def test_nothing_is_paid_below_the_threshold(self):
+        for offset in range(4):
+            day = self.MONDAY + timedelta(days=offset)
+            self.collect(day)
+            self.assertIsNone(events.grant_weekly_bonus(self.session, 1, day, 5))
+        self.assertEqual(self.bonuses(), [])
+
+    def test_it_is_paid_on_the_claim_that_reaches_the_threshold(self):
+        # Not at the end of the week: Friday's box is the fifth, so Friday pays.
+        friday = self.MONDAY + timedelta(days=4)
+        for offset in range(5):
+            self.collect(self.MONDAY + timedelta(days=offset))
+        box = events.grant_weekly_bonus(self.session, 1, friday, 5)
+        self.assertIsNotNone(box)
+        self.assertEqual(box.box_id, self.bonus_box.id)
+        self.assertEqual(box.event_id, self.bonus.id)
+        self.assertEqual(box.period_key, '2026-06-21')   # the week's Sunday
+        self.assertEqual(box.grant_date, friday)
+
+    def test_it_is_paid_once_per_week(self):
+        for offset in range(7):
+            day = self.MONDAY + timedelta(days=offset)
+            self.collect(day)
+            events.grant_weekly_bonus(self.session, 1, day, 5)
+        self.assertEqual(len(self.bonuses()), 1)
+
+    def test_days_from_last_week_do_not_count(self):
+        for offset in range(1, 5):
+            self.collect(self.MONDAY - timedelta(days=offset))   # last Thu-Sun
+        self.collect(self.MONDAY)
+        self.assertIsNone(events.grant_weekly_bonus(self.session, 1, self.MONDAY, 5))
+
+    def test_another_players_days_do_not_count(self):
+        for offset in range(4):
+            self.collect(self.MONDAY + timedelta(days=offset), user_id=2)
+        friday = self.MONDAY + timedelta(days=4)
+        self.collect(friday)
+        self.assertIsNone(events.grant_weekly_bonus(self.session, 1, friday, 5))
+
+    def test_a_switched_off_bonus_pays_nothing(self):
+        self.bonus.enabled = False
+        for offset in range(5):
+            self.collect(self.MONDAY + timedelta(days=offset))
+        friday = self.MONDAY + timedelta(days=4)
+        self.assertIsNone(events.grant_weekly_bonus(self.session, 1, friday, 5))
+
+    def test_each_week_is_paid_separately(self):
+        for week in range(2):
+            for offset in range(5):
+                day = self.MONDAY + timedelta(days=7 * week + offset)
+                self.collect(day)
+                events.grant_weekly_bonus(self.session, 1, day, 5)
+        self.assertEqual(sorted(b.period_key for b in self.bonuses()),
+                         ['2026-06-21', '2026-06-28'])
 
 
 class TestPeriodKey(unittest.TestCase):

@@ -17,9 +17,12 @@ const readLast = () => {
 	}
 };
 
-function SendRewardModal({ title, actionLabel, busy = false, onSend, onCancel }) {
+// `max` is how many the stack holds. Above one, the player picks how many of
+// them go; it starts at all of them, which is what a send used to do.
+function SendRewardModal({ title, actionLabel, max = 1, busy = false, onSend, onCancel }) {
 	const { onlineCharacters, characters, refreshCharacters } = usePlayer();
 	const [target, setTarget] = useState(readLast);
+	const [amount, setAmount] = useState(String(max));
 	const [checking, setChecking] = useState(true);
 	const cancelRef = useRef(null);
 
@@ -47,14 +50,20 @@ function SendRewardModal({ title, actionLabel, busy = false, onSend, onCancel })
 		}
 	}, [targetValid, onlineCharacters]);
 
+	// Kept as typed text so the field can be cleared while editing; it only has
+	// to be a whole number in range by the time it is sent.
+	const count = Number(amount);
+	const amountValid = Number.isInteger(count) && count >= 1 && count <= max;
+	const step = (by) => setAmount(String(Math.min(max, Math.max(1, (amountValid ? count : max) + by))));
+
 	const send = () => {
-		if (!targetValid) return;
+		if (!targetValid || !amountValid) return;
 		try {
 			localStorage.setItem(LAST_TARGET_KEY, String(target));
 		} catch {
 			// pass
 		}
-		onSend(target);
+		onSend(target, count);
 	};
 
 	return (
@@ -115,6 +124,55 @@ function SendRewardModal({ title, actionLabel, busy = false, onSend, onCancel })
 										</label>
 									))}
 								</div>
+								{max > 1 && (
+									<div className="mt-3">
+										<label htmlFor="send-amount" className="form-label text-body-secondary small">
+											How many? You have {max}.
+										</label>
+										<div className="input-group" style={{ maxWidth: '16rem' }}>
+											<button
+												type="button"
+												className="btn btn-outline-secondary"
+												aria-label="One fewer"
+												onClick={() => step(-1)}
+												disabled={busy || (amountValid && count <= 1)}
+											>
+												<i className="fas fa-minus"></i>
+											</button>
+											<input
+												id="send-amount"
+												type="number"
+												className={`form-control text-center ${amountValid ? '' : 'is-invalid'}`}
+												min={1}
+												max={max}
+												step={1}
+												value={amount}
+												onChange={(e) => setAmount(e.target.value)}
+												disabled={busy}
+											/>
+											<button
+												type="button"
+												className="btn btn-outline-secondary"
+												aria-label="One more"
+												onClick={() => step(1)}
+												disabled={busy || (amountValid && count >= max)}
+											>
+												<i className="fas fa-plus"></i>
+											</button>
+											<button
+												type="button"
+												className="btn btn-outline-secondary"
+												onClick={() => setAmount(String(max))}
+												disabled={busy || count === max}
+											>
+												All
+											</button>
+										</div>
+										{!amountValid && (
+											<div className="text-danger small mt-1">Pick a number from 1 to {max}.</div>
+										)}
+									</div>
+								)}
 							</>
 						)}
 					</div>
@@ -128,8 +186,8 @@ function SendRewardModal({ title, actionLabel, busy = false, onSend, onCancel })
 							Cancel
 						</button>
 						{onlineCharacters.length > 0 && (
-							<button className="btn btn-danger" onClick={send} disabled={busy || !targetValid}>
-								{busy ? 'Sending…' : actionLabel}
+							<button className="btn btn-danger" onClick={send} disabled={busy || !targetValid || !amountValid}>
+								{busy ? 'Sending…' : (max > 1 && amountValid ? `${actionLabel} ${count}` : actionLabel)}
 							</button>
 						)}
 					</div>

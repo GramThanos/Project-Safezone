@@ -143,11 +143,20 @@ def send_item(current_user, item_id):
     character_id = data.get('character_id')
     if not character_id:
         return jsonify({'error': 'character_id is required'}), 400
+    # Optional: send only part of a holding. The rest stays in the inventory as
+    # its own row, so a stack of ten bandages can go out three at a time.
+    requested = data.get('count')
+    if requested is not None and (isinstance(requested, bool) or not isinstance(requested, int)
+                                  or requested < 1):
+        return jsonify({'error': 'count must be a whole number of at least 1'}), 400
 
     try:
         with db.get_db() as session:
+            # Locked so two sends of the same holding cannot both dispatch it -
+            # or, now that a send can split it, both split it.
             item = (session.query(InventoryItem)
                     .filter_by(id=item_id, user_id=current_user['user_id'])
+                    .with_for_update()
                     .first())
             if not item:
                 return jsonify({'error': 'Inventory item not found'}), 404
@@ -173,6 +182,13 @@ def send_item(current_user, item_id):
             if not reward:
                 return jsonify({'error': 'Reward no longer exists'}), 404
 
+            held = item.count or 1
+            count = held if requested is None else requested
+            if count > held:
+                return jsonify({'error': f'Only {held} of that reward are here to send'}), 400
+            if count < held and reward.kind == Reward.KIND_USABLE:
+                return jsonify({'error': 'A usable reward cannot be split'}), 400
+
             payload = {
                 'action': 'give_reward',
                 'server_id': character.server_id,
@@ -192,11 +208,22 @@ def send_item(current_user, item_id):
                 payload['in_game_id'] = reward.in_game_id
                 # Quantity was captured onto the holding when the box was opened
                 # (it lives on the box's pool entry, not the reward).
-                payload['count'] = item.count or 1
+                payload['count'] = count
 
             resp, status = gs_request('POST', '/api/tasks', json=payload)
             if status not in (200, 201):
                 return jsonify({'error': resp.get('error', 'Failed to dispatch delivery')}), status
+
+            if count < held:
+                # Split only once the delivery is really on its way: this row
+                # becomes the part in flight, and the remainder stays behind
+                # with the same origin and deadline it had before.
+                session.add(InventoryItem(
+                    user_id=item.user_id, reward_id=item.reward_id,
+                    count=held - count, source=item.source,
+                    source_box_id=item.source_box_id, status=item.status,
+                    created_at=item.created_at, expires_at=item.expires_at))
+                item.count = count
 
             task = resp.get('data') or {}
             item.status = InventoryItem.STATUS_SENDING
@@ -206,7 +233,7 @@ def send_item(current_user, item_id):
 
             audit.record(session, current_user['user_id'], 'inventory.send',
                          target=character.in_game_username,
-                         detail=f"{reward.kind} '{reward.name}' -> {character.in_game_username}@server{character.server_id}")
+                         detail=f"{reward.kind} '{reward.name}' x{count} -> {character.in_game_username}@server{character.server_id}")
 
             return jsonify({'message': 'Delivery dispatched',
                             'item': item.to_dict(reward=reward)}), 200

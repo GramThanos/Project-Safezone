@@ -119,8 +119,8 @@ function Rewards() {
     setBusy(null);
   };
 
-  const sendOne = async (itemId, characterId) => {
-    await api.inventory.send(token, itemId, parseInt(characterId, 10));
+  const sendOne = async (itemId, characterId, count) => {
+    await api.inventory.send(token, itemId, parseInt(characterId, 10), count);
   };
 
   // Stack identical rewards. Two items are "the same" when they are the same
@@ -154,34 +154,47 @@ function Rewards() {
     return Array.from(map.values());
   }, [inventory]);
 
-  // Sending a stack sends every item in it; the box collapses as they leave
-  // 'held' and reappear under 'sending'. Partial success keeps the rest here.
-  const handleSendGroup = async (group, target) => {
+  // How many of a holding arrive in game. A usable runs once per holding,
+  // whatever its count says.
+  const unitsOf = (item) => (item.reward?.kind === 'usable' ? 1 : (item.count || 1));
+
+  // Sends `amount` units out of a stack, which may be fewer than it holds.
+  // Whole holdings go first, the one that would overshoot is split (the
+  // server keeps the remainder as its own row), and the soonest to expire go
+  // first so what stays behind is what lasts longest. The sent part leaves
+  // 'held' and reappears under 'sending'; anything that failed stays here.
+  const handleSendGroup = async (group, target, amount) => {
     setError('');
     setBusy(group.key);
+    const items = [...group.items].sort((a, b) => {
+      if (!a.expires_at || !b.expires_at) return (a.expires_at ? -1 : 0) + (b.expires_at ? 1 : 0);
+      return new Date(a.expires_at) - new Date(b.expires_at);
+    });
     // Counted in units delivered, not holdings sent: one holding can carry
     // several of an item, and "Sending 2 × Bandage" for six bandages is wrong.
-    let sent = 0;
+    let remaining = amount;
     let quantity = 0;
     let lastError = null;
-    for (const item of group.items) {
+    for (const item of items) {
+      if (remaining <= 0) break;
+      const units = unitsOf(item);
+      const take = Math.min(units, remaining);
       try {
-        await sendOne(item.id, target);
-        sent += 1;
-        quantity += item.count || 1;
+        await sendOne(item.id, target, take < units ? take : undefined);
+        quantity += take;
       } catch (err) {
         console.error('Send item error:', err);
         lastError = err;
       }
+      remaining -= take;
     }
     const name = group.reward?.name || 'your reward';
-    const total = group.items.length;
-    push(sent === total
+    push(quantity === amount
       ? (quantity === 1 ? `Sending ${name}…` : `Sending ${quantity} × ${name}…`)
-      : sent === 0
+      : quantity === 0
         ? (lastError?.message || `Could not send ${name}.`)
-        : `Sent ${sent} of ${total} ${name}. The rest are still here.`,
-    { kind: sent === total ? 'info' : 'error' });
+        : `Sent ${quantity} of ${amount} ${name}. The rest are still here.`,
+    { kind: quantity === amount ? 'info' : 'error' });
     setBusy(null);
     setSending(null);
     loadInventory();
@@ -228,7 +241,7 @@ function Rewards() {
                 </h5>
                 <span className="text-body-secondary small">
                   {streak.earned
-                    ? 'Bonus crate earned — it arrives when the week ends'
+                    ? 'Bonus crate earned this week — find it in My Crates'
                     : streak.remaining <= streak.days_left + 1
                       ? `${streak.remaining} more day${streak.remaining === 1 ? '' : 's'} for a bonus crate`
                       : 'Not enough days left for the bonus this week'}
@@ -379,11 +392,7 @@ function Rewards() {
                           onClick={() => setSending(group)}
                           disabled={busy === group.key}
                         >
-                          {busy === group.key
-                            ? 'Sending…'
-                            : isUsable
-                              ? (holdings > 1 ? `Activate all ${holdings}` : 'Activate')
-                              : (holdings > 1 ? 'Send all' : 'Send')}
+                          {busy === group.key ? 'Sending…' : isUsable ? 'Activate' : 'Send'}
                         </button>
                       )}
                     </div>
@@ -408,8 +417,9 @@ function Rewards() {
         <SendRewardModal
           title={`${sending.reward?.kind === 'usable' ? 'Activate' : 'Send'} ${sending.reward?.name || 'reward'}`}
           actionLabel={sending.reward?.kind === 'usable' ? 'Activate' : 'Send'}
+          max={sending.items.reduce((sum, item) => sum + unitsOf(item), 0)}
           busy={busy === sending.key}
-          onSend={(target) => handleSendGroup(sending, target)}
+          onSend={(target, amount) => handleSendGroup(sending, target, amount)}
           onCancel={() => setSending(null)}
         />
       )}

@@ -27,7 +27,7 @@ The full tour. The [README](../README.md) has the highlights; this page has the 
 
 - **Daily loot box**: every account can collect one box a day. The day boundary follows the primary game server's timezone, not UTC
 - **Boxes and events**: a box is a named crate with its own loot pool. *Events* decide which box a player receives, by a weighted pick from the event's line-up of boxes. The daily event is always there; **custom events** add extra boxes on top of it for a limited window, either once or every day while they run — a weekend giveaway, a holiday crate, a server launch
-- **Weekly streak bonus**: collect enough of the week's seven daily boxes (five by default) and a bonus box is granted automatically. Players see their progress on the Rewards page
+- **Weekly streak bonus**: collect enough of the week's seven daily boxes (five by default) and a bonus box is granted the moment the last one needed is collected. Players see their progress on the Rewards page
 - **Two kinds of reward**:
   - **Items**, delivered with `additem`, optionally in stacks
   - **Usables**: a sequence of console commands written by an admin — for example spawning a vehicle, granting XP or teleporting the player. `{{USERNAME}}` is replaced with the recipient, and `sleep`/`wait` lines pause between commands. A built-in command library inserts ready-made lines so nobody has to remember the syntax. Only admins can write these, and the recipient's name is validated before anything reaches the console
