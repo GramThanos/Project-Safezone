@@ -132,7 +132,11 @@ def run_job(kind):
 
     if deferred is not None:
         try:
-            deferred()
+            # A follow-up may report what it did, which is often the part an
+            # operator actually wants to read.
+            outcome = deferred()
+            if isinstance(outcome, str) and outcome:
+                result = f'{result}: {outcome}'
         except Exception as e:
             # The database work already committed; this is follow-up that failed.
             logger.exception(f"Job '{kind}' follow-up failed")

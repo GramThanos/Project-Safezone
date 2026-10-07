@@ -3,7 +3,7 @@ import logging
 from flask import Blueprint, jsonify, request
 from src.utils.game_server import gs_request
 from src.utils.redis_utils import (apply_live_state, get_online_players,
-                                   cache_get, cache_set)
+                                   get_maintenance_notice, cache_get, cache_set)
 from src.middleware.auth import token_required, current_user_optional
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,8 @@ def get_servers_status():
         return jsonify({'error': error}), status
 
     servers = _with_online(apply_live_state(data))
-    return jsonify({'servers': _visible(servers)}), 200
+    return jsonify({'servers': _visible(servers),
+                    'maintenance': get_maintenance_notice()}), 200
 
 
 @servers_bp.route('/<int:server_id>/history', methods=['GET'])

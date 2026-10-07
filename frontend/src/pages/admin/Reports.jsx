@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
+import { formatDateTime } from '../../utils/dates';
 
 function Reports() {
   const { token } = useAuth();
@@ -55,7 +56,7 @@ function Reports() {
     }
   };
 
-  const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : '');
+  const fmt = (ts) => formatDateTime(ts);
 
   return (
     <>

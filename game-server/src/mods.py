@@ -183,7 +183,8 @@ def check_requirements(mod_names, provided):
 def item_mods(item_id):
     """The mods a downloaded Workshop item provides, with their real names.
 
-    Each entry is ``{'id', 'name', 'folder', 'description', 'requires'}``. ``id``
+    Each entry is ``{'id', 'name', 'folder', 'description', 'requires',
+    'version'}``. ``id``
     is what belongs in the server's `Mods` line - taken from `mod.info` where it
     declares one, because
     the folder name and the declared id are allowed to differ and only the
@@ -224,6 +225,9 @@ def item_mods(item_id):
                 # What this mod needs loaded before it. `require=` is a
                 # comma-separated list of mod ids.
                 'requires': parse_requires(info.get('require')),
+                # The author's own version string, when they keep one. Optional
+                # and free-form, so it is shown, never compared.
+                'version': info.get('modversion') or None,
             })
     return [found[key] for key in sorted(found)]
 

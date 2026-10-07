@@ -1,0 +1,279 @@
+/* Project Safezone
+ *
+ * The site's own styles. Imported by index.jsx rather than linked from
+ * public/, so the build publishes them as static/css/main.<hash>.css: a changed
+ * stylesheet is a new URL, and no browser, installed app or proxy cache in
+ * front of the site can serve an old one alongside new code.
+ */
+
+.font-display {
+	font-family: "Oswald", sans-serif;
+	letter-spacing: 0.5px;
+}
+
+/* Hero banner */
+.hero-img {
+	height: 70vh;
+	min-height: 380px;
+	mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 75%, rgba(0, 0, 0, 0) 99%);
+}
+
+/* Card banner */
+.card-banner {
+	height: 180px;
+}
+
+/* Page frame: the footer sits at the bottom of a short page */
+.app-shell {
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+}
+
+/*
+ * The installed app on a phone.
+ *
+ * Everything below is keyed to <html data-app="phone">, which
+ * assets/app-mode.js sets only when the site was opened from the home screen
+ * on a phone. The website, in any browser, never matches these rules.
+ *
+ * Sized after Android's own components: a 56dp top app bar with a 20sp title,
+ * 24dp icons, 48dp touch targets, and an 80dp navigation bar whose current
+ * item sits in a pill. A CSS pixel on Android is a dp, and rem follows the
+ * browser's text scaling, so these grow with the device's settings the way a
+ * native app's do.
+ */
+:root {
+	--app-header-height: 3.5rem;
+	--app-tabbar-height: 5rem;
+}
+
+[data-app="phone"] {
+	/* No double-tap zoom, so a tap lands at once */
+	touch-action: manipulation;
+	/*
+	 * No stretch or glow at the top and bottom of a page. It belongs on <html>:
+	 * the page is scrolled by the viewport, which takes this from the root
+	 * element only - set on <body> it does nothing, unlike `overflow`.
+	 */
+	overscroll-behavior: none;
+}
+
+/* The same for the places that scroll on their own. Sideways only for tables
+   and the admin rows: they scroll horizontally, and a vertical swipe starting
+   on one must still reach the page. A dialog is a scroller of its own over the
+   page, so a swipe inside it should never move what is behind it either. */
+[data-app="phone"] .table-responsive,
+[data-app="phone"] .subnav .navbar-nav {
+	overscroll-behavior-x: none;
+}
+
+[data-app="phone"] .modal {
+	overscroll-behavior: none;
+}
+
+[data-app="phone"] body {
+	/* No grey flash on tap */
+	-webkit-tap-highlight-color: transparent;
+}
+
+[data-app="phone"] .app-shell {
+	/* The visible height, not the largest the browser bars could leave */
+	min-height: 100dvh;
+	/* Room for the tab bar, so the end of a page is not under it */
+	padding-bottom: calc(var(--app-tabbar-height) + env(safe-area-inset-bottom));
+	/*
+	 * Nothing may make the page wider than the screen. A phone answers wide
+	 * content by widening the whole page, which drags the fixed tab bar past
+	 * the edge with it. Wide things scroll inside themselves (tables in
+	 * .table-responsive, the admin rows below). `clip` rather than `hidden`,
+	 * which would turn this into a scroll container and unstick the headers.
+	 */
+	overflow-x: clip;
+}
+
+/* Navigation chrome is not text to select */
+[data-app="phone"] .app-header,
+[data-app="phone"] .app-tabbar,
+[data-app="phone"] .subnav .navbar {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+/* Top bar: clear of the notch, with its own height whatever the title */
+.app-header {
+	padding-top: env(safe-area-inset-top);
+	padding-left: env(safe-area-inset-left);
+	padding-right: env(safe-area-inset-right);
+	z-index: 1030;
+}
+
+.app-header > div {
+	min-height: var(--app-header-height);
+}
+
+.app-header-title {
+	font-size: 1.25rem;
+	letter-spacing: 0.5px;
+}
+
+/* A 48dp target around a 24dp icon, its edge lined up with the content's */
+.app-header-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 3rem;
+	height: 3rem;
+	padding: 0;
+	margin: 0 -0.75rem;
+	color: var(--bs-body-color);
+	font-size: 1.375rem;
+	/* These are .btn-link, which underlines - the badge number included */
+	text-decoration: none;
+}
+
+.app-header-logo {
+	width: 2rem;
+	height: 2rem;
+}
+
+/* Bottom tab bar */
+.app-tabbar {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 1030;
+	display: flex;
+	padding-bottom: env(safe-area-inset-bottom);
+	padding-left: env(safe-area-inset-left);
+	padding-right: env(safe-area-inset-right);
+}
+
+.app-tab {
+	flex: 1 1 0;
+	min-width: 0;
+	height: var(--app-tabbar-height);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 0.25rem;
+	color: var(--bs-secondary-color);
+	text-decoration: none;
+}
+
+/* The icon's 64x32 slot, which becomes a pill on the current tab */
+.app-tab-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 4rem;
+	height: 2rem;
+	border-radius: 1rem;
+	transition: background-color 0.2s;
+}
+
+.app-tab i {
+	font-size: 1.375rem;
+}
+
+.app-tab-label {
+	font-size: 0.75rem;
+	font-weight: 500;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.app-tab.active {
+	color: var(--bs-emphasis-color);
+}
+
+.app-tab.active .app-tab-icon {
+	background-color: rgba(var(--bs-danger-rgb), 0.25);
+	color: var(--bs-danger);
+}
+
+/* A count pinned to an icon's corner */
+.app-badge {
+	position: absolute;
+	top: -0.45rem;
+	left: 100%;
+	transform: translateX(-40%);
+	font-size: 0.6875rem;
+}
+
+/* In the tab's icon slot, which is wider than its icon */
+.app-tab-icon .app-badge {
+	top: 0;
+	left: 50%;
+	transform: translateX(0.25rem);
+}
+
+/* Me page */
+.app-avatar {
+	width: 3rem;
+	height: 3rem;
+	flex: none;
+	font-size: 1.25rem;
+}
+
+/* Toasts above the tab bar, not under it */
+[data-app="phone"] .toast-region {
+	bottom: calc(var(--app-tabbar-height) + env(safe-area-inset-bottom)) !important;
+}
+
+/* Admin navigation: pinned, and sideways-scrolling rows instead of a menu */
+[data-app="phone"] .subnav {
+	position: sticky;
+	top: 0;
+	z-index: 1030;
+	background: var(--bs-body-bg);
+	padding-top: env(safe-area-inset-top);
+}
+
+[data-app="phone"] .subnav > .navbar:first-child {
+	/* Over the markup's py-3, which is !important */
+	padding-top: 0.5rem !important;
+	padding-bottom: 0.5rem !important;
+}
+
+[data-app="phone"] .subnav .navbar-toggler {
+	display: none;
+}
+
+[data-app="phone"] .subnav .navbar-collapse {
+	display: block !important;
+	flex-basis: 100%;
+	/* A flex item will not shrink below its content by default, and the
+	   content is a row meant to scroll - without this the row stretches the
+	   page instead of scrolling. */
+	min-width: 0;
+}
+
+[data-app="phone"] .subnav .navbar-nav {
+	flex-direction: row;
+	flex-wrap: nowrap !important;
+	gap: 0.25rem;
+	min-width: 0;
+	max-width: 100%;
+	overflow-x: auto;
+	scrollbar-width: none;
+	white-space: nowrap;
+}
+
+[data-app="phone"] .subnav .navbar-nav::-webkit-scrollbar {
+	display: none;
+}
+
+[data-app="phone"] .subnav .navbar-nav .nav-link {
+	padding: 0.375rem 0.75rem;
+	border-radius: var(--bs-border-radius-pill);
+}
+
+[data-app="phone"] .subnav .navbar-nav .nav-link.active {
+	background: var(--bs-secondary-bg);
+}

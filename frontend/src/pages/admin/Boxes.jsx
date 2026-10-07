@@ -150,7 +150,14 @@ function Boxes() {
     if (!answer) return;
     const name = answer.name.trim();
     const description = answer.description.trim();
-    const config = await api.admin.rewardBoxes.export(token, { box_id: box.id, name, description });
+    let config;
+    try {
+      config = await api.admin.rewardBoxes.export(token, { box_id: box.id, name, description });
+    } catch (err) {
+      console.error('Export box error:', err);
+      setError(err.message || 'Failed to export that box');
+      return;
+    }
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

@@ -22,6 +22,12 @@ const GROUPS = [
     blurb: 'Registration, loot and retention policy.'
   },
   {
+    key: 'coins',
+    title: 'Coins',
+    blurb: 'Selling rewards back, earning from zombie kills, and the shop. '
+      + 'Shop categories and listings are set up under Rewards › Shop.'
+  },
+  {
     key: 'mail',
     title: 'Mail',
     blurb: 'Leave the host blank to use whatever the game-server container was '

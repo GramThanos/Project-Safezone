@@ -9,7 +9,7 @@ import CommandLibrary from './CommandLibrary';
 
 const emptyForm = {
   kind: 'item', name: '', description: '', icon: '', in_game_id: '',
-  commands: '', active: true
+  commands: '', active: true, coin_value: '1'
 };
 
 // Turn an existing reward into form state; falls back to a blank create form.
@@ -20,7 +20,8 @@ const formFromReward = (reward) => reward ? {
   icon: reward.icon || '',
   in_game_id: reward.in_game_id || '',
   commands: reward.commands || '',
-  active: reward.active !== false
+  active: reward.active !== false,
+  coin_value: String(reward.coin_value ?? 1)
 } : { ...emptyForm };
 
 function RewardModal({ reward, onSave, onClose }) {
@@ -68,12 +69,18 @@ function RewardModal({ reward, onSave, onClose }) {
       setError('Reward name is required');
       return;
     }
+    const coinValue = Number(form.coin_value);
+    if (!/^\d+$/.test(String(form.coin_value).trim()) || coinValue > 1000000) {
+      setError('The coin value must be a whole number from 0 to 1,000,000');
+      return;
+    }
     const payload = {
       kind: form.kind,
       name: form.name.trim(),
       description: form.description.trim(),
       icon: form.icon.trim(),
-      active: form.active
+      active: form.active,
+      coin_value: coinValue
     };
     if (form.kind === 'item') {
       if (!form.in_game_id.trim()) {
@@ -235,6 +242,26 @@ function RewardModal({ reward, onSave, onClose }) {
                       </div>
                     </div>
                   )}
+
+                  <div className="col-md-3">
+                    <label className="form-label text-body-secondary small mb-1" htmlFor="reward-coin-value">
+                      Sell value (coins)
+                    </label>
+                    <input
+                      id="reward-coin-value"
+                      type="number"
+                      min="0"
+                      step="1"
+                      className="form-control"
+                      value={form.coin_value}
+                      onChange={(e) => setForm({ ...form, coin_value: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-md-9 form-text mb-2">
+                    What a player gets for discarding this reward while coins are on - once per
+                    reward, however many items it holds. 0 means it cannot be sold. It is also the
+                    lowest price it can be listed at in the shop.
+                  </div>
 
                   <div className="col-12">
                     <label className="form-label text-body-secondary small mb-1">Description (optional)</label>

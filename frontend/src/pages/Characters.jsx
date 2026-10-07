@@ -5,7 +5,10 @@ import { usePlayer } from '../context/PlayerContext';
 import { useToast } from '../context/ToastContext';
 import api from '../services/api';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CharacterGameInfo from '../components/CharacterGameInfo';
+import CoinProgress from '../components/CoinProgress';
 import usePageTitle from '../hooks/usePageTitle';
+import { formatDateTime } from '../utils/dates';
 
 function Characters() {
 	usePageTitle('My Characters');
@@ -227,10 +230,17 @@ function Characters() {
 												{character.last_seen_at && (
 													<div className="small">
 														<i className="fas fa-clock"></i> Last online{' '}
-														{new Date(character.last_seen_at).toLocaleString()}
+														{formatDateTime(character.last_seen_at)}
 													</div>
 												)}
 											</div>
+										)}
+										{/* Read from the game's save, not from the player. */}
+										{character.deliverable && (
+											<CharacterGameInfo
+												characterId={character.id}
+												title={character.in_game_username}
+											/>
 										)}
 										{/* Player-written, and labelled as such: the badge above
 												vouches for the identity, not for anything below it. */}
@@ -360,6 +370,9 @@ function Characters() {
 					</div>
 				)}
 
+				{/* Last on the page: how linked characters are doing at earning coins. */}
+				<CoinProgress />
+
 				{unlinking && (
 					<ConfirmDialog
 						title={`Unlink ${unlinking.in_game_username || unlinking.name}?`}
@@ -411,9 +424,9 @@ function Characters() {
 												placeholder="Anything you want to remember about this character"
 											></textarea>
 											<div className="form-text">
-												Notes you write yourself. Nothing here is read from the
-												game — the only fact the site knows is when the character
-												was last online.
+												Notes you write yourself. They are kept apart from what
+												the game saved about the character, shown above them on
+												the card.
 											</div>
 										</div>
 									</div>

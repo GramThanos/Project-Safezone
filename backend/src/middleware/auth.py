@@ -1,6 +1,7 @@
 """Authentication utilities"""
 import jwt
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta
 from functools import wraps
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Endpoints an account with `must_change_password` may still reach: it has to be
 # able to see who it is and to set a new password. Everything else is refused
 # until it does.
-PASSWORD_CHANGE_EXEMPT = {'auth.get_current_user', 'auth.change_password'}
+PASSWORD_CHANGE_EXEMPT = {'auth.get_current_user', 'auth.change_password', 'auth.refresh_session'}
 
 # An appeal process a banned person cannot reach is not an appeal process. These
 # endpoints stay open to a banned account; `routes/reports.py` then restricts
@@ -21,6 +22,8 @@ PASSWORD_CHANGE_EXEMPT = {'auth.get_current_user', 'auth.change_password'}
 BANNED_ALLOWED = {
     'auth.get_current_user',
     'auth.logout_everywhere',
+    # Without it a banned account's session would lapse mid-appeal.
+    'auth.refresh_session',
     # Their ban notification carries the reason and how long it lasts. Telling
     # somebody they are banned and then hiding why would be worse than useless.
     'notifications.list_notifications',
@@ -32,8 +35,12 @@ BANNED_ALLOWED = {
 }
 
 
-def _token_hours():
-    """How long a new session lasts, from the settings.
+def _token_hours(installed=False):
+    """How long a session lasts from its last use, from the settings.
+
+    The installed app gets its own, longer lifetime: it is somebody's phone
+    rather than a browser tab that may be a shared computer, and signing in on
+    a phone keyboard every day is what makes people stop opening it.
 
     Imported lazily and guarded: this is on the sign-in path, and a settings
     read that failed must issue a token with the configured lifetime rather
@@ -41,18 +48,82 @@ def _token_hours():
     """
     try:
         from src.utils import settings
-        hours = settings.get('token_expiry_hours')
-        if hours and hours > 0:
-            return hours
+        if installed:
+            days = settings.get('app_session_days')
+            if days and days > 0:
+                return days * 24
+        else:
+            hours = settings.get('token_expiry_hours')
+            if hours and hours > 0:
+                return hours
     except Exception:
         pass
+    if installed:
+        return current_app.config['APP_SESSION_DAYS'] * 24
     return current_app.config['TOKEN_EXPIRY_HOURS']
 
 
-def generate_token(user_id, username, role, token_version=0):
+def request_installed():
+    """Whether this request comes from the installed app (`X-Client: app`).
+
+    Declared by the client, so it is a choice of session length, not a security
+    boundary: anyone can send it and get the app's lifetime, which is why that
+    lifetime is the admin's to set.
+    """
+    return request.headers.get('X-Client', '').strip().lower() == 'app'
+
+
+def session_id(payload):
+    """The session a token belongs to, stable across refreshes.
+
+    Tokens issued before sessions had ids fall back to their own `jti`, which
+    is stable for exactly as long as that token is.
+    """
+    return payload.get('sid') or payload.get('jti')
+
+
+# A token younger than this is not replaced by a session check; one past half
+# its lifetime always is, for an admin who has set lifetimes shorter than this.
+RENEW_AFTER_SECONDS = 3600
+
+
+def token_needs_renewal(payload, now=None):
+    """Whether a session check should hand back a new token for this one.
+
+    When it is old enough, or when the kind of client changed under it - signed
+    in in the browser, then opened from the home screen, which is owed the
+    app's lifetime.
+    """
+    now = now if now is not None else time.time()
+    issued, expires = payload.get('iat'), payload.get('exp')
+    if issued is None or expires is None:
+        return True
+    if bool(payload.get('app')) != request_installed():
+        return True
+    return now - issued >= min(RENEW_AFTER_SECONDS, (expires - issued) / 2)
+
+
+def bearer_token():
+    """The raw token from this request's Authorization header, or None."""
+    parts = request.headers.get('Authorization', '').split(' ')
+    if len(parts) == 2 and parts[0].lower() == 'bearer':
+        return parts[1]
+    return None
+
+
+def token_expiry(token):
+    """When a token we just issued expires, as a naive UTC datetime."""
+    claims = jwt.decode(token, options={'verify_signature': False})
+    return datetime.utcfromtimestamp(claims['exp'])
+
+
+def generate_token(user_id, username, role, token_version=0, sid=None, installed=False):
     """
     Generate lightweight JWT token for user with security claims.
     Must be called within Flask application context (e.g., request handler).
+
+    A sign-in starts a session (a new `sid`); a refresh passes the old one, so
+    whatever is tied to the session - a device's push subscription - follows it.
     """
     payload = {
         'user_id': user_id,
@@ -61,11 +132,12 @@ def generate_token(user_id, username, role, token_version=0):
         # Bumped on the user record to invalidate every outstanding token at
         # once; compared on each request in _apply_live_authorisation.
         'tv': token_version or 0,
+        'sid': sid or uuid.uuid4().hex,
+        'app': bool(installed),
         # Editable in the panel; the environment value is only the default.
-        # Shortening it applies to tokens issued from now on - the ones already
-        # out there carry their own expiry, and "sign out everywhere" is what
-        # ends those.
-        'exp': datetime.utcnow() + timedelta(hours=_token_hours()),
+        # A changed lifetime applies from each session's next refresh, and
+        # "sign out everywhere" is what ends sessions outright.
+        'exp': datetime.utcnow() + timedelta(hours=_token_hours(installed)),
         'iat': datetime.utcnow(),  # Issued at
         'iss': current_app.config['TOKEN_ISSUER'],  # Issuer
         'aud': current_app.config['TOKEN_AUDIENCE'],  # Audience

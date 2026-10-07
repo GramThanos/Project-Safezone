@@ -18,6 +18,8 @@ ITEM_ID_RE = re.compile(r'^[A-Za-z0-9_.]{1,64}$')
 # panel. The quantity itself lives on the box's loot pool entry, not the reward,
 # so it is validated where the pool is written (see ``validate_item_count``).
 MAX_ITEM_COUNT = 1000
+# What a reward sells back for, once per holding (see src/utils/coins.py).
+MAX_COIN_VALUE = 1_000_000
 
 
 def validate_item_count(count):
@@ -46,6 +48,11 @@ def validate_reward_payload(data, partial=False):
             return 'name is required'
         if data.get('kind') not in Reward.KINDS:
             return 'kind must be item or usable'
+
+    if 'coin_value' in data:
+        value = data['coin_value']
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_COIN_VALUE:
+            return f'coin_value must be a whole number from 0 to {MAX_COIN_VALUE}'
 
     kind = data.get('kind')
     if kind == Reward.KIND_ITEM and 'in_game_id' in data:

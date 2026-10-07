@@ -1,15 +1,16 @@
 # Build stage
-FROM node:18-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# Dependencies first, so a change to the code does not reinstall them. `npm ci`
+# installs exactly what package-lock.json pins; the cache mount keeps npm's
+# downloads between builds, so even a changed lock file is mostly a local copy.
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY index.html vite.config.js ./
 COPY public ./public
 COPY src ./src
-# Keep the webpack runtime as a file instead of letting CRA inline it into
-# index.html. An inline <script> would force `script-src 'unsafe-inline'` in the
-# Content-Security-Policy that nginx.conf sets, which would defeat most of the
-# point of having one.
-ENV INLINE_RUNTIME_CHUNK=false
+# Vite emits every script as a file and never inlines one into index.html, which
+# is what lets the Content-Security-Policy in nginx.conf refuse inline script.
 RUN npm run build
 
 

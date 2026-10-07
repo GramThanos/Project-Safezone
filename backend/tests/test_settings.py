@@ -37,7 +37,7 @@ class TestRegistryShape(unittest.TestCase):
     def test_groups_are_known(self):
         for key, spec in settings.REGISTRY.items():
             self.assertIn(spec.get('group', 'operations'),
-                          {'operations', 'mail', 'limits', 'site'}, msg=key)
+                          {'operations', 'coins', 'mail', 'limits', 'site'}, msg=key)
 
 
 class TestCoercion(unittest.TestCase):

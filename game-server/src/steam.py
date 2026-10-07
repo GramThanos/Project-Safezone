@@ -432,3 +432,58 @@ def installed_app_state(appid, install_dir):
         # 4 means "fully installed"; anything else is mid-update or damaged.
         'state_flags': _int(app_state.get('StateFlags')),
     }, None
+
+
+def workshop_manifest_path(install_dir):
+    """Where SteamCMD records the Workshop items it has installed."""
+    return os.path.join(os.path.abspath(install_dir), 'steamapps', 'workshop',
+                        f'appworkshop_{WORKSHOP_APP_ID}.acf')
+
+
+def parse_workshop_manifest(parsed):
+    """``{item_id: {'timeupdated', 'size'}}`` from a parsed appworkshop .acf.
+
+    Pure, so the shape this depends on is testable without a manifest on disk.
+    `timeupdated` is the Workshop's own `time_updated` for the version that was
+    downloaded, which is what makes it comparable with what the Workshop API
+    reports now: one clock, Steam's, on both sides. The file's modification time
+    on disk would be the download time instead, and every mod would look new.
+    """
+    root = parsed.get('AppWorkshop') if isinstance(parsed, dict) else None
+    installed = root.get('WorkshopItemsInstalled') if isinstance(root, dict) else None
+    if not isinstance(installed, dict):
+        return {}
+
+    def _int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    items = {}
+    for item_id, entry in installed.items():
+        item_id = str(item_id).strip()
+        if not item_id.isdigit() or not isinstance(entry, dict):
+            continue
+        items[item_id] = {
+            'timeupdated': _int(entry.get('timeupdated')),
+            'size': _int(entry.get('size')),
+        }
+    return items
+
+
+def installed_workshop_items(install_dir):
+    """What Steam says it installed from the Workshop. Returns ``(items, error)``.
+
+    No manifest is a normal answer - nothing has been downloaded yet - and
+    returns an empty mapping with no error.
+    """
+    path = workshop_manifest_path(install_dir)
+    if not os.path.isfile(path):
+        return {}, None
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+            parsed = vdf.load(handle)
+    except Exception as e:
+        return {}, f"Could not read {path}: {e}"
+    return parse_workshop_manifest(parsed), None

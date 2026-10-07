@@ -147,6 +147,14 @@ class GameManager:
         self.game_server_quit_timeout = 60
         self.running_healthcheck_timeout = 5
 
+        # Maintenance hold. While the maintenance worker holds the install, no
+        # server may run the game or listen for a wake: the files every server
+        # shares are about to be replaced. The desired state is deliberately
+        # left alone - a hold is not the operator changing their mind - so when
+        # it lifts each server simply goes back to whatever it was meant to be
+        # doing. Read once per reconcile pass; see _read_maintenance_hold.
+        self._held = False
+
         # Crash-loop guard. Restarting a dead server is the right reflex, but an
         # unbounded one hides the outage: a server that dies on startup (bad mod,
         # corrupt save, port already bound) would otherwise respawn every health
@@ -352,9 +360,44 @@ class GameManager:
             # listener on the way out.
             self.state = "sleeping"
 
+    def _read_maintenance_hold(self):
+        """Whether the maintenance worker is holding every server down.
+
+        Fails open: if Redis cannot be read the answer is "no hold". A Redis
+        outage already stops this manager publishing state and the worker
+        refreshing the hold, and keeping every server down for the length of
+        somebody else's outage would be the larger harm.
+        """
+        return bool(cache.get_value(config.MAINTENANCE_HOLD_KEY))
+
+    def _apply_maintenance_hold(self, game_alive, wake_alive):
+        """Take this server down for maintenance, without touching its goal."""
+        if game_alive:
+            self.log("Maintenance hold: saving and stopping the game server.")
+            self.manage_server_process(start=False)
+        if wake_alive:
+            self.manage_onwake(start=False)
+
+    def _release_maintenance_hold(self):
+        """Forget anything the held-down period would otherwise be blamed for.
+
+        The process that is gone was stopped on purpose, so it is not a crash
+        to report, and the restart that follows is not one to count towards the
+        crash-loop limit.
+        """
+        self._exit_reported_for = self.server_process
+        self._reset_crash_tracking()
+        self._idle_since = None
+        self.log(f"Maintenance hold lifted; returning to '{self.state}'.")
+
     def _publish_live_state(self):
         """Publish the actual runtime state to the cache for the web UI to read."""
-        if self._is_game_server_running():
+        if self._held and not self._is_game_server_running():
+            # Down for maintenance, whatever it would otherwise be. Checked
+            # before the sleeping case: the wake listener is being shut down
+            # and the server must not look joinable on its way out.
+            actual = "maintenance"
+        elif self._is_game_server_running():
             # The process being alive is not the same as the server being
             # joinable: a world takes minutes to load. Until it has answered
             # `players` once (which is what sets _roster_ready) it is booting,
@@ -385,7 +428,10 @@ class GameManager:
         # last real state, so a crash that recovers emits nothing while one that
         # gives up still emits server.failed from the branch above once _failed
         # latches - and "is up" is announced when players can really join.
-        if actual in ("restarting", "booting"):
+        # "maintenance" is the same: the run announces itself once for the
+        # whole stack, and a server returning to the state it had before says
+        # nothing new.
+        if actual in ("restarting", "booting", "maintenance"):
             return
         if actual != self._published_state:
             if self._published_state is not None:
@@ -1281,7 +1327,14 @@ class GameManager:
         """Starts or stops the game server subprocess."""
         with self.resource_lock:
             is_running = self._is_game_server_running()
-            
+
+            if start and not is_running and self._held:
+                # Defence in depth: the reconcile loop does not ask for a launch
+                # while held, but a launch onto files being replaced is the one
+                # outcome the hold exists to rule out.
+                self.log("Not launching: maintenance is holding every server down.")
+                return
+
             if start and not is_running:
                 # CRITICAL: Stop the onwake listener and ensure it's dead before Popen
                 if self._is_onwake_running():
@@ -1356,6 +1409,17 @@ class GameManager:
             current_goal = self.state
             game_alive = self._is_game_server_running()
             wake_alive = self._is_onwake_running()
+
+            held = self._read_maintenance_hold()
+            if held:
+                self._held = True
+                self._apply_maintenance_hold(game_alive, wake_alive)
+                self._publish_live_state()
+                self._stop_event.wait(timeout=self.running_healthcheck_timeout)
+                continue
+            if self._held:
+                self._held = False
+                self._release_maintenance_hold()
 
             # Publish the observed runtime state so the web UI reflects reality.
             self._publish_live_state()

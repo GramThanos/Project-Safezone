@@ -8,6 +8,8 @@ import threading
 # Custom modules
 import database
 import models
+import mods
+import server_config
 
 
 # Logging
@@ -31,6 +33,30 @@ def get_all(limit=None, offset=0):
         
         servers = query.all()
         return [server.to_dict() for server in servers]
+
+def mod_usage():
+    """Which servers reference which Workshop item, and which mod names.
+
+    Read from each server's own INI rather than from a table, because the INI is
+    what the game reads - a cached copy would be one more thing to drift.
+    Returns ``(items, names)``, both mapping value -> sorted server names.
+    """
+    items = {}
+    names = {}
+    for server in get_all():
+        settings, error = server_config.read(server['name'])
+        if error:
+            # A server whose config cannot be read yet (never started) simply
+            # uses nothing; it is not a reason to fail the whole listing.
+            continue
+        values = {s['key']: s.get('value') for s in settings}
+        for item_id in mods.parse_list(values.get('WorkshopItems')):
+            items.setdefault(item_id, set()).add(server['name'])
+        for name in mods.parse_list(values.get('Mods')):
+            names.setdefault(name, set()).add(server['name'])
+    return ({k: sorted(v) for k, v in items.items()},
+            {k: sorted(v) for k, v in names.items()})
+
 
 def _clear_primary(session, except_id=None):
     """Demote every other server, so "primary" stays a single answer."""

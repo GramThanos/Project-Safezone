@@ -87,6 +87,28 @@ def apply_live_state(servers):
     return servers
 
 
+# Written by the game-server's maintenance worker while a run is under way; see
+# `maintenance_store.write_public_notice`. Must match its key.
+MAINTENANCE_NOTICE_KEY = 'maintenance:public'
+
+
+def get_maintenance_notice():
+    """What players should know about maintenance in progress, or None.
+
+    ``{'status': 'announcing' | 'stopping' | 'updating', 'restart_at': ISO or
+    None}`` - deliberately just that: what is being updated is staff business.
+    """
+    r = get_redis_connection()
+    if not r:
+        return None
+    try:
+        raw = r.get(MAINTENANCE_NOTICE_KEY)
+        return json.loads(raw) if raw else None
+    except Exception as e:
+        logger.error(f"Redis maintenance notice read error: {e}")
+        return None
+
+
 def get_online_players(server_id):
     """Return the set of in-game usernames currently online on a server.
 

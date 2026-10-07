@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import re
+import threading
 import time
 import uuid
 import datetime
@@ -15,7 +16,6 @@ import backups
 import mods
 import workshop
 import server_config
-import steam
 import database
 import models
 
@@ -34,12 +34,37 @@ def _log(message):
 BETA_RE = re.compile(r'^[A-Za-z0-9._-]{1,64}$')
 
 
+# States in which a server has no game process and will not start one, so the
+# files it runs can be replaced under it. An allowlist, not "not running": a
+# *sleeping* server launches the game the moment a player queries it, a
+# *restarting* one is between relaunch attempts, and a state key that has
+# expired means its manager is not reporting - any of which can put a live
+# process on top of half-written files. "maintenance" is a server held down by
+# the maintenance worker, which is exactly the state it holds them in for this.
+FILE_SAFE_STATES = ('stopped', 'failed', 'maintenance')
+
+
+def _servers_not_in(safe_states):
+    """Names (with state) of every server outside ``safe_states``."""
+    blocking = []
+    for server in servers.get_all():
+        state = cache.get_value(f"server:{server['id']}:state")
+        if state not in safe_states:
+            blocking.append(f"{server['name']} ({state or 'state unknown'})")
+    return blocking
+
+
 def update_server(data):
     """Install or update the game files via SteamCMD.
 
     `beta` may be given per-task to switch branch without a redeploy; omitted,
     the configured branch is used. Passing it explicitly as an empty string
     means "public", which is how you get back off a beta.
+
+    Refused while any server could be running the files being replaced, the
+    same rule as the uninstall. The exception is a first install: with nothing
+    installed there is nothing to break, and the servers created beforehand are
+    sitting in a restart loop precisely because the game is missing.
     """
     beta = data.get('beta', None)
     if beta is None:
@@ -50,6 +75,16 @@ def update_server(data):
             data['message'] = f"'{beta}' is not a valid branch name"
             return False
     beta = beta or None
+
+    installed, _error = steam.installed_app_state(config.STEAM_APP_ID, config.STEAM_INSTALL_DIR)
+    if installed:
+        blocking = _servers_not_in(FILE_SAFE_STATES)
+        if blocking:
+            data['message'] = ('Every server must be stopped before the game files '
+                               'are updated - or plan it from Maintenance, which '
+                               'warns the players and stops them for you. Still '
+                               'active: ' + ', '.join(blocking))
+            return False
 
     _log(f"steam.app_update('{config.STEAM_APP_ID}', beta='{beta}', install_dir='{config.STEAM_INSTALL_DIR}')")
     ok, err, output = steam.app_update(config.STEAM_APP_ID, beta=beta, install_dir=config.STEAM_INSTALL_DIR)
@@ -84,14 +119,10 @@ def uninstall_server(data):
     keep_mods = data.get('keep_mods', True)
 
     # Safe to delete under: the operator asked it down, or it gave up trying to
-    # come up (which is the broken-install case this exists to repair).
-    SAFE_STATES = ('stopped', 'failed')
-
-    blocking = []
-    for server in servers.get_all():
-        state = cache.get_value(f"server:{server['id']}:state")
-        if state not in SAFE_STATES:
-            blocking.append(f"{server['name']} ({state or 'state unknown'})")
+    # come up (which is the broken-install case this exists to repair). Not a
+    # maintenance hold: that lifts on its own when its run ends, which could
+    # be halfway through the delete.
+    blocking = _servers_not_in(('stopped', 'failed'))
     if blocking:
         data['message'] = ('Every server must be stopped before the game files '
                            'can be removed. Still active: ' + ', '.join(blocking))
@@ -258,6 +289,51 @@ def send_console(server, command_text):
     if not ack.get('ok'):
         return False, ack.get('detail') or 'not delivered'
     return True, None
+
+
+def save_for_snapshot(server, timeout=None, poll=0.5, quiet=1.0):
+    """Ask a running server to save, and wait until players.db shows it.
+
+    Returns ``(saved, detail)``. ``saved`` is None when no save was needed - the
+    server is not running, or nobody is online, in which case the file already
+    holds everyone as they left - True once the file has changed and stopped
+    changing for ``quiet`` seconds, and False when the save could not be sent or
+    never reached the file in time. A False is a warning, not a failure: the
+    caller reads what is on disk, which is merely older.
+    """
+    import characters  # here, so the task worker does not parse saves at import
+
+    state = cache.get_value(f"server:{server['id']}:state")
+    if state != 'running':
+        return None, f'not running ({state or "unknown"})'
+    try:
+        online = json.loads(cache.get_value(f"server:{server['id']}:online_players") or '[]')
+    except (TypeError, ValueError):
+        online = []
+    if not online:
+        return None, 'nobody online'
+
+    path = characters.db_path(server['name'])
+    if not path:
+        return False, 'invalid server name'
+    before = characters.signature(path)
+    ok, detail = send_console(server, 'save')
+    if not ok:
+        return False, f'save not sent: {detail}'
+
+    deadline = time.monotonic() + (config.CHARACTER_SAVE_TIMEOUT if timeout is None else timeout)
+    last = before
+    changed_at = None
+    while time.monotonic() < deadline:
+        time.sleep(poll)
+        current = characters.signature(path)
+        if current != last:
+            last, changed_at = current, time.monotonic()
+        elif changed_at is not None and time.monotonic() - changed_at >= quiet:
+            return True, None
+    if changed_at is not None:
+        return True, 'still being written when the wait ran out'
+    return False, 'the save did not reach players.db in time'
 
 
 def backup_world(data):
@@ -511,6 +587,83 @@ ACTIONS = {
     'update_mods': update_mods,
     'download_workshop': download_workshop,
 }
+
+
+# Actions that run SteamCMD. Two at once share its state directory and step on
+# each other, so anything about to start one checks this first.
+STEAM_ACTIONS = ('update_server', 'uninstall_server', 'get_app_info',
+                 'update_mods', 'download_workshop')
+
+
+def steam_busy():
+    """Whether a SteamCMD task is running right now."""
+    with database.get_context_session() as session:
+        return session.query(models.Task).filter(
+            models.Task.status == 'processing',
+            models.Task.action.in_(STEAM_ACTIONS)
+        ).first() is not None
+
+
+# How often a task run inline refreshes its row, so `reap_stuck` - which judges
+# by `updated_at` - does not take a long SteamCMD run for an abandoned one.
+INLINE_HEARTBEAT_SECONDS = 60
+
+
+def run_inline(data):
+    """Run an action now, on this thread, recorded as a task.
+
+    For the maintenance worker: it has already stopped every server and must
+    run the update while it still holds them, not queue it behind whatever the
+    task worker is doing. The row is created as `processing` so the task worker
+    never picks it up as well, and it ends up looking like any other task -
+    which is what lets the Tasks page show a maintenance update's output.
+
+    Returns ``(ok, task_dict)``.
+    """
+    action_name = data.get('action')
+    action = ACTIONS.get(action_name)
+    data['started_at'] = datetime.datetime.now().isoformat()
+    with database.get_context_session() as session:
+        task = models.Task(status='processing', action=action_name or 'none', data=dict(data))
+        session.add(task)
+        session.commit()
+        task_id = task.id
+
+    done = threading.Event()
+
+    def heartbeat():
+        while not done.wait(INLINE_HEARTBEAT_SECONDS):
+            try:
+                with database.get_context_session() as session:
+                    session.query(models.Task).filter(models.Task.id == task_id).update(
+                        {'updated_at': datetime.datetime.now()}, synchronize_session=False)
+                    session.commit()
+            except Exception as e:
+                _log(f"Heartbeat for task {task_id} failed: {e}")
+
+    beat = threading.Thread(target=heartbeat, daemon=True)
+    beat.start()
+    ok = False
+    try:
+        if not action:
+            data['message'] = 'Unknown action'
+        else:
+            ok = bool(action(data))
+    except Exception as e:
+        _log(f"Inline task {task_id} ({action_name}) raised: {e}")
+        data['message'] = f"Error: {e}"
+    finally:
+        done.set()
+
+    data['result'] = 'success' if ok else 'failure'
+    data['message'] = data.get('message') or ('Task completed' if ok else 'Action returned False')
+    data['ended_at'] = datetime.datetime.now().isoformat()
+    with database.get_context_session() as session:
+        task = session.query(models.Task).filter(models.Task.id == task_id).first()
+        task.status = 'completed'
+        task.data = data
+        session.commit()
+        return ok, task.to_dict()
 
 
 # Tasks

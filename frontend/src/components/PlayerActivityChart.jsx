@@ -1,5 +1,6 @@
 // Chart showing the player-activity using Chart.js
 import React, { useEffect, useRef } from 'react';
+import { formatTime } from '../utils/dates';
 
 const ACCENT = '#dc3545';
 
@@ -21,7 +22,7 @@ function PlayerActivityChart({ history = [], height = 170 }) {
 			type: 'line',
 			data: {
 				labels: series.map((p) =>
-					new Date(p.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+					formatTime(p.t)
 				),
 				datasets: [{
 					label: 'online',

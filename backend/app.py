@@ -23,6 +23,9 @@ from src.routes.inventory import inventory_bp
 from src.routes.invitations import invitations_bp
 from src.routes.notifications import notifications_bp
 from src.routes.reports import reports_bp
+from src.routes.push import push_bp
+from src.routes.shop import coins_bp, shop_bp
+from src.routes.shop_admin import shop_admin_bp
 from src.database import db
 from src.utils.redis_utils import get_redis_connection
 from src.utils.game_server import gs_request
@@ -52,7 +55,7 @@ CORS(app,
      origins=app.config['ALLOWED_ORIGINS'],
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-     allow_headers=['Content-Type', 'Authorization'])
+     allow_headers=['Content-Type', 'Authorization', 'X-Client'])
 
 configure_logging(app)
 
@@ -91,6 +94,10 @@ app.register_blueprint(inventory_bp)
 app.register_blueprint(invitations_bp)
 app.register_blueprint(notifications_bp)
 app.register_blueprint(reports_bp)
+app.register_blueprint(push_bp)
+app.register_blueprint(coins_bp)
+app.register_blueprint(shop_bp)
+app.register_blueprint(shop_admin_bp)
 
 
 @app.route('/')

@@ -32,6 +32,15 @@ def inventory_deadline():
     return _deadline('inventory_expiry_days')
 
 
+def shop_deadline():
+    """When a shop purchase made now should expire if never sent, or None.
+
+    Its own setting: something a player paid for is not the same bargain as a
+    free drop, and an operator may well want it to last longer.
+    """
+    return _deadline('shop_item_expiry_days')
+
+
 def is_expired(row, now=None):
     """Whether a row carrying `expires_at` is past it."""
     deadline = getattr(row, 'expires_at', None)

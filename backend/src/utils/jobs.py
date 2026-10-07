@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 REGISTRY = {}
 
+# A snapshot may wait for the game to save before it reads, so it is given far
+# longer than an ordinary request to the game-server.
+SNAPSHOT_TIMEOUT = 90
+
 
 def job(kind, default_interval, description):
     """Register a handler under a job kind."""
@@ -360,35 +364,235 @@ def prune_staff_alerts(session, params=None):
     return f'removed {removed} staff feed entr{"y" if removed == 1 else "ies"} older than {days} days'
 
 
-@job('server_maintenance', 86400, 'Queue a maintenance task on a game server')
-def server_maintenance(session, params=None):
-    """Queue a recurring task against the game-server.
+@job('prune_coin_log', 86400,
+     'Delete coin history and shop purchase records older than the retention window')
+def prune_coin_log(session, params=None):
+    """Keep the coin log and the purchase records to their retention window.
 
-    Params: `action` (a game-server task action, e.g. `update_server`) and
-    optionally `warn_minutes` to broadcast a warning first.
-
-    Deliberately thin: the game-server owns tasks, so this creates one and lets
-    the existing worker do the job rather than reaching across the boundary.
+    Both are history rather than state: every total anything shows is a counter
+    on the row it describes, so trimming them changes no balance, no
+    "earned so far" and no listing's sales count. A daily limit reads only
+    today's purchases and the daily summary only yesterday's gains, which is why
+    the window cannot be shorter than two days.
     """
+    from src.models.coin_log import CoinLog
+    from src.models.shop_purchase import ShopPurchase
+
+    days = settings.get('coin_log_retention_days') or 0
+    if days <= 0:
+        return 'skipped: coin history is kept indefinitely'
+    days = max(days, 2)
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    gains = (session.query(CoinLog)
+             .filter(CoinLog.created_at < cutoff)
+             .delete(synchronize_session=False))
+    purchases = (session.query(ShopPurchase)
+                 .filter(ShopPurchase.created_at < cutoff)
+                 .delete(synchronize_session=False))
+    return f'removed {gains} coin log entr{"y" if gains == 1 else "ies"} and {purchases} purchase record(s) older than {days} days'
+
+
+@job('crate_reminder', 300,
+     "Send a notification to players whose daily crate is still unclaimed at the reminder time")
+def crate_reminder(session, params=None):
+    """Remind everyone with notifications on whose daily crate is still waiting.
+
+    Once a day, at `crate_reminder_time` in the primary server's timezone - the
+    same clock the crate day itself runs on. The job runs every few minutes and
+    does nothing until that time comes; the first run inside the window sends,
+    and a Redis mark keyed to the day keeps every later run (and a second
+    scheduler) from sending again.
+
+    The mark fails *closed*, unlike the alert cooldowns: an alert that goes out
+    twice is a duplicate, while a reminder that goes out every five minutes
+    because Redis is down is a reason to switch notifications off for good.
+
+    Only subscriptions whose sign-in session is still alive are sent to. Every
+    run first deletes the ones whose session has expired, and the send deletes
+    those whose session was ended by a password change or "sign out
+    everywhere": a device nobody is signed in on stops getting reminders, and
+    signing in on it again binds it afresh.
+    """
+    from src.models.event import Event
+    from src.models.push_subscription import PushSubscription
+    from src.utils import events, push
+    from src.utils.redis_utils import get_redis_connection
+
+    lapsed = (session.query(PushSubscription)
+              .filter((PushSubscription.session_expires_at.is_(None))
+                      | (PushSubscription.session_expires_at <= datetime.utcnow()))
+              .delete(synchronize_session=False))
+    if lapsed:
+        logger.info(f"crate_reminder: removed {lapsed} subscription(s) whose session expired")
+
+    at = push.parse_time(settings.get('crate_reminder_time'))
+    if at is None:
+        return 'skipped: the reminder time is not a valid HH:MM'
+
+    now_local = datetime.now(daily.primary_timezone())
+    if not push.reminder_due(now_local, at):
+        return f'not due: reminders go out at {at:%H:%M}'
+    today = now_local.date()
+
+    event = events.system_event(session, Event.TYPE_DAILY)
+    if not event or not event.enabled or not events.event_box_entries(session, event.id):
+        return 'skipped: there is no daily crate to claim'
+
+    try:
+        first = get_redis_connection().set(f'push:crate-reminder:{today.isoformat()}', '1',
+                                           nx=True, ex=2 * 86400)
+    except Exception as e:
+        return f'skipped: could not check whether today was already sent ({e})'
+    if not first:
+        return f'already sent for {today}'
+
+    claimed = (session.query(UserBox.user_id)
+               .filter(UserBox.source == UserBox.SOURCE_DAILY,
+                       UserBox.grant_date == today))
+    rows = (session.query(PushSubscription.id, PushSubscription.endpoint,
+                          PushSubscription.token_version, User.token_version)
+            .join(User, User.id == PushSubscription.user_id)
+            .filter(User.role != User.ROLE_BANNED,
+                    ~PushSubscription.user_id.in_(claimed))
+            .all())
+    # Made in a session that has since been ended. Deleted by id rather than
+    # with a subquery, which MariaDB refuses on the table being deleted from.
+    ended = [sub_id for sub_id, _, sub_tv, user_tv in rows if sub_tv != (user_tv or 0)]
+    if ended:
+        (session.query(PushSubscription)
+         .filter(PushSubscription.id.in_(ended))
+         .delete(synchronize_session=False))
+    endpoints = [endpoint for _, endpoint, sub_tv, user_tv in rows if sub_tv == (user_tv or 0)]
+    if not endpoints:
+        return 'nobody with notifications on has an unclaimed crate'
+
+    ttl = push.seconds_until_midnight(now_local)
+
+    def deliver():
+        # Outside the job's transaction: this waits on the game-server and on
+        # the push services behind it.
+        from src.database import db
+        outcomes = push.send(endpoints, ttl=ttl, topic='daily-crate')
+        with db.get_db() as s:
+            sent, removed = push.record(s, outcomes)
+        logger.info(f"crate_reminder: delivered {sent} of {len(endpoints)}, "
+                    f"removed {removed} dead subscription(s)")
+
+    return f'reminding {len(endpoints)} device(s) of an unclaimed crate', deliver
+
+
+@job('settle_coins', 86400,
+     'Check every linked character and pay the coins it has earned by playing')
+def settle_coins(session, params=None):
+    """Settle what every linked character has earned since it was last checked.
+
+    Characters are also checked whenever their data is looked at; this is the
+    sweep that reaches the ones nobody looks at. One request per server: a
+    running server with players online is told to save first and the read waits
+    for the save to land, so the counts are current rather than as of the last
+    autosave; then every account's character comes back in one read.
+
+    Runs even while coins are switched off, so the counters keep up and
+    switching coins on later pays nothing for the time they were off. The reads
+    wait on the game-server, so they run after the job's transaction, and each
+    character is settled in a transaction of its own.
+    """
+    from src.models.character import Character
+    from src.utils import coins
     from src.utils.game_server import gs_request
 
-    params = params or {}
-    action = params.get('action')
-    if not action:
-        return 'skipped: no action configured'
+    by_server = {}
+    for character_id, server_id, username in (
+            session.query(Character.id, Character.server_id, Character.in_game_username)
+            .filter(Character.verified.is_(True),
+                    Character.server_id.isnot(None),
+                    Character.in_game_username.isnot(None))):
+        by_server.setdefault(server_id, []).append((character_id, username))
+    if not by_server:
+        return 'no linked characters to settle'
 
-    warn_minutes = params.get('warn_minutes')
-    server_id = params.get('server_id')
-    if warn_minutes and server_id:
-        gs_request('POST', f'/api/servers/{server_id}/command', json={
-            'command': f'servermsg "Server maintenance in {warn_minutes} minutes."'
-        })
+    def settle_all():
+        read = paid = 0
+        notes = []
+        for server_id, linked in sorted(by_server.items()):
+            payload, status = gs_request('POST', f'/api/servers/{server_id}/characters/snapshot',
+                                         json={'save': True}, timeout=SNAPSHOT_TIMEOUT)
+            if status != 200:
+                notes.append(f"server {server_id}: {(payload or {}).get('error') or status}")
+                continue
+            data = payload.get('data') or {}
+            if data.get('saved') is False:
+                notes.append(f"server {server_id}: read the last save, a new one did not land "
+                              f"({data.get('save_detail')})")
+            found = {(c.get('username') or '').lower(): c for c in data.get('characters') or []}
+            for character_id, username in linked:
+                reading = coins.reading_from_summary(found.get(username.lower()),
+                                                     data.get('saved_at'))
+                if reading is None:
+                    continue
+                read += 1
+                paid += coins.settle_quietly(character_id, reading)
+        return f"read {read}, paid {paid} coin(s)" + ''.join(f'; {n}' for n in notes)
 
-    payload, status = gs_request('POST', '/api/tasks', json={'action': action})
-    if status not in (200, 201):
-        raise RuntimeError(f"game-server refused the task: {payload.get('error')}")
-    task = payload.get('data') or {}
-    return f"queued {action} as task {task.get('id')}"
+    count = sum(len(v) for v in by_server.values())
+    return f'settling {count} linked character(s) on {len(by_server)} server(s)', settle_all
+
+
+@job('coin_report', 3600,
+     "Tell each player once a day what they earned in coins the day before")
+def coin_report(session, params=None):
+    """One notification per player for yesterday's coins, instead of one per payment.
+
+    Runs every hour and does nothing until the day has turned in the primary
+    server's timezone; the first run after that reports, and a Redis mark keyed
+    to the day keeps every later run (and a second scheduler) from reporting
+    again. The mark fails closed, as the crate reminder's does: a report that
+    goes out every hour because Redis is down is worse than one that is missed.
+
+    Staff grants are left out - each already told the player, with its reason.
+    """
+    from src.models.coin_log import CoinLog
+    from src.utils import coins
+    from src.utils.redis_utils import get_redis_connection
+
+    if not coins.enabled():
+        return 'skipped: coins are switched off'
+
+    yesterday = daily.today() - timedelta(days=1)
+    start, end = coins.day_bounds(yesterday)
+
+    try:
+        first = get_redis_connection().set(f'coins:report:{yesterday.isoformat()}', '1',
+                                           nx=True, ex=3 * 86400)
+    except Exception as e:
+        return f'skipped: could not check whether {yesterday} was already reported ({e})'
+    if not first:
+        return f'already reported {yesterday}'
+
+    rows = (session.query(CoinLog.user_id, CoinLog.source,
+                          func.sum(CoinLog.amount), func.sum(CoinLog.quantity))
+            .join(User, User.id == CoinLog.user_id)
+            .filter(CoinLog.created_at >= start, CoinLog.created_at < end,
+                    CoinLog.source != CoinLog.SOURCE_ADMIN,
+                    User.role != User.ROLE_BANNED)
+            .group_by(CoinLog.user_id, CoinLog.source)
+            .all())
+    gains = {}
+    for user_id, source, amount, quantity in rows:
+        gains.setdefault(user_id, []).append((source, int(amount or 0), int(quantity or 0)))
+
+    for user_id, parts in gains.items():
+        total = sum(amount for _, amount, _ in parts)
+        if total <= 0:
+            continue
+        notify.send(session, user_id, Notification.KIND_COINS,
+                    f'Yesterday you earned {total} coin{"" if total == 1 else "s"}',
+                    body=coins.describe_gains(parts) + '.',
+                    link='/shop')
+    if not gains:
+        return f'nobody earned coins on {yesterday}'
+    return f'reported {yesterday} to {len(gains)} player(s)'
 
 
 def describe():

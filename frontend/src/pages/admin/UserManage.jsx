@@ -6,8 +6,11 @@ import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { getRoleBadge, getStatusBadge, RewardIcon, Spinner } from './helpers';
+import { CharacterGameButton } from '../../components/CharacterGameInfo';
+import { formatDate as formatDay, formatDateTime } from '../../utils/dates';
+import Coins from '../../components/Coins';
 
-const formatDate = (iso) => (iso ? new Date(iso).toLocaleString() : '-');
+const formatDate = (iso) => formatDateTime(iso, '-');
 
 // A card listing one kind of loot, with per-row, selected and "all" removal.
 // Boxes and rewards remove the same way, so they share the table and only
@@ -124,10 +127,84 @@ const REWARD_COLUMNS = [
   { label: 'Expires', render: (i) => (i.expires_at ? formatDate(i.expires_at) : 'never') }
 ];
 
+// Every coin the account has gained, newest first, a page at a time. Spending
+// is not here: purchases and staff deductions are in the audit log. The log is
+// trimmed to the coin history retention setting; the balance is not.
+function CoinLogCard({ userId, token, reloadKey }) {
+  const [rows, setRows] = useState([]);
+  const [more, setMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async (offset) => {
+    setLoading(true);
+    try {
+      const data = await api.admin.users.coinLog(token, userId, offset);
+      setRows((current) => (offset === 0 ? data.log : [...current, ...data.log]));
+      setMore(Boolean(data.pagination?.has_more));
+      setError('');
+    } catch (err) {
+      setError(err.message || 'Could not load the coin log');
+    }
+    setLoading(false);
+  };
+
+  // Again whenever the balance changes, so an adjustment shows at once.
+  useEffect(() => {
+    load(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, reloadKey]);
+
+  return (
+    <div className="card mb-4">
+      <div className="card-header fw-semibold">
+        <i className="fas fa-coins text-warning me-2"></i>Coins gained
+      </div>
+      {error && <div className="card-body"><div className="alert alert-danger mb-0">{error}</div></div>}
+      {rows.length === 0 && !loading && !error ? (
+        <div className="card-body text-body-secondary">
+          No coins gained in the history that is kept (see Settings › Coins).
+        </div>
+      ) : (
+        <div className="table-responsive">
+          <table className="table table-sm table-striped align-middle mb-0">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Amount</th>
+                <th>From</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td className="small text-nowrap">{formatDate(r.created_at)}</td>
+                  <td><Coins amount={r.amount} /></td>
+                  <td>{r.label}</td>
+                  <td className="small text-body-secondary">{r.detail || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {more && (
+        <div className="card-footer text-center">
+          <button className="btn btn-sm btn-outline-secondary" disabled={loading}
+            onClick={() => load(rows.length)}>
+            {loading ? 'Loading…' : 'Show more'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UserManage() {
   const { userId } = useParams();
   const { token, isAdmin } = useAuth();
-  const { confirm } = useDialog();
+  const { confirm, prompt } = useDialog();
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -190,6 +267,10 @@ function UserManage() {
   }
 
   const { user, characters, boxes, inventory } = detail;
+  // Every way a character earns, shown whether or not it is paying right now;
+  // the rate is added for the ones that are.
+  const rateOf = Object.fromEntries((detail.coin_sources || []).map((s) => [s.key, s]));
+  const coinSources = characters[0]?.coins?.sources || [];
 
   // Mails a one-time link rather than setting a password: an admin should never
   // learn a user's credentials.
@@ -223,6 +304,38 @@ function UserManage() {
     'Could not remove the rewards'
   );
 
+  // Signed, with a reason the player is shown. Asked for in one prompt rather
+  // than confirmed afterwards: the amount and the reason are the confirmation.
+  const adjustCoins = async () => {
+    const answer = await prompt({
+      title: `Adjust ${user.username}'s coins`,
+      message: `Balance: ${user.coin_balance || 0}. A positive amount adds coins, a negative one takes them away. The player sees the reason.`,
+      confirmLabel: 'Apply',
+      fields: [
+        { name: 'amount', label: 'Amount', placeholder: 'e.g. 50 or -20', required: true },
+        { name: 'reason', label: 'Reason', required: true }
+      ]
+    });
+    if (!answer) return;
+    const amount = Number(answer.amount.trim());
+    if (!Number.isInteger(amount) || amount === 0) {
+      setError('The amount must be a whole number other than 0.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const data = await api.admin.users.adjustCoins(token, user.id, amount, answer.reason.trim());
+      setNotice(data.message || 'Done.');
+      await loadData();
+    } catch (err) {
+      console.error('Adjust coins error:', err);
+      setError(err.message || 'Could not change the balance');
+    }
+    setBusy(false);
+  };
+
   return (
     <>
       {back}
@@ -241,7 +354,7 @@ function UserManage() {
               </h4>
               <div className="text-body-secondary">{user.email}</div>
               <div className="small text-body-secondary mt-2">
-                Joined {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
+                Joined {formatDay(user.created_at, 'N/A')}
                 {' · '}email {user.email_verified ? 'confirmed' : 'not confirmed'}
                 {' · '}2FA {user.totp_enabled ? 'on' : 'off'}
               </div>
@@ -259,12 +372,21 @@ function UserManage() {
                 </div>
                 <div className="small text-body-secondary">undelivered rewards</div>
               </div>
+              <div>
+                <div className="fs-4 fw-semibold">
+                  <Coins amount={user.coin_balance} />
+                </div>
+                <div className="small text-body-secondary">coins</div>
+              </div>
             </div>
           </div>
 
           <div className="d-flex flex-wrap gap-2 mt-3">
             <button className="btn btn-sm btn-outline-secondary" disabled={busy} onClick={resetPassword}>
               Send reset link
+            </button>
+            <button className="btn btn-sm btn-outline-warning" disabled={busy} onClick={adjustCoins}>
+              <i className="fas fa-coins me-1"></i>Adjust coins
             </button>
             {user.totp_enabled && (
               <button className="btn btn-sm btn-outline-warning" disabled={busy} onClick={disable2fa}>
@@ -283,18 +405,69 @@ function UserManage() {
         {characters.length === 0 ? (
           <div className="card-body text-body-secondary">No linked characters.</div>
         ) : (
-          <ul className="list-group list-group-flush">
-            {characters.map((c) => (
-              <li key={c.id} className="list-group-item d-flex justify-content-between">
-                <span>{c.in_game_username || c.name}</span>
-                <span className="small text-body-secondary">
-                  server {c.server_id ?? '-'} · last seen {formatDate(c.last_seen_at)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="table-responsive">
+            <table className="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Character</th>
+                  <th>Server</th>
+                  <th>Linked</th>
+                  <th>Last seen</th>
+                  {coinSources.map((s) => (
+                    <th key={s.key} title={`Paid for / last reading${rateOf[s.key]
+                      ? ` - ${rateOf[s.key].coins} coin(s) per ${rateOf[s.key].per} ${s.unit}` : ' - not paying right now'}`}>
+                      {s.label}
+                    </th>
+                  ))}
+                  <th title="Coins earned by playing, all time">Earned</th>
+                  <th title="When the game's numbers were last read">Checked</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {characters.map((c) => (
+                  <tr key={c.id}>
+                    <td>
+                      <span className="fw-semibold">{c.in_game_username || c.name}</span>
+                      {c.coins?.life && (
+                        <div className="small text-body-secondary" title="The character's name in the save - a new name means a new life">
+                          {c.coins.life}
+                        </div>
+                      )}
+                    </td>
+                    <td>{c.server_id ?? '-'}</td>
+                    <td className="small">{formatDay(c.created_at, '-')}</td>
+                    <td className="small">{formatDate(c.last_seen_at)}</td>
+                    {coinSources.map((s) => {
+                      const progress = c.coins?.sources.find((p) => p.key === s.key);
+                      return (
+                        <td key={s.key} className="small">
+                          {progress?.seen == null ? '-' : (
+                            <span title={`${progress.counted} paid for, ${progress.seen} at the last reading`}>
+                              {progress.counted.toLocaleString()} / {progress.seen.toLocaleString()}
+                            </span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td><Coins amount={c.coins?.earned} /></td>
+                    <td className="small" title={c.coins?.saved_at ? `Save of ${formatDate(c.coins.saved_at)}` : undefined}>
+                      {formatDate(c.coins?.checked_at)}
+                    </td>
+                    <td className="text-end">
+                      {c.deliverable && (
+                        <CharacterGameButton characterId={c.id} title={c.in_game_username} />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
+
+      <CoinLogCard userId={user.id} token={token} reloadKey={user.coin_balance} />
 
       <LootTable
         title="Unopened boxes"

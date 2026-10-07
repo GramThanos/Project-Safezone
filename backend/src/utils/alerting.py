@@ -105,6 +105,39 @@ EVENTS = {
         'label': 'Server gives up starting',
         'help': 'It wanted to be up and could not stay up. Worth waking somebody for.',
     },
+    'maintenance.available': {
+        'group': 'Maintenance', 'source': 'game', 'color': BLURPLE,
+        'label': 'Game or mod update found',
+        'help': 'Once per new build or mod version, saying whether it waits for '
+                'an admin to approve it.',
+    },
+    'maintenance.scheduled': {
+        'group': 'Maintenance', 'source': 'game', 'color': BLURPLE,
+        'label': 'Maintenance planned',
+        'help': 'An update is waiting for an empty server, the maintenance '
+                'window or the maximum wait.',
+    },
+    'maintenance.started': {
+        'group': 'Maintenance', 'source': 'game', 'color': AMBER,
+        'label': 'Servers going down for maintenance',
+        'help': 'The countdown has started, or nobody was on and the servers '
+                'are stopping straight away.',
+    },
+    'maintenance.completed': {
+        'group': 'Maintenance', 'source': 'game', 'color': GREEN,
+        'label': 'Maintenance finished',
+    },
+    'maintenance.failed': {
+        'group': 'Maintenance', 'source': 'game', 'color': RED,
+        'label': 'Maintenance failed',
+        'help': 'The servers are released either way; the installation may '
+                'need looking at.',
+    },
+    'maintenance.cancelled': {
+        'group': 'Maintenance', 'source': 'game', 'color': GREY,
+        'label': 'Maintenance cancelled',
+        'help': 'Says who called it off.',
+    },
     'character.linked': {
         'group': 'Accounts', 'scoped': True, 'color': GREEN,
         'label': 'Character linked to an account',
@@ -153,7 +186,7 @@ EVENTS = {
 }
 
 # Panel ordering. Groups not listed here fall to the end alphabetically.
-GROUP_ORDER = ['Game', 'Accounts', 'Moderation', 'Loot', 'Operations']
+GROUP_ORDER = ['Game', 'Maintenance', 'Accounts', 'Moderation', 'Loot', 'Operations']
 
 
 def describe():
@@ -453,10 +486,56 @@ def _render(entry):
         return (f'{server} keeps failing to start',
                 'The manager has stopped retrying. Check the server log for why.',
                 None)
+    if event.startswith('maintenance.'):
+        return _render_maintenance(event, entry)
 
     # An event kind this version does not know how to phrase. Say something
     # rather than dropping it silently.
     return f'{server}: {event}', None, None
+
+
+def _render_maintenance(event, entry):
+    """Phrase a maintenance event. Covers the whole stack, so no server name."""
+    summary = entry.get('summary') or 'updates'
+    fields = []
+    game = entry.get('game') or {}
+    if game.get('available_build'):
+        fields.append(('Game build', f"{game.get('installed_build')} -> {game.get('available_build')}"))
+    mods = entry.get('mods') or []
+    if mods:
+        shown = ', '.join(str(m) for m in mods[:10])
+        fields.append(('Mods', shown + (f' and {len(mods) - 10} more' if len(mods) > 10 else '')))
+    actor = entry.get('actor')
+
+    if event == 'maintenance.available':
+        waiting = entry.get('needs_approval') or []
+        description = ('Waiting for an admin to approve: ' + ', '.join(waiting)
+                       if waiting else None)
+        return f'Update available: {summary}', description, fields or None
+    if event == 'maintenance.scheduled':
+        when = ('going now' if entry.get('immediate')
+                else 'waiting for an empty server or the maintenance window')
+        return (f'Maintenance planned: {summary}',
+                f"{when.capitalize()}." + (f' Planned by {actor}.' if actor else ''),
+                fields or None)
+    if event == 'maintenance.started':
+        countdown = int(entry.get('countdown') or 0)
+        if countdown:
+            minutes = max(1, round(countdown / 60))
+            description = (f"Players have been warned; every server stops in about "
+                           f"{minutes} minute{'s' if minutes != 1 else ''}.")
+        else:
+            description = 'Nobody was playing, so every server is stopping now.'
+        return f'Servers going down for maintenance: {summary}', description, fields or None
+    if event == 'maintenance.completed':
+        return f'Maintenance finished: {summary}', 'Every server is back to its usual state.', fields or None
+    if event == 'maintenance.failed':
+        return (f'Maintenance failed: {summary}',
+                entry.get('error') or 'The servers have been released.', fields or None)
+    if event == 'maintenance.cancelled':
+        return (f'Maintenance cancelled: {summary}',
+                f'Called off by {actor}.' if actor else None, fields or None)
+    return f'Maintenance: {event}', None, None
 
 
 def _too_old(timestamp):
@@ -516,8 +595,10 @@ def drain(limit=200):
                 continue
 
             title, description, fields = _render(entry)
+            link = ('/admin/installations' if event.startswith('maintenance.')
+                    else '/admin/servers')
             dispatch(event, title, description=description, fields=fields,
-                     server_id=entry.get('server_id'), link='/admin/servers')
+                     server_id=entry.get('server_id'), link=link)
     except Exception as e:
         logger.error(f"Draining the alert queue failed: {e}")
     return handled

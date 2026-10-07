@@ -1,6 +1,6 @@
 """Inventory item: a reward an account owns, awaiting delivery to a character."""
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from src.database import Base
 
 
@@ -16,6 +16,11 @@ class InventoryItem(Base):
 
     SOURCE_BOX = 'box'
     SOURCE_ADMIN = 'admin'
+    SOURCE_SHOP = 'shop'
+
+    # What may still be sold back for coins: it is in the player's hands, not
+    # on its way into the game and not already there.
+    SELLABLE = (STATUS_HELD, STATUS_FAILED)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
@@ -33,6 +38,23 @@ class InventoryItem(Base):
     expires_at = Column(DateTime)    # null = never expires
     sent_at = Column(DateTime)       # when delivery was dispatched (staleness clock)
     delivered_at = Column(DateTime)
+    # Whether this holding still carries its reward's sell value. A reward is
+    # worth its coin value once, however many items it holds, so when a send
+    # splits a holding the value stays with the part left behind and the part
+    # sent loses it - otherwise a split whose delivery failed and came back
+    # would be two holdings to sell instead of one.
+    sellable = Column(Boolean, nullable=False, default=True)
+
+    def sell_value(self, reward, now=None):
+        """Coins this holding sells back for right now; 0 if it cannot be sold.
+
+        The reward's coin value, once: a holding of fifty nails is one reward.
+        """
+        if reward is None or self.status not in self.SELLABLE or self.sellable is False:
+            return 0
+        if self.expires_at is not None and self.expires_at <= (now or datetime.utcnow()):
+            return 0
+        return max(reward.coin_value or 0, 0)
 
     def to_dict(self, reward=None):
         data = {
@@ -54,4 +76,7 @@ class InventoryItem(Base):
         }
         if reward is not None:
             data['reward'] = reward.to_dict()
+            # Worked out here rather than in the browser, so what the discard
+            # dialog promises is exactly what the server will pay.
+            data['sell_value'] = self.sell_value(reward)
         return data

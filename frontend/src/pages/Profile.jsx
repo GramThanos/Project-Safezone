@@ -8,6 +8,8 @@ import api from '../services/api';
 import usePageTitle from '../hooks/usePageTitle';
 import ConfirmDialog from '../components/ConfirmDialog';
 import TwoFactorSettings from '../components/TwoFactorSettings';
+import NotificationSettings from '../components/NotificationSettings';
+import { formatDate } from '../utils/dates';
 
 function Profile() {
   usePageTitle('Profile');
@@ -200,7 +202,7 @@ function Profile() {
 
                 <div className="mb-0">
                   <label className="text-body-secondary">Member Since</label>
-                  <div>{user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</div>
+                  <div>{formatDate(user?.created_at, 'N/A')}</div>
                 </div>
               </div>
             </div>
@@ -281,6 +283,8 @@ function Profile() {
                 </div>
 
                 <TwoFactorSettings />
+
+                <NotificationSettings />
 
                 <div className="card mb-4">
                   <div className="card-body p-4">

@@ -1,5 +1,7 @@
 // API service for backend communication
-const API_URL = process.env.REACT_APP_API_URL || '';
+// Empty means same-origin, which is how production runs (nginx proxies /api).
+// VITE_API_URL is read at build time, for a frontend served elsewhere.
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 // Helper function to handle API responses
 const handleResponse = async (response) => {
@@ -10,10 +12,21 @@ const handleResponse = async (response) => {
   if (!response.ok) {
     const error = new Error(data.error || 'Request failed');
     error.status = response.status;
+    // The rest of the body, for endpoints that explain more than one thing -
+    // a form's per-field `errors`, for one.
+    error.data = data;
     throw error;
   }
   return data;
 };
+
+// Whether this page is the installed app rather than a browser tab. Sent as
+// `X-Client` wherever a session is issued or refreshed, because the app's
+// sessions last longer than the website's.
+export const isInstalled = () =>
+  window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+const clientHeader = () => ({ 'X-Client': isInstalled() ? 'app' : 'web' });
 
 export const api = {
   // Service version and the state of what the API depends on. Public, and
@@ -41,7 +54,7 @@ export const api = {
     signin: async (username, password) => {
       const response = await fetch(`${API_URL}/api/auth/signin`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clientHeader() },
         body: JSON.stringify({ username, password })
       });
       return handleResponse(response);
@@ -51,7 +64,7 @@ export const api = {
     signup: async (username, email, password, extra = {}) => {
       const response = await fetch(`${API_URL}/api/auth/signup`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clientHeader() },
         body: JSON.stringify({ username, email, password, ...extra })
       });
       return handleResponse(response);
@@ -72,8 +85,17 @@ export const api = {
     signinVerify2fa: async (mfaToken, code) => {
       const response = await fetch(`${API_URL}/api/auth/signin/2fa`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clientHeader() },
         body: JSON.stringify({ mfa_token: mfaToken, code })
+      });
+      return handleResponse(response);
+    },
+    // The session check: { user, token }. 401 means the session has ended;
+    // the token is a new one when the old was due for renewal, else the same.
+    refresh: async (token) => {
+      const response = await fetch(`${API_URL}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, ...clientHeader() }
       });
       return handleResponse(response);
     },
@@ -126,7 +148,8 @@ export const api = {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          ...clientHeader()
         },
         body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
       });
@@ -145,7 +168,7 @@ export const api = {
     resetPassword: async (resetToken, newPassword, clearTwoFactor = false) => {
       const response = await fetch(`${API_URL}/api/auth/password/reset`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clientHeader() },
         body: JSON.stringify({ token: resetToken, new_password: newPassword, clear_2fa: clearTwoFactor })
       });
       return handleResponse(response);
@@ -270,6 +293,40 @@ export const api = {
     }
   },
 
+  // Browser notifications for this device (see hooks/usePush).
+  push: {
+    // The key a browser subscribes with, and whether reminders are being sent.
+    key: async (token) => {
+      const response = await fetch(`${API_URL}/api/push/key`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    // `subscription` is the browser's PushSubscription.toJSON().
+    subscribe: async (token, subscription) => {
+      const response = await fetch(`${API_URL}/api/push/subscriptions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(subscription)
+      });
+      return handleResponse(response);
+    },
+    unsubscribe: async (token, endpoint) => {
+      const response = await fetch(`${API_URL}/api/push/subscriptions`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ endpoint })
+      });
+      return handleResponse(response);
+    }
+  },
+
   invitations: {
     list: async (token) => {
       const response = await fetch(`${API_URL}/api/invitations`, {
@@ -308,6 +365,14 @@ export const api = {
     },
     get: async (token, id) => {
       const response = await fetch(`${API_URL}/api/characters/${id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    // What the game last saved about a linked character, as its owner may see
+    // it. Read from the server's save by the game-server and cached briefly.
+    game: async (token, id) => {
+      const response = await fetch(`${API_URL}/api/characters/${id}/game`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       return handleResponse(response);
@@ -444,6 +509,47 @@ export const api = {
     }
   },
 
+  // Whether coins are on, this account's balance, and what zombie kills earn.
+  coins: {
+    get: async (token) => {
+      const response = await fetch(`${API_URL}/api/coins`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    // Each linked character's progress to its next coin. Checks them first,
+    // so it can take a moment.
+    characters: async (token) => {
+      const response = await fetch(`${API_URL}/api/coins/characters`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    }
+  },
+
+  // The coin shop. Answers 404 while coins are switched off.
+  shop: {
+    get: async (token) => {
+      const response = await fetch(`${API_URL}/api/shop`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return handleResponse(response);
+    },
+    // `price` is the price the player was shown; if the listing has changed
+    // since, nothing is bought and the 409 carries the new price.
+    buy: async (token, itemId, price) => {
+      const response = await fetch(`${API_URL}/api/shop/items/${itemId}/buy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ price })
+      });
+      return handleResponse(response);
+    }
+  },
+
   // Claim request endpoints (account ↔ in-game character linking)
   claims: {
     getMine: async (token) => {
@@ -537,6 +643,26 @@ export const api = {
         const response = await fetch(`${API_URL}/api/admin/users/${userId}/disable-2fa`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // Every coin the account has gained, newest first.
+      coinLog: async (token, userId, offset = 0, limit = 25) => {
+        const response = await fetch(
+          `${API_URL}/api/admin/users/${userId}/coin-log?limit=${limit}&offset=${offset}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+        return handleResponse(response);
+      },
+      // `amount` is signed: positive adds coins, negative takes them away.
+      adjustCoins: async (token, userId, amount, reason) => {
+        const response = await fetch(`${API_URL}/api/admin/users/${userId}/coins`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ amount, reason })
         });
         return handleResponse(response);
       }
@@ -966,6 +1092,16 @@ export const api = {
         });
         return handleResponse(response);
       },
+      // One page of rewards matching `q` (name, item id or description).
+      search: async (token, { q = '', kind = '', limit = 20, offset = 0 } = {}) => {
+        const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+        if (q) params.set('q', q);
+        if (kind) params.set('kind', kind);
+        const response = await fetch(`${API_URL}/api/admin/rewards?${params}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
       create: async (token, data) => {
         const response = await fetch(`${API_URL}/api/admin/rewards`, {
           method: 'POST',
@@ -990,6 +1126,61 @@ export const api = {
       },
       delete: async (token, id) => {
         const response = await fetch(`${API_URL}/api/admin/rewards/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
+    // The coin shop: categories, and the reward listings inside them.
+    shop: {
+      get: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/shop`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      createCategory: async (token, data) => {
+        const response = await fetch(`${API_URL}/api/admin/shop/categories`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      updateCategory: async (token, id, data) => {
+        const response = await fetch(`${API_URL}/api/admin/shop/categories/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      deleteCategory: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/shop/categories/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      createItem: async (token, data) => {
+        const response = await fetch(`${API_URL}/api/admin/shop/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      updateItem: async (token, id, data) => {
+        const response = await fetch(`${API_URL}/api/admin/shop/items/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(data)
+        });
+        return handleResponse(response);
+      },
+      deleteItem: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/shop/items/${id}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -1196,6 +1387,16 @@ export const api = {
         return handleResponse(response);
       }
     },
+    // A linked character's saved game data, as staff see it (with the zombie
+    // infection players are not shown). Moderator-readable, and audited.
+    characters: {
+      game: async (token, id) => {
+        const response = await fetch(`${API_URL}/api/admin/characters/${id}/game`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
     claims: {
       getAll: async (token, status) => {
         const url = status ? `${API_URL}/api/admin/claims?status=${status}` : `${API_URL}/api/admin/claims`;
@@ -1276,6 +1477,68 @@ export const api = {
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({ keep_mods: keepMods })
+        });
+        return handleResponse(response);
+      }
+    },
+    // Checking for game and mod updates and taking every server down to apply
+    // them. The game-server's maintenance worker does the work; these read its
+    // state and record decisions. A moderator may read it and cancel a run.
+    maintenance: {
+      get: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/maintenance`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      savePolicy: async (token, policy) => {
+        const response = await fetch(`${API_URL}/api/admin/maintenance/policy`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ policy })
+        });
+        return handleResponse(response);
+      },
+      // Runs on the worker, not in the request: a game check is a SteamCMD
+      // call. Poll `get` for the answer.
+      check: async (token, kinds = ['game', 'mods']) => {
+        const response = await fetch(`${API_URL}/api/admin/maintenance/check`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ kinds })
+        });
+        return handleResponse(response);
+      },
+      // `mode` is 'auto' (wait for an empty server, the window or the maximum
+      // wait) or 'now' (start the countdown straight away).
+      plan: async (token, { game, mods, mode }) => {
+        const response = await fetch(`${API_URL}/api/admin/maintenance/runs`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ game, mods, mode })
+        });
+        return handleResponse(response);
+      },
+      now: async (token, runId) => {
+        const response = await fetch(`${API_URL}/api/admin/maintenance/runs/${runId}/now`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      cancel: async (token, runId) => {
+        const response = await fetch(`${API_URL}/api/admin/maintenance/runs/${runId}/cancel`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
       }

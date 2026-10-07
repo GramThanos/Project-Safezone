@@ -22,6 +22,7 @@ class Config:
     # JWT Configuration
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     TOKEN_EXPIRY_HOURS = int(os.getenv('TOKEN_EXPIRY_HOURS', '24'))
+    APP_SESSION_DAYS = int(os.getenv('APP_SESSION_DAYS', '30'))
     TOKEN_ISSUER = os.getenv('TOKEN_ISSUER', 'safezone-api')
     TOKEN_AUDIENCE = os.getenv('TOKEN_AUDIENCE', 'safezone-frontend')
     
@@ -72,6 +73,14 @@ class Config:
     INVENTORY_EXPIRY_DAYS = int(os.getenv('INVENTORY_EXPIRY_DAYS', '0'))
     AUDIT_RETENTION_DAYS = int(os.getenv('AUDIT_RETENTION_DAYS', '0'))
     STAFF_ALERT_RETENTION_DAYS = int(os.getenv('STAFF_ALERT_RETENTION_DAYS', '30'))
+    CRATE_REMINDER_TIME = os.getenv('CRATE_REMINDER_TIME', '18:00')
+    # Coins: earned by selling rewards back and by killing zombies, spent in the
+    # shop. Off by default - an economy is something an operator opts into.
+    COINS_ENABLED = os.getenv('COINS_ENABLED', 'false').lower() == 'true'
+    COINS_PER_KILL_STEP = int(os.getenv('COINS_PER_KILL_STEP', '1'))
+    KILLS_PER_COIN_STEP = int(os.getenv('KILLS_PER_COIN_STEP', '10'))
+    SHOP_ITEM_EXPIRY_DAYS = int(os.getenv('SHOP_ITEM_EXPIRY_DAYS', '0'))
+    COIN_LOG_RETENTION_DAYS = int(os.getenv('COIN_LOG_RETENTION_DAYS', '90'))
 
     # --- Site content -------------------------------------------------------
     # What the public pages say. Same mechanism as the settings above: these are

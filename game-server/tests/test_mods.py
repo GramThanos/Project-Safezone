@@ -17,7 +17,7 @@ import mods  # noqa: E402
 
 
 def write_mod(root, item_id, folder, *, name=None, mod_id=None, description=None,
-              requires=None, nested=False):
+              requires=None, nested=False, version=None):
     """Create a downloaded Workshop item containing one mod."""
     base = os.path.join(root, 'steamapps', 'workshop', 'content',
                         mods.WORKSHOP_APP_ID, str(item_id))
@@ -32,6 +32,8 @@ def write_mod(root, item_id, folder, *, name=None, mod_id=None, description=None
         lines.append(f'id={mod_id}')
     if description is not None:
         lines.append(f'description={description}')
+    if version is not None:
+        lines.append(f'modversion={version}')
     if requires is not None:
         lines.append(f'require={requires}')
     with open(os.path.join(path, 'mod.info'), 'w', encoding='utf-8') as handle:
@@ -84,13 +86,17 @@ class TestModInfo(ModsTestCase):
         self.assertEqual(mods.item_mods('111'),
                          [{'id': 'BritaWeapons', 'name': 'Brita Weapons',
                            'folder': 'SomeFolder', 'description': None,
-                           'requires': []}])
+                           'requires': [], 'version': None}])
 
     def test_folder_name_used_when_nothing_declared(self):
         write_mod(self.root, '112', 'PlainMod')
         self.assertEqual(mods.item_mods('112'),
                          [{'id': 'PlainMod', 'name': 'PlainMod', 'folder': 'PlainMod',
-                           'description': None, 'requires': []}])
+                           'description': None, 'requires': [], 'version': None}])
+
+    def test_the_authors_version_is_read_when_declared(self):
+        write_mod(self.root, '118', 'Versioned', mod_id='Versioned', version='2.4.1')
+        self.assertEqual(mods.item_mods('118')[0]['version'], '2.4.1')
 
     def test_description_is_read_from_mod_info(self):
         # Already on disk, so it costs no network call and works on a host that

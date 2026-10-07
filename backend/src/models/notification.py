@@ -25,7 +25,8 @@ class Notification(Base):
     KIND_LOOT = 'loot'
     KIND_ACCOUNT = 'account'
     KIND_MODERATION = 'moderation'
-    KINDS = [KIND_CLAIM, KIND_DELIVERY, KIND_LOOT, KIND_ACCOUNT, KIND_MODERATION]
+    KIND_COINS = 'coins'
+    KINDS = [KIND_CLAIM, KIND_DELIVERY, KIND_LOOT, KIND_ACCOUNT, KIND_MODERATION, KIND_COINS]
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'),

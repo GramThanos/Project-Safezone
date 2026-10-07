@@ -13,6 +13,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+import MaintenancePanel from './MaintenancePanel';
+import { formatDateTime, fromUnix } from '../../utils/dates';
 
 // Where an admin gets an item id from, and where they go to read about one.
 const WORKSHOP_URL = (id) => `https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`;
@@ -31,7 +33,7 @@ const fmtBytes = (n) => {
 };
 
 // Steam records times as unix seconds, not milliseconds.
-const fmtUnix = (seconds) => (seconds ? new Date(seconds * 1000).toLocaleString() : '—');
+const fmtUnix = (seconds) => formatDateTime(fromUnix(seconds), '—');
 
 function Installations() {
   const { token, isAdmin } = useAuth();
@@ -118,6 +120,12 @@ function Installations() {
   // default when the manager has not published one yet.
   const stateOf = (s) => s.state || s.default_state;
   const anyRunning = servers.some((s) => ['running', 'booting'].includes(stateOf(s)));
+  // The game-server refuses to replace the files while any server could be
+  // running them - a sleeping one launches the moment a player knocks. Same
+  // allowlist as its own check; a first install is never blocked.
+  const updateBlocked = Boolean(installed) && servers.some(
+    (s) => !['stopped', 'failed', 'maintenance'].includes(stateOf(s))
+  );
   const branchNames = Object.keys(branches).sort();
 
   // Every mutating action here queues a task and refreshes; the only thing that
@@ -144,7 +152,7 @@ function Installations() {
     const target = branch === null ? 'the configured branch' : (branch || 'public');
     const warning = 'Install or update the game files from ' + target + '?\n\n'
       + 'This replaces the binaries every server runs and can take several '
-      + 'minutes. Servers should be stopped first.';
+      + 'minutes.';
     if (!(await confirm({ title: 'Update game files?', message: warning, confirmLabel: 'Update' }))) return;
     run(
       () => api.admin.installation.update(token, branch === null ? undefined : branch),
@@ -254,6 +262,8 @@ function Installations() {
         </div>
       )}
 
+      <MaintenancePanel />
+
       {/* ------------------------------------------------ Game files ----- */}
       <div className="card mb-4">
         <div className="card-header d-flex align-items-center">
@@ -336,11 +346,13 @@ function Installations() {
             </div>
           )}
 
-          {anyRunning && (
+          {updateBlocked && (
             <div className="alert alert-warning" role="alert">
-              A server is running. Updating the game files underneath it takes
-              effect only on its next restart, and swapping files out from under a
-              live world risks corrupting it. Stop your servers first.
+              A server is running or asleep, and a sleeping server starts the game
+              the moment somebody tries to join — so the files cannot be replaced
+              under it. Stop every server first, or let Maintenance above do it:
+              it warns the players, takes the servers down, updates and brings
+              them back.
             </div>
           )}
 
@@ -368,7 +380,12 @@ function Installations() {
                   ))}
                 </select>
               </div>
-              <button className="btn btn-danger" onClick={handleUpdateGame} disabled={busy}>
+              <button
+                className="btn btn-danger"
+                onClick={handleUpdateGame}
+                disabled={busy || updateBlocked}
+                title={updateBlocked ? 'Stop every server first, or plan it under Maintenance' : undefined}
+              >
                 <i className="fas fa-download"></i>{' '}
                 {installed ? 'Update game' : 'Install game'}
               </button>

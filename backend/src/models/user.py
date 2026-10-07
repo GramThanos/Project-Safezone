@@ -48,6 +48,11 @@ class User(Base):
     # other column is a timestamp *is* a column. Null means "never opened it",
     # which reads as everything unread.
     staff_alerts_read_at = Column(DateTime)
+    # Coins to spend in the shop. A plain balance, not a sum over a ledger:
+    # every change is a single relative UPDATE (`src/utils/coins.py`), so two
+    # changes at once cannot lose one another, and spending is refused in the
+    # same statement that would take the balance below zero.
+    coin_balance = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     def __repr__(self):
@@ -90,6 +95,7 @@ class User(Base):
             'must_change_password': bool(self.must_change_password),
             # The switch, never the secret: the UI shows whether 2FA is on.
             'totp_enabled': bool(self.totp_enabled),
+            'coin_balance': self.coin_balance or 0,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
         if include_sensitive:

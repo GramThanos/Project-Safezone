@@ -1,18 +1,22 @@
 # Frontend
 
-React 18 + React Router 6 (Create React App), served by Nginx in production.
+React 18 + React Router 6, built with [Vite](https://vite.dev), served by Nginx in production.
 
 **The architecture lives in [`../AGENTS.md`](../AGENTS.md)** - which pages exist, what the admin panel is made of, how the API client is organised. This file is the part that is specific to working *in* this directory, and deliberately does not repeat the file listing: the previous version of this README did, and it described a structure that had not existed for months.
 
 ## Running it
 
 ```bash
-npm install && npm start
+npm ci && npm run dev
 ```
 
-Development runs on <http://localhost:3000> and proxies API calls to the backend through the `proxy` field in `package.json` (`http://backend:5000`), so requests are same-origin and there is no CORS to configure.
+Development runs on <http://localhost:3000> and proxies `/api` and `/health` to the backend (`server.proxy` in `vite.config.js`), so requests are same-origin and there is no CORS to configure. The proxy aims at `http://backend:5000`, the backend's name on the compose network; outside it, point it elsewhere with `API_PROXY_TARGET=http://localhost:5000 npm run dev`.
 
-`REACT_APP_API_URL` is a **build-time** variable and is deliberately unset in compose: the production image talks same-origin and Nginx proxies `/api` and `/health` to the backend. Set it only when building a bundle that must point at a backend somewhere else - setting it for local work is usually a mistake.
+`npm run build` writes the production bundle to `build/`: `index.html` at the root (it lives at the root of this directory, not in `public/`), and the bundles under `build/static/` with a content hash in every name, which is what lets nginx cache them for a year. Everything in `public/` is copied as is, under names that never change.
+
+`package-lock.json` is committed and the image installs with `npm ci`, so a build installs exactly what was tested. After changing `package.json`, refresh it with `npm install` (or `npm install --package-lock-only` to update the lock without installing).
+
+`VITE_API_URL` is a **build-time** variable and is deliberately unset in compose: the production image talks same-origin and Nginx proxies `/api` and `/health` to the backend. Set it only when building a bundle that must point at a backend somewhere else - setting it for local work is usually a mistake.
 
 In compose the frontend is the only service published to the host (`8080` → `80`), so it is also how you reach the backend at all.
 
@@ -27,12 +31,12 @@ In compose the frontend is the only service published to the host (`8080` → `8
 
 Two skins in one app, which is intentional: the site is a dark, game-themed page a player browses, and the admin panel is a light workbench. `AdminLayout` sets `data-bs-theme="light"` on `<html>` while it is mounted and restores the previous value on the way out, so the change reaches the footer, the scrollbars and anything Bootstrap renders outside the React tree. The change of skin is the reminder that what you click in there affects everybody.
 
-- **Bootstrap 5.3** for layout and components, plus `public/assets/style.css` for the site's own pieces (hero masking, card banners, the `font-display` heading face).
+- **Bootstrap 5.3** for layout and components, plus `src/index.css` for the site's own pieces (hero masking, card banners, the `font-display` heading face, the installed app's bars). It is imported rather than linked from `public/`, so the build gives it a content-hashed name and no cache can pair an old stylesheet with new code.
 - **Fonts**: Oswald for display headings, Roboto for body text.
 - **Icons**: Bootstrap Icons (`bi bi-*`) and Font Awesome 6 (`fa-*`) are both loaded. Bootstrap Icons is what the admin panel uses.
 - **Accent** is the same red as the brand; the panel keeps it for destructive and primary actions so "the red button does the thing" holds in both skins.
 
-Bootstrap, the icon fonts and Google Fonts are loaded from CDNs in `public/index.html` with SRI hashes. A deployment that must work without outbound access from the *browser* would need those vendored.
+Bootstrap, the icon fonts and Google Fonts are loaded from CDNs in `index.html` with SRI hashes. A deployment that must work without outbound access from the *browser* would need those vendored.
 
 ## Building
 

@@ -16,6 +16,11 @@ boundary, validating the sequence when a reward is saved (via its reward preview
 endpoint) and re-validating the one player-influenced value - the recipient's
 in-game name - before it reaches the console at delivery time.
 
+``coin_value`` is what the reward sells back for when the coin system is on - once
+per holding, however many items it holds (see
+`src/utils/coins.py`). It is also the floor for any shop price the reward is
+listed at, so buying a reward and selling it back can never make coins.
+
 ``action_id`` / ``action_params`` are the legacy catalog columns, retained so a
 reward authored before free-text commands still reads and delivers; new usables
 use ``commands``.
@@ -43,6 +48,9 @@ class Reward(Base):
     action_id = Column(String(64))         # legacy usables: game-server action catalog id
     action_params = Column(JSON)           # legacy usables: validated action parameters
     active = Column(Boolean, nullable=False, default=True)
+    # Coins a holding of this reward sells back for, whatever its count. 0 means
+    # it cannot be sold.
+    coin_value = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self):
@@ -60,5 +68,6 @@ class Reward(Base):
             'action_id': self.action_id,
             'action_params': self.action_params or {},
             'active': self.active,
+            'coin_value': self.coin_value if self.coin_value is not None else 1,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }

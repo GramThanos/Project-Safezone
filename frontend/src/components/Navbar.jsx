@@ -4,16 +4,20 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSite } from '../context/SiteContext';
 import { usePlayer } from '../context/PlayerContext';
+import useAppMode from '../hooks/useAppMode';
+import AppHeader from './AppHeader';
+import Coins from './Coins';
 
 function Navbar() {
 	const { user, signout, isModerator } = useAuth();
 	const { brand_name: brand } = useSite();
-	const { unread, boxes, onlineCharacters } = usePlayer();
+	const { unread, boxes, onlineCharacters, coins } = usePlayer();
 	const banned = user?.role === 'banned';
 	const navigate = useNavigate();
 	const location = useLocation();
 	const inAdmin = location.pathname.startsWith('/admin');
 	const [expanded, setExpanded] = useState(false);
+	const appMode = useAppMode();
 
 	useEffect(() => {
 		setExpanded(false);
@@ -25,12 +29,14 @@ function Navbar() {
 	};
 
 	if (inAdmin && isModerator()) return null;
+	// The installed app on a phone: a title bar here, navigation in `TabBar`.
+	if (appMode) return <AppHeader />;
 
 	return (
 		<nav className="navbar navbar-expand-lg bg-body-tertiary border-bottom py-3">
 			<div className="container">
 				<Link className="navbar-brand d-flex align-items-center gap-2 text-uppercase font-display fw-bold" to="/">
-					<img src={`${process.env.PUBLIC_URL}/assets/images/safezone-logo.png`} alt="" width="32" height="32"/>
+					<img src="/assets/images/safezone-logo.png" alt="" width="32" height="32"/>
 					{brand}
 				</Link>
 				<button
@@ -80,6 +86,17 @@ function Navbar() {
 												)}
 											</Link>
 										</li>
+										{coins.enabled && (
+											<li className="nav-item">
+												<Link className="nav-link" to="/shop" title="Your coins - spend them in the shop">
+													<i className="fas fa-store me-1" aria-hidden="true"></i>
+													Shop
+													<span className="badge rounded-pill text-bg-dark border ms-1">
+														<Coins amount={coins.balance} />
+													</span>
+												</Link>
+											</li>
+										)}
 									</>
 								)}
 								{/* Notifications */}

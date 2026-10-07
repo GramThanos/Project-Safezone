@@ -4,16 +4,17 @@
 	<meta charset="utf-8"/>
 	<meta name="viewport" content="width=device-width, initial-scale=1"/>
 	<title>Project Safezone</title>
-	<link rel="icon" href="%PUBLIC_URL%/favicon.ico"/>
+	<link rel="icon" href="/favicon.ico"/>
 
 	<!-- Installable app (home screen) -->
-	<link rel="manifest" href="%PUBLIC_URL%/manifest.json"/>
+	<link rel="manifest" href="/manifest.json"/>
 	<meta name="theme-color" content="#212529"/>
-	<link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png"/>
+	<link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
 	<meta name="mobile-web-app-capable" content="yes"/>
 	<meta name="apple-mobile-web-app-capable" content="yes"/>
 	<meta name="apple-mobile-web-app-title" content="Safezone"/>
 	<meta name="apple-mobile-web-app-status-bar-style" content="black"/>
+	<script src="/assets/app-mode.js"></script>
 
 	<!-- Bootstrap 5 -->
 	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" integrity="sha512-b2QcS5SsA8tZodcDtGRELiGv5SaKSk1vDHDaQRda0htPYWZ6046lr3kJ5bAAQdpV2mmA/4v0wQF9MyU6/pDIAg==" crossorigin="anonymous">
@@ -25,8 +26,9 @@
 	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" integrity="sha512-dPXYcDub/aeb08c63jRq/k6GaKccl256JQy/AnOq7CAnEZ9FzSL9wSbcZkMp4R26vBsMLFYH4kQ67/bbV8XaCQ==" crossorigin="anonymous">
 	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" integrity="sha512-Avb2QiuDEEvB4bZJYdft2mNjVShBftLdPG8FJ0V7irTLQ8Uo0qcPxh4Plq7G5tGm0rU+1SPhVotteLpBERwTkw==" crossorigin="anonymous">
 
-	<!-- Additional Style -->
-	<link href="%PUBLIC_URL%/assets/style.css" rel="stylesheet"/>
+	<!-- The site's own styles are src/index.css, which the build links here
+	     under a content-hashed name, after the libraries above so it can
+	     override them. -->
 </head>
 <body>
 	<noscript>You need to enable JavaScript to run this app.</noscript>
@@ -37,5 +39,9 @@
 
 	<!-- Additional Libraries -->
 	<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha512-WWG/QztPBvezaRo3WuRRhsIuvpBPq0jqrQhuD6neZjle2/Fwj/spneB5NxBptNJDdYU/+u2bztZlDpz0JCHyBQ==" crossorigin="anonymous"></script>
+
+	<!-- The app. A module script runs after the page is parsed, so after the
+	     libraries above; the build replaces this with the hashed bundle. -->
+	<script type="module" src="/src/index.jsx"></script>
 </body>
 </html>

@@ -24,10 +24,12 @@ const EMPTY = {
   onlineCharacters: [],
   characters: [],
   grantedToday: null,   // the crate granted this session, for the welcome panel
+  // The coin system: whether it is on, the balance, and what kills earn.
+  coins: { enabled: false, balance: 0, kills: null },
   loading: true
 };
 
-const PlayerContext = createContext({ ...EMPTY, refresh: () => {} });
+const PlayerContext = createContext({ ...EMPTY, refresh: () => {}, setBalance: () => {} });
 
 export const usePlayer = () => useContext(PlayerContext);
 
@@ -43,19 +45,28 @@ export const PlayerProvider = ({ children }) => {
 
   const loadCounts = useCallback(async () => {
     if (!token) return;
-    const [boxes, unread, streak] = await Promise.all([
+    const [boxes, unread, streak, coins] = await Promise.all([
       api.boxes.list(token).then((d) => d.boxes || []).catch(() => null),
       api.notifications.unreadCount(token).then((d) => d.unread || 0).catch(() => null),
-      api.boxes.streak(token).catch(() => null)
+      api.boxes.streak(token).catch(() => null),
+      api.coins.get(token).catch(() => null)
     ]);
     setState((current) => ({
       ...current,
       boxes: boxes ?? current.boxes,
       unread: unread ?? current.unread,
       streak: streak ?? current.streak,
+      coins: coins ?? current.coins,
       loading: false
     }));
   }, [token]);
+
+  // A sale or a purchase answers with the new balance; taking it from there
+  // keeps every badge right without another round trip.
+  const setBalance = useCallback((balance) => {
+    if (typeof balance !== 'number') return;
+    setState((current) => ({ ...current, coins: { ...current.coins, balance } }));
+  }, []);
 
   // Which of this account's characters the game currently reports as online.
   const loadCharacters = useCallback(async () => {
@@ -136,9 +147,10 @@ export const PlayerProvider = ({ children }) => {
         loading: false,
         refresh: () => {},
         refreshCounts: () => {},
-        refreshCharacters: () => {}
+        refreshCharacters: () => {},
+        setBalance: () => {}
       }
-    : { ...state, refresh, refreshCounts: loadCounts, refreshCharacters: loadCharacters };
+    : { ...state, refresh, refreshCounts: loadCounts, refreshCharacters: loadCharacters, setBalance };
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
 };

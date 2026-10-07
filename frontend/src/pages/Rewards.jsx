@@ -4,6 +4,7 @@
 // PlayerContext, so a player who never opens this page still gets their crate.
 // This page opens crates and sends what comes out.
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { usePlayer } from '../context/PlayerContext';
 import { useToast } from '../context/ToastContext';
@@ -11,7 +12,10 @@ import api from '../services/api';
 import CrateReveal from '../components/CrateReveal';
 import SendRewardModal from '../components/SendRewardModal';
 import ConfirmDialog from '../components/ConfirmDialog';
+import Coins, { coinWord } from '../components/Coins';
+import RewardTooltip from '../components/RewardTooltip';
 import usePageTitle from '../hooks/usePageTitle';
+import { parseDate } from '../utils/dates';
 
 // Crates are badged by where they came from, not by a fixed size.
 const SOURCE_BADGE = { daily: 'secondary', custom: 'info', bonus: 'warning' };
@@ -33,7 +37,7 @@ const DELIVERY_POLL_MS = 4000;
 
 // A deadline is only useful if it reads like one.
 const expiresIn = (iso) => {
-  const ms = new Date(iso).getTime() - Date.now();
+  const ms = parseDate(iso).getTime() - Date.now();
   if (ms <= 0) return { text: 'Expired', urgent: true };
   const hours = Math.floor(ms / 3600000);
   if (hours < 1) return { text: 'Expires within the hour', urgent: true };
@@ -45,7 +49,7 @@ function Rewards() {
   usePageTitle('Rewards');
   const { token } = useAuth();
   const { push } = useToast();
-  const { boxes, streak, refresh, refreshCounts } = usePlayer();
+  const { boxes, streak, coins, refresh, refreshCounts, setBalance } = usePlayer();
 
   const [inventory, setInventory] = useState([]);
   const [sending, setSending] = useState(null);       // the group whose send modal is open
@@ -147,7 +151,7 @@ function Rewards() {
       // Surface the nearest deadline so a stack warns as early as its most
       // urgent member would have.
       if (item.expires_at && item.status === 'held'
-        && (!group.soonest || new Date(item.expires_at) < new Date(group.soonest))) {
+        && (!group.soonest || parseDate(item.expires_at) < parseDate(group.soonest))) {
         group.soonest = item.expires_at;
       }
     }
@@ -168,7 +172,7 @@ function Rewards() {
     setBusy(group.key);
     const items = [...group.items].sort((a, b) => {
       if (!a.expires_at || !b.expires_at) return (a.expires_at ? -1 : 0) + (b.expires_at ? 1 : 0);
-      return new Date(a.expires_at) - new Date(b.expires_at);
+      return parseDate(a.expires_at) - parseDate(b.expires_at);
     });
     // Counted in units delivered, not holdings sent: one holding can carry
     // several of an item, and "Sending 2 × Bandage" for six bandages is wrong.
@@ -201,15 +205,26 @@ function Rewards() {
     refreshCounts();
   };
 
-  // Unsent rewards are thrown away (after a confirm); used and expired ones
-  // are just cleared off the page. Both are the same call.
+  // What a stack sells back for, as the server worked it out. Zero when coins
+  // are off or the reward has no value, and then discarding is just that.
+  const sellValueOf = (group) => (coins.enabled
+    ? group.items.reduce((sum, item) => sum + (item.sell_value || 0), 0)
+    : 0);
+
+  // Unsent rewards are thrown away - or sold, with coins on - after a confirm;
+  // used and expired ones are just cleared off the page. All the same call.
   const removeGroup = async (group) => {
     setError('');
     setBusy(`x:${group.key}`);
     try {
-      await api.inventory.remove(token, group.items.map((i) => i.id));
+      const data = await api.inventory.remove(token, group.items.map((i) => i.id));
       const gone = new Set(group.items.map((i) => i.id));
       setInventory((current) => current.filter((i) => !gone.has(i.id)));
+      setBalance(data.balance);
+      if (data.coins > 0) {
+        push(`Sold ${group.reward?.name || 'reward'} for ${data.coins} ${coinWord(data.coins)}.`,
+          { kind: 'success' });
+      }
     } catch (err) {
       console.error('Remove inventory error:', err);
       push(err.message || 'Could not remove that reward.', { kind: 'error' });
@@ -226,7 +241,17 @@ function Rewards() {
   return (
     <section className="py-5" style={{ minHeight: '50vh' }}>
       <div className="container">
-        <h2 className="text-uppercase font-display mb-4">Rewards</h2>
+        <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+          <h2 className="text-uppercase font-display mb-0">Rewards</h2>
+          {coins.enabled && (
+            <div className="d-flex align-items-center gap-3">
+              <Coins amount={coins.balance} className="fs-5 fw-semibold" />
+              <Link className="btn btn-outline-warning btn-sm" to="/shop">
+                <i className="fas fa-store me-1" aria-hidden="true"></i>Shop
+              </Link>
+            </div>
+          )}
+        </div>
 
         {error && <div className="alert alert-danger">{error}</div>}
 
@@ -348,8 +373,16 @@ function Rewards() {
               const isUsable = group.reward?.kind === 'usable';
               // A usable runs once per holding, so its quantity is its holdings.
               const quantity = isUsable ? holdings : group.quantity;
+              const selling = canSend && sellValueOf(group) > 0;
+              const details = {
+                name, quantity, kind: group.reward?.kind, description: group.reward?.description,
+                sellValue: canSend ? sellValueOf(group) : 0, coinsOn: coins.enabled,
+                sellable: canSend, expiresAt: group.soonest, status: group.status
+              };
+              const removeLabel = selling ? 'Sell' : canSend ? 'Discard' : 'Clear';
               return (
                 <div key={group.key} className="col-6 col-md-3">
+                  <RewardTooltip details={details}>
                   <div className="card text-center h-100 position-relative">
                     {/* In flight has a task on the manager; it cannot be taken back. */}
                     {group.status !== 'sending' && (
@@ -357,8 +390,8 @@ function Rewards() {
                         type="button"
                         className="btn-close position-absolute top-0 end-0 m-2"
                         style={{ fontSize: '.65rem' }}
-                        aria-label={canSend ? `Discard ${name}` : `Clear ${name}`}
-                        title={canSend ? 'Discard' : 'Clear'}
+                        aria-label={`${removeLabel} ${name}`}
+                        title={selling ? `Sell for ${sellValueOf(group)} ${coinWord(sellValueOf(group))}` : removeLabel}
                         onClick={() => onRemove(group)}
                         disabled={busy === `x:${group.key}`}
                       ></button>
@@ -397,6 +430,7 @@ function Rewards() {
                       )}
                     </div>
                   </div>
+                  </RewardTooltip>
                 </div>
               );
             })}
@@ -424,20 +458,27 @@ function Rewards() {
         />
       )}
 
-      {discarding && (
-        <ConfirmDialog
-          title="Discard reward?"
-          confirmLabel="Discard"
-          busy={busy === `x:${discarding.key}`}
-          onConfirm={() => removeGroup(discarding)}
-          onCancel={() => setDiscarding(null)}
-        >
-          {discarding.items.length > 1
-            ? `All ${discarding.items.length} × ${discarding.reward?.name || 'this reward'} will be thrown away.`
-            : `${discarding.reward?.name || 'This reward'} will be thrown away.`}
-          {' '}It has not been sent yet, and this cannot be undone.
-        </ConfirmDialog>
-      )}
+      {discarding && (() => {
+        const value = sellValueOf(discarding);
+        const what = discarding.items.length > 1
+          ? `All ${discarding.items.length} × ${discarding.reward?.name || 'this reward'}`
+          : (discarding.reward?.name || 'This reward');
+        return (
+          <ConfirmDialog
+            title={value > 0 ? 'Sell reward?' : 'Discard reward?'}
+            confirmLabel={value > 0 ? `Sell for ${value} ${coinWord(value)}` : 'Discard'}
+            danger={value === 0}
+            busy={busy === `x:${discarding.key}`}
+            onConfirm={() => removeGroup(discarding)}
+            onCancel={() => setDiscarding(null)}
+          >
+            {value > 0
+              ? `${what} will be removed from your inventory and you will receive ${value} ${coinWord(value)}.`
+              : `${what} will be thrown away.`}
+            {' '}It has not been sent yet, and this cannot be undone.
+          </ConfirmDialog>
+        );
+      })()}
     </section>
   );
 }

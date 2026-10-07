@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import usePageTitle from '../hooks/usePageTitle';
+import { formatDateTime } from '../utils/dates';
 
 const STATUS_BADGE = {
   open: 'warning',
@@ -63,7 +64,7 @@ function Reports() {
     }
   };
 
-  const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : '');
+  const fmt = (ts) => formatDateTime(ts);
 
   return (
     <section className="py-5" style={{ minHeight: '60vh' }}>
@@ -99,7 +100,7 @@ function Reports() {
                     <div className="small text-body-secondary mt-1">
                       {user.ban.permanent
                         ? 'This ban does not expire on its own.'
-                        : `Ends ${new Date(user.ban.expires_at).toLocaleString()}.`}
+                        : `Ends ${formatDateTime(user.ban.expires_at)}.`}
                     </div>
                   </div>
                 )}

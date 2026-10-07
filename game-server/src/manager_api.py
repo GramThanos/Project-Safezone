@@ -22,6 +22,7 @@ import backups
 import server_config
 import sandbox_config
 import mods
+import characters
 import workshop
 import items
 import reward_boxes
@@ -30,6 +31,9 @@ import steam
 import rcon
 import webhook
 import mailer
+import push
+import maintenance
+import maintenance_store
 
 
 app = Flask(__name__)
@@ -74,6 +78,8 @@ def index():
             'clear_tasks': 'DELETE /api/tasks',
             'list_actions': 'GET /api/actions',
             'preview_action': 'POST /api/actions/:id/preview',
+            'get_character': 'GET /api/servers/:id/characters/:username',
+            'characters_snapshot': 'POST /api/servers/:id/characters/snapshot',
             'installation': 'GET /api/installation',
             'list_items': 'GET /api/items',
             'list_mods': 'GET /api/mods',
@@ -320,6 +326,55 @@ def get_server(server_id):
     except Exception as e:
         _log(f"Error getting server: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/servers/<int:server_id>/characters/<string:username>', methods=['GET'])
+@require_auth
+def get_character(server_id, username):
+    """One account's saved character, read from the server's players.db.
+
+    The whole decoded report - the backend decides which parts a reader may see.
+    404 means nothing saved yet (a server or a character the game has not
+    written), 503 a file that could not be read.
+    """
+    if len(username) > 64:
+        return jsonify({'error': 'Invalid username'}), 400
+
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    try:
+        payload = characters.report(server['name'], username)
+    except characters.Unavailable as e:
+        return jsonify({'error': str(e)}), e.status
+    return jsonify({'data': payload})
+
+
+@app.route('/api/servers/<int:server_id>/characters/snapshot', methods=['POST'])
+@require_auth
+def characters_snapshot(server_id):
+    """Every account's character on a server, in one read.
+
+    With ``save: true`` a running server with players online is told to save
+    first, and the read waits for it to land, so the numbers are current rather
+    than as of the game's last autosave. Whether the save worked is reported;
+    the read happens either way. Only the summary the coin system needs - the
+    full report is per character, from the route above.
+    """
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    saved, detail = None, None
+    if (request.get_json(silent=True) or {}).get('save'):
+        saved, detail = tasks.save_for_snapshot(server)
+    try:
+        payload = characters.summaries(server['name'])
+    except characters.Unavailable as e:
+        return jsonify({'error': str(e), 'saved': saved, 'save_detail': detail}), e.status
+    return jsonify({'data': dict(payload, saved=saved, save_detail=detail)})
+
 
 def _validate_timezone(value):
     """Validate an IANA timezone name. Returns an error string or None."""
@@ -825,30 +880,6 @@ def update_server_mods(server_id):
 MAX_PASTED_ITEMS = 100
 
 
-def _mod_usage():
-    """Which servers reference which Workshop item, and which mod names.
-
-    Read from each server's own INI rather than from a table, because the INI is
-    what the game reads - a cached copy would be one more thing to drift.
-    Returns ``(items, names)``, both mapping value -> sorted server names.
-    """
-    items = {}
-    names = {}
-    for server in servers.get_all():
-        settings, error = server_config.read(server['name'])
-        if error:
-            # A server whose config cannot be read yet (never started) simply
-            # uses nothing; it is not a reason to fail the whole listing.
-            continue
-        values = {s['key']: s.get('value') for s in settings}
-        for item_id in mods.parse_list(values.get('WorkshopItems')):
-            items.setdefault(item_id, set()).add(server['name'])
-        for name in mods.parse_list(values.get('Mods')):
-            names.setdefault(name, set()).add(server['name'])
-    return ({k: sorted(v) for k, v in items.items()},
-            {k: sorted(v) for k, v in names.items()})
-
-
 @app.route('/api/installation', methods=['GET'])
 @require_auth
 def get_installation():
@@ -859,7 +890,7 @@ def get_installation():
     downloaded yet - a first run, not an error.
     """
     state, error = steam.installed_app_state(config.STEAM_APP_ID, config.STEAM_INSTALL_DIR)
-    item_usage, _name_usage = _mod_usage()
+    item_usage, _name_usage = servers.mod_usage()
     installed_ids = mods.installed()
 
     return jsonify({'data': {
@@ -964,7 +995,7 @@ def list_mods():
     fetched. `?metadata=0` skips that, which is the escape hatch if Steam is
     slow and somebody just wants the list.
     """
-    item_usage, name_usage = _mod_usage()
+    item_usage, name_usage = servers.mod_usage()
     installed_ids = mods.installed()
     wanted = sorted(set(installed_ids) | set(item_usage))
 
@@ -1109,7 +1140,7 @@ def delete_mod(item_id):
     that is configured to load them turns a working server into one that fails
     at boot, and the panel is where that mistake would be made.
     """
-    item_usage, name_usage = _mod_usage()
+    item_usage, name_usage = servers.mod_usage()
     used_by = set(item_usage.get(str(item_id)) or [])
 
     # Also the other half of the pair: a server whose `Mods` line still names a
@@ -1382,6 +1413,95 @@ def delete_server(server_id):
 
 # Webhook relay
 
+# Maintenance
+#
+# Checking for game and mod updates and taking the servers down to apply them.
+# The worker (`manager_maintenance.py`) does the work; these endpoints read its
+# state and record staff decisions. Who may do what is the backend's call - it
+# passes the acting user's name along as `actor` so the run's log can say who.
+
+def _actor(data):
+    return (str(data.get('actor') or '').strip()[:128]) or None
+
+
+@app.route('/api/maintenance', methods=['GET'])
+@require_auth
+def get_maintenance():
+    try:
+        return jsonify({'data': maintenance_store.overview()})
+    except Exception as e:
+        _log(f"Error reading maintenance state: {e}")
+        return jsonify({'error': 'Could not read the maintenance state'}), 500
+
+
+@app.route('/api/maintenance/policy', methods=['PUT'])
+@require_auth
+def update_maintenance_policy():
+    data = request.get_json(silent=True) or {}
+    policy, errors = maintenance_store.save_policy(data.get('policy') or {}, _actor(data))
+    if errors:
+        return jsonify({'error': 'Some settings are not valid', 'errors': errors}), 400
+    return jsonify({'data': policy, 'message': 'Maintenance policy saved'})
+
+
+@app.route('/api/maintenance/check', methods=['POST'])
+@require_auth
+def request_maintenance_check():
+    data = request.get_json(silent=True) or {}
+    kinds = [k for k in (data.get('kinds') or ['game', 'mods']) if k in ('game', 'mods')]
+    if not kinds:
+        return jsonify({'error': 'Nothing to check'}), 400
+    if not maintenance_store.request_check(kinds, _actor(data)):
+        return jsonify({'error': 'Could not reach the maintenance worker'}), 503
+    return jsonify({'data': {'kinds': kinds}, 'message': 'Check requested'}), 202
+
+
+@app.route('/api/maintenance/runs', methods=['POST'])
+@require_auth
+def plan_maintenance_run():
+    """Plan a run from what the latest checks found.
+
+    The client names what it wants - the game update, and which Workshop items
+    - but only things the checks actually reported are accepted, so this cannot
+    be used to download an arbitrary item.
+    """
+    data = request.get_json(silent=True) or {}
+    mode = data.get('mode') or 'auto'
+    if mode not in ('auto', 'now'):
+        return jsonify({'error': "mode must be 'auto' or 'now'"}), 400
+    targets = maintenance.select_targets(
+        maintenance_store.read_check('game'), maintenance_store.read_check('mods'),
+        bool(data.get('game')), data.get('mods') or [])
+    if not maintenance.has_targets(targets):
+        return jsonify({'error': 'None of the chosen updates are outstanding. '
+                                 'Run a check and try again.'}), 400
+    run, error = maintenance_store.plan(targets, 'manual', actor=_actor(data),
+                                        now_mode=(mode == 'now'))
+    if error:
+        return jsonify({'error': error}), 409
+    return jsonify({'data': run, 'message': 'Maintenance planned'}), 201
+
+
+@app.route('/api/maintenance/runs/<int:run_id>/now', methods=['POST'])
+@require_auth
+def maintenance_run_now(run_id):
+    data = request.get_json(silent=True) or {}
+    run, error = maintenance_store.go_now(run_id, _actor(data))
+    if error:
+        return jsonify({'error': error}), 404 if error.startswith('No such') else 409
+    return jsonify({'data': run, 'message': 'Starting the countdown'})
+
+
+@app.route('/api/maintenance/runs/<int:run_id>/cancel', methods=['POST'])
+@require_auth
+def cancel_maintenance_run(run_id):
+    data = request.get_json(silent=True) or {}
+    run, error = maintenance_store.cancel(run_id, _actor(data))
+    if error:
+        return jsonify({'error': error}), 404 if error.startswith('No such') else 409
+    return jsonify({'data': run, 'message': 'Maintenance cancelled'})
+
+
 @app.route('/api/webhook', methods=['POST'])
 @require_auth
 def relay_webhook():
@@ -1454,6 +1574,54 @@ def relay_mail():
     if not ok and configured:
         _log(f"Mail relay failed: {error}")
     return jsonify({'ok': ok, 'configured': configured, 'error': error})
+
+
+# Push relay
+
+@app.route('/api/push/key', methods=['GET'])
+@require_auth
+def push_key():
+    """The VAPID public key, which a browser needs to subscribe.
+
+    Created on first ask (see `push.py`); public by nature, but behind the token
+    like everything else here - the backend hands it to signed-in players.
+    """
+    try:
+        return jsonify({'data': {'public_key': push.public_key()}})
+    except Exception as e:
+        _log(f"Push key unavailable: {e}")
+        return jsonify({'error': 'Push notifications are unavailable'}), 500
+
+
+@app.route('/api/push', methods=['POST'])
+@require_auth
+def relay_push():
+    """Send one payloadless push to each of a list of browser endpoints.
+
+    One call for the whole batch; the per-device results come back in the same
+    order, so the backend can delete the subscriptions that are gone. Endpoints
+    that are not a browser push service are refused per item, not per batch
+    (see `push.py` for why that check is the one that matters).
+    """
+    data = request.get_json(silent=True) or {}
+    endpoints = data.get('endpoints')
+    if not isinstance(endpoints, list) or not all(isinstance(e, str) for e in endpoints):
+        return jsonify({'error': 'endpoints must be a list of URLs'}), 400
+    if len(endpoints) > config.PUSH_MAX_BATCH:
+        return jsonify({'error': f'At most {config.PUSH_MAX_BATCH} endpoints per call'}), 400
+    try:
+        ttl = int(data.get('ttl', 86400))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'ttl must be a number of seconds'}), 400
+
+    try:
+        results = push.send_many(endpoints, ttl=ttl, topic=data.get('topic'),
+                                 urgency=data.get('urgency') or 'normal',
+                                 subject=data.get('subject'))
+    except Exception as e:
+        _log(f"Push relay failed: {e}")
+        return jsonify({'error': 'Push relay failed'}), 500
+    return jsonify({'data': {'results': results}})
 
 
 if __name__ == '__main__':

@@ -23,6 +23,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+import { formatDateTime } from '../../utils/dates';
 
 // What each kind is, in the operator's terms rather than the schema's.
 const KINDS = {
@@ -377,7 +378,7 @@ function Alerts() {
       .join(', ')
   );
 
-  const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : 'never');
+  const fmt = (ts) => formatDateTime(ts, 'never');
 
   // Whether the scheduler is draining the queue. Only worth saying when
   // somebody is actually subscribed to something that depends on it.

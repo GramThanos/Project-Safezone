@@ -144,6 +144,34 @@ class TestQueueRendering(unittest.TestCase):
         title, _, _ = alerting._render({'event': 'server.something', 'server_id': 4})
         self.assertIn('server 4', title)
 
+    def test_maintenance_says_what_and_who(self):
+        title, description, fields = alerting._render({
+            'event': 'maintenance.cancelled', 'summary': 'game build 1 -> 2 and 2 mods',
+            'game': {'installed_build': '1', 'available_build': '2'},
+            'mods': ['Brita', 'Arsenal'], 'actor': 'mod_jane',
+        })
+        self.assertEqual(title, 'Maintenance cancelled: game build 1 -> 2 and 2 mods')
+        self.assertIn('mod_jane', description)
+        self.assertIn(('Game build', '1 -> 2'), fields)
+        self.assertIn(('Mods', 'Brita, Arsenal'), fields)
+
+    def test_maintenance_start_distinguishes_a_countdown_from_an_empty_stop(self):
+        _, warned, _ = alerting._render({'event': 'maintenance.started', 'countdown': 900})
+        _, empty, _ = alerting._render({'event': 'maintenance.started', 'countdown': 0})
+        self.assertIn('15 minutes', warned)
+        self.assertIn('Nobody was playing', empty)
+
+    def test_an_update_waiting_for_approval_says_so(self):
+        _, description, _ = alerting._render({'event': 'maintenance.available',
+                                              'summary': '3 mods', 'needs_approval': ['mods']})
+        self.assertIn('approve', description)
+
+    def test_every_maintenance_event_renders(self):
+        for key in alerting.EVENTS:
+            if key.startswith('maintenance.'):
+                title, _, _ = alerting._render({'event': key, 'summary': 'x'})
+                self.assertTrue(title.startswith(('Maintenance', 'Update', 'Servers')), msg=key)
+
     def test_stale_entries_are_dropped(self):
         self.assertTrue(alerting._too_old('2020-01-01T00:00:00.000000Z'))
         self.assertFalse(alerting._too_old(None))
@@ -157,11 +185,18 @@ class TestCatalog(unittest.TestCase):
             self.assertIn(event['source'], ('site', 'game'), msg=event['key'])
             self.assertIn(event['volume'], ('low', 'high'), msg=event['key'])
 
-    def test_game_events_are_all_server_scoped(self):
-        # Anything the manager reports happened on one of its servers, so the
-        # per-channel server filter has to apply to all of them.
+    def test_game_events_are_server_scoped_except_maintenance(self):
+        # Anything the manager reports about one of its servers has to honour
+        # the per-channel server filter. Maintenance is the exception: one
+        # install serves every server and a run takes them all down, so there
+        # is no single server to filter by - a channel watching only "Knox"
+        # still needs to hear that Knox is about to restart.
         for event in alerting.describe():
-            if event['source'] == 'game':
+            if event['source'] != 'game':
+                continue
+            if event['group'] == 'Maintenance':
+                self.assertFalse(event['scoped'], msg=event['key'])
+            else:
                 self.assertTrue(event['scoped'], msg=event['key'])
 
 

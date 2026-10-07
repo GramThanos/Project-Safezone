@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
+import useAppMode from '../hooks/useAppMode';
 import api from '../services/api';
 
 // Bootstrap contextual colour for a dependency's state.
@@ -142,6 +143,10 @@ function SiteFooter({ year }) {
 function Footer() {
 	const year = new Date().getFullYear();
 	const inAdmin = useLocation().pathname.startsWith('/admin');
+	const appMode = useAppMode();
+	// The installed app on a phone ends at its tab bar; what the footer links to
+	// is on the Me tab.
+	if (appMode) return null;
 	return inAdmin ? <AdminFooter year={year} /> : <SiteFooter year={year} />;
 }
 

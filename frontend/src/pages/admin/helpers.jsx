@@ -23,6 +23,7 @@ export const getStatusBadge = (status) => {
     booting: 'info',
     restarting: 'info',
     sleeping: 'warning',
+    maintenance: 'primary',
     stopped: 'secondary',
     pending: 'warning',
     processing: 'info',

@@ -7,10 +7,11 @@ from src.models.inventory_item import InventoryItem
 from src.models.notification import Notification
 from src.models.reward import Reward
 from src.models.character import Character
+from src.models.coin_log import CoinLog
 from src.middleware.auth import token_required
 from src.utils.game_server import gs_request
 from src.utils.redis_utils import is_player_online
-from src.utils import audit, expiry, notify, paging, alerting
+from src.utils import audit, coins, expiry, notify, paging, alerting
 
 logger = logging.getLogger(__name__)
 inventory_bp = Blueprint('inventory', __name__, url_prefix='/api/inventory')
@@ -217,13 +218,17 @@ def send_item(current_user, item_id):
             if count < held:
                 # Split only once the delivery is really on its way: this row
                 # becomes the part in flight, and the remainder stays behind
-                # with the same origin and deadline it had before.
+                # with the same origin and deadline it had before. The sell
+                # value stays behind too - a reward is worth its coins once,
+                # so the part sent cannot be sold if its delivery comes back.
                 session.add(InventoryItem(
                     user_id=item.user_id, reward_id=item.reward_id,
                     count=held - count, source=item.source,
                     source_box_id=item.source_box_id, status=item.status,
-                    created_at=item.created_at, expires_at=item.expires_at))
+                    created_at=item.created_at, expires_at=item.expires_at,
+                    sellable=item.sellable is not False))
                 item.count = count
+                item.sellable = False
 
             task = resp.get('data') or {}
             item.status = InventoryItem.STATUS_SENDING
@@ -247,6 +252,11 @@ def send_item(current_user, item_id):
 def remove_items(current_user):
     """Discard unsent rewards, or clear away used and expired ones.
 
+    With coins switched on, discarding is selling: each unsent holding pays its
+    reward's coin value once, in the same transaction that deletes it, so a
+    reward is either still here or paid for - never both, never neither. The
+    rows are locked, so two discards of the same holding cannot both pay.
+
     Anything in flight is left alone: its task on the manager may still land in
     game, and deleting the row would lose the record of it rather than stop it.
     """
@@ -257,25 +267,49 @@ def remove_items(current_user):
         ids = {int(i) for i in ids}
     except (TypeError, ValueError):
         return jsonify({'error': 'ids must be whole numbers'}), 400
+    selling = coins.enabled()
 
     try:
         with db.get_db() as session:
+            user_id = current_user['user_id']
             rows = (session.query(InventoryItem)
-                    .filter(InventoryItem.user_id == current_user['user_id'],
+                    .filter(InventoryItem.user_id == user_id,
                             InventoryItem.id.in_(ids),
                             InventoryItem.status != InventoryItem.STATUS_SENDING)
                     .with_for_update()
                     .all())
-            discarded = sum(1 for r in rows if r.status in (InventoryItem.STATUS_HELD,
-                                                            InventoryItem.STATUS_FAILED))
+            discarded = sum(1 for r in rows if r.status in InventoryItem.SELLABLE)
+
+            earned = sold = 0
+            names = []
+            if selling and discarded:
+                reward_ids = {r.reward_id for r in rows}
+                rewards = {r.id: r for r in
+                           session.query(Reward).filter(Reward.id.in_(reward_ids))}
+                now = datetime.utcnow()
+                for row in rows:
+                    value = row.sell_value(rewards.get(row.reward_id), now)
+                    if value:
+                        earned += value
+                        sold += 1
+                        names.append(rewards[row.reward_id].name)
+
             for row in rows:
                 session.delete(row)
+            if earned:
+                coins.earn(session, user_id, earned, CoinLog.SOURCE_SALE, quantity=sold,
+                           detail=', '.join(sorted(set(names))))
             # Clearing used ones away is housekeeping; throwing away something
             # that could still be sent is worth a line in the audit trail.
             if discarded:
-                audit.record(session, current_user['user_id'], 'inventory.discard',
-                             detail=f'{discarded} unsent reward(s) discarded')
-            return jsonify({'removed': len(rows)}), 200
+                audit.record(session, user_id, 'inventory.discard',
+                             detail=f'{discarded} unsent reward(s) discarded'
+                                    + (f', sold for {earned} coin(s)' if earned else ''))
+
+            body = {'removed': len(rows), 'coins': earned}
+            if selling:
+                body['balance'] = coins.balance(session, user_id)
+            return jsonify(body), 200
     except Exception as e:
         logger.error(f"Remove inventory items error: {e}")
         return jsonify({'error': 'Internal server error'}), 500

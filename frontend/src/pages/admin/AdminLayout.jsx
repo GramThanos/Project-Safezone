@@ -16,6 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useSite } from '../../context/SiteContext';
 import SubNav from '../../components/SubNav';
 import api from '../../services/api';
+import PageBoundary from '../../components/PageBoundary';
 
 // `adminOnly` links are hidden from moderators. `icon` is a Bootstrap Icons
 // name; the first link of a group is where its label leads, so About sits at
@@ -46,6 +47,7 @@ const NAV_GROUPS = [
     links: [
       { to: '/admin/rewards', text: 'Rewards', icon: 'gift' },
       { to: '/admin/boxes', text: 'Loot Boxes', icon: 'box2' },
+      { to: '/admin/shop', text: 'Shop', icon: 'shop' },
       { to: '/admin/events', text: 'Events', icon: 'calendar-event' },
       { to: '/admin/give', text: 'Give Item', icon: 'send' }
     ]
@@ -148,7 +150,11 @@ function AdminLayout() {
 
       <section className="py-4" style={{ minHeight: '50vh' }}>
         <div className="container">
-          <Outlet />
+          {/* Its own boundary, so the admin navigation stays put while the
+              next admin page loads, instead of the whole panel blanking. */}
+          <PageBoundary>
+            <Outlet />
+          </PageBoundary>
         </div>
       </section>
     </>

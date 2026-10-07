@@ -16,7 +16,9 @@ from sqlalchemy import or_
 from src.database import db
 from src.middleware.auth import (generate_token, token_required,
                                  generate_mfa_challenge_token,
-                                 decode_mfa_challenge_token)
+                                 decode_mfa_challenge_token,
+                                 request_installed, session_id, token_expiry,
+                                 bearer_token, token_needs_renewal)
 from src.models.user import User
 from src.models.auth_token import AuthToken, hash_token
 from src.models.invitation import Invitation, hash_code
@@ -70,7 +72,9 @@ def normalize_email(raw):
 
 
 def _issue_token(user):
-    return generate_token(user.id, user.username, user.role, user.token_version)
+    """A token for a new session, sized for the client asking."""
+    return generate_token(user.id, user.username, user.role, user.token_version,
+                          installed=request_installed())
 
 
 def _signin_success(user):
@@ -372,46 +376,103 @@ def get_current_user(current_user):
     appealing, which makes for appeals that answer the wrong accusation - and
     somebody is entitled to know why they were banned and whether it ends.
     """
-    from src.models.ban import Ban
-
     try:
         with db.get_db() as session:
             user = session.query(User).filter_by(id=current_user['user_id']).first()
             if not user:
                 return jsonify({'error': 'User not found'}), 404
-
-            payload = user.to_dict()
-            if user.is_banned():
-                ban = (session.query(Ban)
-                       .filter_by(user_id=user.id)
-                       .filter(Ban.lifted_at.is_(None))
-                       .order_by(Ban.created_at.desc())
-                       .first())
-                if ban:
-                    # Only what the person needs: why, and until when. Who
-                    # issued it is staff information.
-                    payload['ban'] = {
-                        'reason': ban.reason,
-                        'expires_at': ban.expires_at.isoformat() if ban.expires_at else None,
-                        'permanent': ban.expires_at is None,
-                        'created_at': ban.created_at.isoformat() if ban.created_at else None,
-                    }
-            return jsonify({'user': payload}), 200
+            return jsonify({'user': _account(session, user)}), 200
     except Exception as e:
         logger.error(f"Get current user error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+def _account(session, user):
+    """The account as its owner sees it: `/me` and the session check share it."""
+    from src.models.ban import Ban
+
+    payload = user.to_dict()
+    if user.is_banned():
+        ban = (session.query(Ban)
+               .filter_by(user_id=user.id)
+               .filter(Ban.lifted_at.is_(None))
+               .order_by(Ban.created_at.desc())
+               .first())
+        if ban:
+            # Only what the person needs: why, and until when. Who issued it
+            # is staff information.
+            payload['ban'] = {
+                'reason': ban.reason,
+                'expires_at': ban.expires_at.isoformat() if ban.expires_at else None,
+                'permanent': ban.expires_at is None,
+                'created_at': ban.created_at.isoformat() if ban.created_at else None,
+            }
+    return payload
+
+
+@auth_bp.route('/refresh', methods=['POST'])
+@token_required
+def refresh_session(current_user):
+    """The session check: is this session still good, whose is it, and a fresher
+    token when the current one is getting old.
+
+    The client calls it on opening, on coming back to the tab and every few
+    minutes while on screen (see `AuthContext`), so it doubles as the way a
+    session that ended elsewhere is noticed. Getting this far means
+    `token_required` passed: the account exists, the session was not ended by a
+    password change or "sign out everywhere", and the role and ban state are the
+    stored ones. Anything else is a 401 and the client signs out.
+
+    Sessions slide - they last a lifetime from their last use - but a new token
+    is only issued once the current one is due (`token_needs_renewal`), so
+    checking often does not churn tokens. A new one keeps the session id, and
+    with it this device's push subscription, whose expiry moves along.
+    """
+    from src.utils import push
+
+    try:
+        with db.get_db() as session:
+            user = session.query(User).filter_by(id=current_user['user_id']).first()
+            if not user:
+                return jsonify({'error': 'Account no longer exists'}), 401
+
+            token = bearer_token()
+            if token_needs_renewal(current_user):
+                sid = session_id(current_user)
+                token = generate_token(user.id, user.username, user.role, user.token_version,
+                                       sid=sid, installed=request_installed())
+                push.extend_session(session, sid, token_expiry(token))
+
+            return jsonify({
+                'token': token,
+                'expires_at': token_expiry(token).isoformat() + 'Z',
+                'user': _account(session, user),
+            }), 200
+    except Exception as e:
+        logger.error(f"Session refresh error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @auth_bp.route('/logout-all', methods=['POST'])
 @token_required
 def logout_everywhere(current_user):
-    """Invalidate every outstanding token for this account, including this one."""
+    """Invalidate every outstanding token for this account, including this one.
+
+    Push subscriptions go too: they belong to the sessions being ended, and a
+    reminder to a device nobody is signed in on is exactly what this is for
+    stopping.
+    """
+    from src.models.push_subscription import PushSubscription
+
     try:
         with db.get_db() as session:
             user = session.query(User).filter_by(id=current_user['user_id']).first()
             if not user:
                 return jsonify({'error': 'User not found'}), 404
             user.token_version = (user.token_version or 0) + 1
+            (session.query(PushSubscription)
+             .filter_by(user_id=user.id)
+             .delete(synchronize_session=False))
             return jsonify({'message': 'Signed out everywhere'}), 200
     except Exception as e:
         logger.error(f"Logout-all error: {e}")

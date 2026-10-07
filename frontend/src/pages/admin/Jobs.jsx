@@ -6,6 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+import { formatDateTime } from '../../utils/dates';
 
 // Offered intervals, rather than a free-text seconds box nobody wants to compute.
 const INTERVALS = [
@@ -67,7 +68,7 @@ function Jobs() {
   };
 
   const describe = (kind) => kinds.find((k) => k.kind === kind)?.description || '';
-  const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : '—');
+  const fmt = (ts) => formatDateTime(ts, '—');
 
   if (loading) return <Spinner />;
 

@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
+import { formatDateTime } from '../../utils/dates';
 
 const BLANK = { max_uses: '1', expires_in_days: '', note: '' };
 
@@ -83,7 +84,7 @@ function Invitations() {
     }
   };
 
-  const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : 'never');
+  const fmt = (ts) => formatDateTime(ts, 'never');
 
   return (
     <>

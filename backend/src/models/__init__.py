@@ -2,7 +2,8 @@
 
 The backend owns the account/reward tables (`users`, `characters`, `claim_requests`,
 `rewards`, `boxes`, `events`, `event_boxes`, `box_loot_pools`, `user_boxes`,
-`inventory_items`, `staff_alerts`). The `servers` and `tasks` tables are owned by the game-server
+`inventory_items`, `staff_alerts`, `push_subscriptions`, `shop_categories`,
+`shop_items`, `shop_item_categories`, `shop_purchases`, `coin_log`). The `servers` and `tasks` tables are owned by the game-server
 service; the backend accesses them only through the game-server API (see
 src/utils/game_server.py).
 """
@@ -26,10 +27,17 @@ from .ban import Ban
 from .report import Report
 from .alert_channel import AlertChannel
 from .staff_alert import StaffAlert
+from .push_subscription import PushSubscription
+from .shop_category import ShopCategory
+from .shop_item import ShopItem
+from .shop_item_category import ShopItemCategory
+from .coin_log import CoinLog
+from .shop_purchase import ShopPurchase
 
 __all__ = [
     'User', 'Character', 'ClaimRequest', 'Reward', 'Box', 'Event', 'EventBox',
     'BoxLootPool', 'UserBox', 'InventoryItem', 'AuditLog', 'AppSetting',
     'AuthToken', 'Invitation', 'Notification', 'ScheduledJob', 'Ban', 'Report',
-    'AlertChannel', 'StaffAlert'
+    'AlertChannel', 'StaffAlert', 'PushSubscription', 'ShopCategory', 'ShopItem',
+    'ShopItemCategory', 'CoinLog', 'ShopPurchase'
 ]

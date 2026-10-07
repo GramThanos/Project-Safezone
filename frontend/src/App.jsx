@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { SiteProvider } from './context/SiteContext';
@@ -7,43 +7,75 @@ import { PlayerProvider } from './context/PlayerContext';
 import { DialogProvider } from './context/DialogContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
+import TabBar from './components/TabBar';
 import WelcomeBack from './components/WelcomeBack';
 import ProtectedRoute from './components/ProtectedRoute';
-import Home from './pages/Home';
-import SignIn from './pages/SignIn';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import VerifyEmail from './pages/VerifyEmail';
-import Servers from './pages/Servers';
-import LegalPage from './pages/LegalPage';
-import Characters from './pages/Characters';
-import Rewards from './pages/Rewards';
-import Profile from './pages/Profile';
-import Notifications from './pages/Notifications';
-import Reports from './pages/Reports';
-import AdminLayout from './pages/admin/AdminLayout';
-import AdminServers from './pages/admin/Servers';
-import AdminServerDetail from './pages/admin/ServerDetail';
-import AdminServerLogs from './pages/admin/ServerLogs';
-import AdminInstallations from './pages/admin/Installations';
-import AdminTasks from './pages/admin/Tasks';
-import AdminUsers from './pages/admin/Users';
-import AdminUserManage from './pages/admin/UserManage';
-import AdminClaims from './pages/admin/Claims';
-import AdminRewards from './pages/admin/Rewards';
-import AdminBoxes from './pages/admin/Boxes';
-import AdminEvents from './pages/admin/Events';
-import AdminStaffFeed from './pages/admin/StaffFeed';
-import AdminGive from './pages/admin/Give';
-import AdminAbout from './pages/admin/About';
-import AdminBranding from './pages/admin/Branding';
-import AdminLegalPages from './pages/admin/LegalPages';
-import AdminAudit from './pages/admin/Audit';
-import AdminSettings from './pages/admin/Settings';
-import AdminJobs from './pages/admin/Jobs';
-import AdminReports from './pages/admin/Reports';
-import AdminInvitations from './pages/admin/Invitations';
-import AdminAlerts from './pages/admin/Alerts';
+import PageBoundary from './components/PageBoundary';
+
+// Every page is its own chunk, fetched the first time it is opened, so the
+// first load carries only the frame and the page being opened - and a player
+// never downloads the admin panel at all.
+//
+// A deploy replaces the chunks. An app left open since before one asks for
+// files that no longer exist, so a failed load reloads the page once, which
+// fetches the new index.html and the chunks it names. Once only: if the
+// reload fails too, the error is real and is shown rather than looped on.
+const RELOAD_KEY = 'safezone.chunk-reload';
+
+const page = (load) => lazy(() => load().then(
+	(module) => {
+		try { sessionStorage.removeItem(RELOAD_KEY); } catch (e) { /* storage blocked */ }
+		return module;
+	},
+	(error) => {
+		let reloaded = true;
+		try { reloaded = sessionStorage.getItem(RELOAD_KEY) === '1'; } catch (e) { /* storage blocked */ }
+		if (reloaded) throw error;
+		try { sessionStorage.setItem(RELOAD_KEY, '1'); } catch (e) { /* storage blocked */ }
+		window.location.reload();
+		return new Promise(() => {});
+	}
+));
+
+const Home = page(() => import('./pages/Home'));
+const SignIn = page(() => import('./pages/SignIn'));
+const ForgotPassword = page(() => import('./pages/ForgotPassword'));
+const ResetPassword = page(() => import('./pages/ResetPassword'));
+const VerifyEmail = page(() => import('./pages/VerifyEmail'));
+const Servers = page(() => import('./pages/Servers'));
+const LegalPage = page(() => import('./pages/LegalPage'));
+const Characters = page(() => import('./pages/Characters'));
+const Rewards = page(() => import('./pages/Rewards'));
+const Shop = page(() => import('./pages/Shop'));
+const Profile = page(() => import('./pages/Profile'));
+const Notifications = page(() => import('./pages/Notifications'));
+const Reports = page(() => import('./pages/Reports'));
+const Me = page(() => import('./pages/Me'));
+const AdminLayout = page(() => import('./pages/admin/AdminLayout'));
+const AdminServers = page(() => import('./pages/admin/Servers'));
+const AdminServerDetail = page(() => import('./pages/admin/ServerDetail'));
+const AdminServerLogs = page(() => import('./pages/admin/ServerLogs'));
+const AdminInstallations = page(() => import('./pages/admin/Installations'));
+const AdminTasks = page(() => import('./pages/admin/Tasks'));
+const AdminUsers = page(() => import('./pages/admin/Users'));
+const AdminUserManage = page(() => import('./pages/admin/UserManage'));
+const AdminClaims = page(() => import('./pages/admin/Claims'));
+const AdminRewards = page(() => import('./pages/admin/Rewards'));
+const AdminBoxes = page(() => import('./pages/admin/Boxes'));
+const AdminShop = page(() => import('./pages/admin/Shop'));
+const AdminEvents = page(() => import('./pages/admin/Events'));
+const AdminStaffFeed = page(() => import('./pages/admin/StaffFeed'));
+const AdminGive = page(() => import('./pages/admin/Give'));
+const AdminAbout = page(() => import('./pages/admin/About'));
+const AdminBranding = page(() => import('./pages/admin/Branding'));
+const AdminLegalPages = page(() => import('./pages/admin/LegalPages'));
+const AdminAudit = page(() => import('./pages/admin/Audit'));
+const AdminSettings = page(() => import('./pages/admin/Settings'));
+const AdminJobs = page(() => import('./pages/admin/Jobs'));
+const AdminReports = page(() => import('./pages/admin/Reports'));
+const AdminInvitations = page(() => import('./pages/admin/Invitations'));
+const AdminAlerts = page(() => import('./pages/admin/Alerts'));
+
 
 function App() {
 	return (
@@ -53,10 +85,11 @@ function App() {
 				<DialogProvider>
 				<PlayerProvider>
 				<Router>
-					<div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+					<div className="app-shell">
 						<Navbar />
 						<main style={{ flex: 1 }}>
 							<WelcomeBack />
+							<PageBoundary>
 							<Routes>
 								<Route path="/" element={<Home />} />
 								<Route path="/signin" element={<SignIn />} />
@@ -65,6 +98,7 @@ function App() {
 								<Route path="/reset-password" element={<ResetPassword />} />
 								<Route path="/verify" element={<VerifyEmail />} />
 								<Route path="/servers" element={<Servers />} />
+								<Route path="/me" element={<Me />} />
 								{/* One component, three documents. */}
 								<Route path="/rules" element={<LegalPage slug="rules" />} />
 								<Route path="/terms" element={<LegalPage slug="terms" />} />
@@ -83,6 +117,14 @@ function App() {
 									element={
 										<ProtectedRoute>
 											<Rewards />
+										</ProtectedRoute>
+									}
+								/>
+								<Route
+									path="/shop"
+									element={
+										<ProtectedRoute>
+											<Shop />
 										</ProtectedRoute>
 									}
 								/>
@@ -129,6 +171,7 @@ function App() {
 									<Route path="claims" element={<AdminClaims />} />
 									<Route path="rewards" element={<AdminRewards />} />
 									<Route path="boxes" element={<AdminBoxes />} />
+									<Route path="shop" element={<AdminShop />} />
 									<Route path="events" element={<AdminEvents />} />
 									<Route path="staff-feed" element={<AdminStaffFeed />} />
 									<Route path="give" element={<AdminGive />} />
@@ -143,8 +186,10 @@ function App() {
 									<Route path="settings" element={<AdminSettings />} />
 								</Route>
 							</Routes>
+							</PageBoundary>
 						</main>
 						<Footer />
+						<TabBar />
 					</div>
 				</Router>
 				</PlayerProvider>

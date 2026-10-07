@@ -9,6 +9,7 @@ import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
 import RewardModal from './RewardModal';
+import Coins from '../../components/Coins';
 
 // One-line summary of what a usable reward will run, for the table. A sequence
 // can span several lines; the table shows the first, and how many more there are.
@@ -106,6 +107,7 @@ function Rewards() {
                     <th>Name</th>
                     <th style={{ width: '6rem' }}>Kind</th>
                     <th>Item id / Action</th>
+                    <th style={{ width: '5rem' }} title="What the reward sells back for, in coins">Value</th>
                     <th style={{ width: '5rem' }}>Active</th>
                     {admin && <th style={{ width: '6rem' }}></th>}
                   </tr>
@@ -126,6 +128,7 @@ function Rewards() {
                       <td>
                         <code>{r.kind === 'item' ? r.in_game_id : describeUsable(r)}</code>
                       </td>
+                      <td><Coins amount={r.coin_value} /></td>
                       <td>{r.active ? 'Yes' : 'No'}</td>
                       {admin && (
                         <td className="text-end">

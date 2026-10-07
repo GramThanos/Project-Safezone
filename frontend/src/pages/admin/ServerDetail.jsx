@@ -14,6 +14,7 @@ import { getStatusBadge, Spinner } from './helpers';
 import ServerConfig from './ServerConfig';
 import ServerForm from './ServerForm';
 import ServerModsEditor from './ServerModsEditor';
+import { formatDateTime } from '../../utils/dates';
 
 const humanBytes = (n) => {
   if (!n) return '—';
@@ -23,6 +24,33 @@ const humanBytes = (n) => {
   while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 };
+
+// A backup's label as the manager will store it: `[A-Za-z0-9_-]`, at most 32
+// characters. Anything else becomes a hyphen as it is typed, so the field shows
+// the name that will actually be written.
+const BACKUP_LABEL_MAX = 32;
+const labelChars = (text) => text.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/-{2,}/g, '-');
+const finishLabel = (text) => labelChars(text).replace(/^-+|-+$/g, '')
+  .slice(0, BACKUP_LABEL_MAX).replace(/-+$/, '');
+const slugify = (name) => finishLabel(String(name || '').toLowerCase());
+
+// The archive name's `YYYYMMDD-HHMMSS` in UTC - the manager's format.
+const backupStamp = (date) => {
+  const iso = date.toISOString();
+  return `${iso.slice(0, 10).replace(/-/g, '')}-${iso.slice(11, 19).replace(/:/g, '')}`;
+};
+
+// The stamp is taken by the manager at the moment the archive is written - the
+// newest-first order and pruning depend on it - so it is shown ticking rather
+// than offered for editing. Its own component so only it re-renders each second.
+function BackupStamp({ withSeparator }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return `${backupStamp(now)}${withSeparator ? '-' : ''}`;
+}
 
 function ServerDetail() {
   const { serverId } = useParams();
@@ -54,6 +82,14 @@ function ServerDetail() {
     if (isAdmin()) fetchBackups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
+
+  // Default the backup label to the server's name, so a downloaded archive says
+  // which server it came from. Keyed on the name rather than every reload, so a
+  // label being typed survives a start/stop refreshing the server.
+  const serverName = server && server.name;
+  useEffect(() => {
+    setBackupNote(slugify(serverName));
+  }, [serverName]);
 
   const loadServer = async () => {
     setError('');
@@ -128,11 +164,11 @@ function ServerDetail() {
     setBackupError('');
     setBackupMsg('');
     try {
-      await api.admin.servers.backup(token, serverId, backupNote.trim());
+      await api.admin.servers.backup(token, serverId, finishLabel(backupNote));
       // The task runs in the background, so the list will not have it yet.
       setBackupMsg('Backup queued. It will appear here once the task finishes — '
         + 'watch Tasks for progress.');
-      setBackupNote('');
+      setBackupNote(slugify(serverName));
     } catch (err) {
       console.error('Backup error:', err);
       setBackupError(err.message || 'Could not queue the backup');
@@ -412,14 +448,26 @@ function ServerDetail() {
 
             <div className="row g-2 align-items-end mb-3">
               <div className="col-md-8">
-                <label className="form-label text-body-secondary">Note (optional)</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="e.g. before-mod-update"
-                  value={backupNote}
-                  onChange={(e) => setBackupNote(e.target.value)}
-                />
+                <label className="form-label text-body-secondary" htmlFor="backup-label">
+                  Name
+                </label>
+                <div className="input-group">
+                  <span
+                    className="input-group-text font-monospace"
+                    title="UTC, stamped when the archive is written"
+                  >
+                    <BackupStamp withSeparator={finishLabel(backupNote) !== ''} />
+                  </span>
+                  <input
+                    id="backup-label"
+                    type="text"
+                    className="form-control font-monospace"
+                    placeholder="label (optional)"
+                    maxLength={BACKUP_LABEL_MAX}
+                    value={backupNote}
+                    onChange={(e) => setBackupNote(labelChars(e.target.value))}
+                  />
+                </div>
               </div>
               <div className="col-md-4">
                 <button
@@ -470,7 +518,7 @@ function ServerDetail() {
                       <tr key={b.name}>
                         <td className="text-break"><code>{b.name}</code></td>
                         <td>{humanBytes(b.bytes)}</td>
-                        <td>{b.created_at ? new Date(b.created_at).toLocaleString() : '—'}</td>
+                        <td>{formatDateTime(b.created_at, '—')}</td>
                         <td>
                           <div className="d-flex gap-2 justify-content-end">
                             <button

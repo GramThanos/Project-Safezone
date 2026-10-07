@@ -10,9 +10,10 @@ import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
+import { formatDateTime } from '../../utils/dates';
 
 // Format an ISO timestamp for display.
-const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : 'N/A');
+const fmt = (ts) => formatDateTime(ts, 'N/A');
 
 // Render an arbitrary task-data value. Everything goes in a <pre> block: values
 // are often multi-line (e.g. captured SteamCMD output), so newlines must survive.

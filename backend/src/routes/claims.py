@@ -16,7 +16,7 @@ from src.models.notification import Notification
 from src.middleware.auth import token_required
 from src.utils.game_server import gs_request
 from src.utils.redis_utils import is_player_online
-from src.utils import audit, notify, alerting
+from src.utils import audit, notify, alerting, character_info, coins
 
 logger = logging.getLogger(__name__)
 claims_bp = Blueprint('claims', __name__, url_prefix='/api/claims')
@@ -69,6 +69,11 @@ def create_claim(current_user):
     if not is_player_online(server_id, username):
         return jsonify({'error': 'That character is not currently online on this server'}), 409
 
+    # What the character has already done, so only what it does from now on
+    # earns coins. Read before the transaction, since it asks the game-server; if
+    # there is no answer yet the first settlement sets the baseline instead.
+    game_data, game_status = character_info.fetch(server_id, username)
+
     try:
         with db.get_db() as session:
             # One account per in-game identity. This is the only real gate now
@@ -86,6 +91,10 @@ def create_claim(current_user):
                 in_game_username=username,
                 verified=True
             )
+            if game_status == 200:
+                # A stale copy is an older save, with lower counts than the
+                # character has now; starting from it would pay for the gap.
+                coins.baseline(character, coins.reading_from_entry(game_data, allow_stale=False))
             session.add(character)
             session.flush()  # obtain character.id
 

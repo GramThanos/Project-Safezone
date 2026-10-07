@@ -11,7 +11,7 @@ from src.database import db
 from src.models.character import Character
 from src.models.claim_request import ClaimRequest
 from src.middleware.auth import token_required
-from src.utils import audit
+from src.utils import audit, character_info, coins
 
 logger = logging.getLogger(__name__)
 characters_bp = Blueprint('characters', __name__, url_prefix='/api/characters')
@@ -50,6 +50,37 @@ def get_character(current_user, character_id):
             return jsonify({'character': character.to_dict()}), 200
     except Exception as e:
         logger.error(f"Get character error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@characters_bp.route('/<int:character_id>/game', methods=['GET'])
+@token_required
+def get_character_game(current_user, character_id):
+    """The character's saved game data, as its owner may see it.
+
+    Owner only - not even staff read it through here (they have their own route,
+    which shows more and is audited). Only a linked character has an in-game
+    identity to look up.
+    """
+    try:
+        with db.get_db() as session:
+            character = session.query(Character).filter_by(id=character_id).first()
+            if not character:
+                return jsonify({'error': 'Character not found'}), 404
+            if character.user_id != current_user['user_id']:
+                return jsonify({'error': 'Access denied'}), 403
+            if not character.is_deliverable():
+                return jsonify({'error': 'This character is not linked to the game'}), 404
+            server_id, username = character.server_id, character.in_game_username
+
+        entry, status = character_info.fetch(server_id, username)
+        if status != 200:
+            return jsonify(entry), status
+        # Fresh data is a free chance to pay for what was done since the last look.
+        coins.settle_quietly(character_id, coins.reading_from_entry(entry))
+        return jsonify(character_info.respond(entry, character_info.owner_view)), 200
+    except Exception as e:
+        logger.error(f"Get character game data error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -106,8 +137,23 @@ def unlink_character(current_user, character_id):
     claim is left pointing at a character that no longer exists. Once unlinked
     the identity is free: anyone may claim it again through the normal flow
     (proof of being online plus staff approval).
+
+    Coins earned since the last check are paid first: the counters go with the
+    character, so anything not settled now would never be.
     """
     try:
+        with db.get_db() as session:
+            character = session.query(Character).filter_by(id=character_id).first()
+            owned = character is not None and character.user_id == current_user['user_id']
+            linked = owned and character.is_deliverable()
+            server_id = character.server_id if linked else None
+            username = character.in_game_username if linked else None
+
+        if linked:
+            entry, status = character_info.fetch(server_id, username)
+            if status == 200:
+                coins.settle_quietly(character_id, coins.reading_from_entry(entry))
+
         with db.get_db() as session:
             character = session.query(Character).filter_by(id=character_id).first()
 

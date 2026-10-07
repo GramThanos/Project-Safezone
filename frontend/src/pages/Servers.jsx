@@ -5,11 +5,15 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import usePageTitle from '../hooks/usePageTitle';
 import PlayerActivityChart from '../components/PlayerActivityChart';
+import { formatTime } from '../utils/dates';
 
 function Servers() {
 	usePageTitle('Servers');
 	const { user, token } = useAuth();
 	const [servers, setServers] = useState([]);
+	// Set while maintenance is counting down or under way: when the servers
+	// restart, or that they are down for an update right now.
+	const [maintenance, setMaintenance] = useState(null);
 	const [history, setHistory] = useState({});
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState('');
@@ -27,6 +31,7 @@ function Servers() {
 			const data = await api.servers.getStatus(token);
 			const list = data.servers || [];
 			setServers(list);
+			setMaintenance(data.maintenance || null);
 			setLoading(false);
 			loadHistory(list);
 		} catch (err) {
@@ -55,6 +60,7 @@ function Servers() {
 			'running': 'success',
 			'booting': 'info',
 			'sleeping': 'warning',
+			'maintenance': 'primary',
 			'restarting': 'info',
 			'failed': 'danger',
 			'stopped': 'secondary'
@@ -104,6 +110,17 @@ function Servers() {
 				{error && (
 					<div className="alert alert-danger" role="alert">
 						{error}
+					</div>
+				)}
+
+				{maintenance && (
+					<div className="alert alert-warning" role="status">
+						<i className="fas fa-screwdriver-wrench me-2"></i>
+						{maintenance.status === 'announcing' && maintenance.restart_at
+							? <>The servers restart for an update at{' '}
+								<strong>{formatTime(maintenance.restart_at)}</strong>.
+								Find somewhere safe to log off.</>
+							: <>The servers are down for an update and will be back shortly.</>}
 					</div>
 				)}
 

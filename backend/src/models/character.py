@@ -1,7 +1,7 @@
 """Character (game character) model with SQLAlchemy"""
 from datetime import datetime
 import json
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, JSON, ForeignKey
 from src.database import Base
 
 
@@ -33,6 +33,27 @@ class Character(Base):
     # Last time this identity was seen on its server's online roster. Drives the
     # dormancy notice, and is worth showing on the profile regardless.
     last_seen_at = Column(DateTime, index=True)
+    # Coins earned by playing (see `src/utils/coins.py`). Per earning source -
+    # zombie kills today - ``{"kills": {"counted": 130, "seen": 137}}``:
+    # `counted` is what has been paid for, `seen` the last reading. Set to the
+    # character's current counts when it is linked, so nothing from before the
+    # link is ever paid. Lives on this row on purpose: unlinking deletes it, so
+    # a re-claim starts again from the counts at that moment.
+    coin_progress = Column(JSON)
+    # Which in-game life the counts belong to (the character's name in the
+    # save), and the lives seen before it. A new name is a new character, whose
+    # counts start from zero; a name seen before is a backup being restored,
+    # which must not be paid again as if it were new.
+    coin_identity = Column(String(128))
+    coin_identities = Column(JSON)
+    # When the game saved the copy the last reading came from. A copy no newer
+    # than this is ignored, so an old cached save is never read twice.
+    coin_saved_at = Column(DateTime)
+    # When the character was last checked, whether or not anything was due.
+    coin_checked_at = Column(DateTime)
+    # Coins this character has earned by playing, all told. Kept here rather
+    # than summed from the coin log, which is pruned.
+    coin_earned = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+import { formatDateTime } from '../../utils/dates';
 
 function Audit() {
   const { token, isAdmin } = useAuth();
@@ -149,7 +150,7 @@ function Audit() {
               ) : (
                 auditEntries.map((e) => (
                   <tr key={e.id}>
-                    <td>{e.created_at ? new Date(e.created_at).toLocaleString() : 'N/A'}</td>
+                    <td>{formatDateTime(e.created_at, 'N/A')}</td>
                     <td>{e.actor_user_id ? `#${e.actor_user_id}` : 'system'}</td>
                     <td><span className="badge text-bg-info">{e.action}</span></td>
                     <td>{e.target || '—'}</td>

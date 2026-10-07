@@ -21,7 +21,8 @@ cp .env.example .env
 | `API_TOKEN` | dev value | Shared secret between the backend and the game-server manager |
 | `DATABASE_NAME` / `DATABASE_USER` | `safezone` / `safezone` | Also only read on the database's first start |
 | `TZ` | `UTC` in `.env.example` | Container clocks, logs, and the times on the Tasks page and player chart. Left unset, it stays `Europe/Athens`, the default of earlier versions, so an upgrade changes nothing. The daily loot reset follows the primary game server's timezone instead |
-| `TOKEN_EXPIRY_HOURS` | `24` | Session length. Also editable in the panel |
+| `TOKEN_EXPIRY_HOURS` | `24` | How long a website session lasts after it was last used; using the site keeps extending it. Also editable in the panel |
+| `APP_SESSION_DAYS` | `30` | The same for the site installed as an app. Also editable in the panel |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_TLS` / `SMTP_FROM` | — / `587` / — / — / `true` / — | Outgoing mail. A blank host writes mail to the backend log instead of sending it. Also editable in the panel |
 
 The development defaults for the secrets are published in this repository — replace every one. `openssl rand -hex 32` prints a suitable value. Apply changes with `docker compose up -d`.
@@ -32,11 +33,13 @@ Most settings are changed live, by an admin, with no restart:
 
 | Where | What |
 |---|---|
-| **Admin → System → Settings** | Registration (open, closed, shared password), invitations, captcha, the site's public URL, session length, the weekly streak, loot expiry, alerts, retention, and mail |
+| **Admin → System → Settings** | Registration (open, closed, shared password), invitations, captcha, the site's public URL, session lengths for the website and the installed app, the weekly streak, the crate reminder time, loot expiry, coins (on or off, the kill rate, shop expiry, how long coin history is kept), alerts, retention, and mail |
+| **Admin → Rewards → Shop** | Shop categories and the rewards listed in them, with their prices and daily limits. See [coins and the shop](features.md#coins-and-the-shop) |
 | **Admin → Site → Branding** | The site's name, home page text and footer links |
 | **Admin → Site → Pages** | Server rules, terms, privacy and cookie pages |
 | **Admin → System → Alerts** | Discord webhooks, the staff feed and ops mailboxes, and which events each one receives |
-| **Admin → System → Scheduled Jobs** | The weekly bonus catch-up, retention sweeps and server maintenance |
+| **Admin → System → Scheduled Jobs** | The weekly bonus catch-up, the daily crate reminder, the daily coin check and coin summary, and retention sweeps (audit log, staff feed, coin history) |
+| **Admin → Servers → Installations → Maintenance** | When to check for game and mod updates, when they may be applied, and how players are warned. See [maintenance](features.md#maintenance) |
 | **Admin → Servers** | Each server's ports, timezone, settings, mods and sleep behaviour |
 
 ## `docker-compose.yml`
@@ -57,7 +60,10 @@ Others can be added to a service's `environment` list when you need them. The us
 | `STEAM_APP_BETA` | `game-server` | public | Default Steam branch of the game. Can also be picked per update in **Installations** |
 | `SERVER_SCRIPT` | `game-server` | `/opt/steam-apps/start-server.sh` | Override if a server will not start |
 | `WAKE_A2S_THRESHOLD` | `game-server` | `2` | Server-list queries from one address, within a minute, that wake a sleeping server. `1` wakes on first contact. See [wake on demand](features.md#wake-on-demand) |
-| `WORKSHOP_METADATA` | `game-server` | `true` | Look up Workshop mod titles on Steam. Set `false` on a host with no outbound HTTP |
+| `PUSH_SUBJECT` | `game-server` | `mailto:admin@localhost` | The contact given to browser push services with each notification. The public site address is used instead when it is `https://`; set this to a real mailbox otherwise, since Apple refuses pushes without one |
+| `WORKSHOP_METADATA` | `game-server` | `true` | Look up Workshop mod titles on Steam. Set `false` on a host with no outbound HTTP. Mod update checks need it |
+| `MAINTENANCE_STOP_TIMEOUT` | `game-server` | `300` | Seconds every server gets to save and stop once maintenance takes them down, before the run gives up and releases them |
+| `MAINTENANCE_GAME_CHECK_MIN_INTERVAL` | `game-server` | `600` | Least seconds between the extra game checks a server going quiet triggers. Each is a SteamCMD run; the cron schedule is not limited by it |
 | `LOG_FORMAT` | `backend`, `scheduler` | `text` | `json` when something is collecting logs |
 
 The complete list, with comments, is in `backend/src/config.py` and `game-server/src/config.py`.

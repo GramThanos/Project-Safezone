@@ -10,6 +10,7 @@ from flask import Blueprint, request, jsonify, Response, stream_with_context
 from src.database import db
 from src.models.user import User
 from src.models.character import Character
+from src.models.coin_log import CoinLog
 from src.models.claim_request import ClaimRequest
 from src.models.reward import Reward
 from src.models.box import Box
@@ -26,7 +27,7 @@ from src.middleware.auth import moderator_required, admin_required
 from src.utils.game_server import gs_request, gs_stream
 from src.utils.redis_utils import apply_live_state
 from src.utils import (loot, audit, settings, mailer, paging, notify, jobs, moderation,
-                       alerting, channels)
+                       alerting, channels, character_info, coins)
 from src.utils.actions import fetch_catalog, role_allows, validate_action
 from src.utils.rewards import (validate_reward_payload, validate_usable_commands,
                                validate_item_count)
@@ -145,14 +146,44 @@ def get_user_detail(current_user, user_id):
                               session.query(Reward).filter(Reward.id.in_(reward_ids))}
                              if reward_ids else {})
 
+            paying = {r['key']: r for r in coins.rates()}
             return jsonify({
                 'user': dict(user.to_dict(), **_loot_summary(session, [user_id])[user_id]),
-                'characters': [c.to_dict() for c in characters],
+                # Each character with how its coin earning stands: what it
+                # has been paid for, the last reading, and when that was.
+                'characters': [dict(c.to_dict(),
+                                    coins=coins.character_status(c, paying))
+                               for c in characters],
+                'coin_sources': list(paying.values()),
                 'boxes': [b.to_dict(box=boxes_by_id.get(b.box_id)) for b in boxes],
                 'inventory': [i.to_dict(reward=rewards_by_id.get(i.reward_id)) for i in items],
             }), 200
     except Exception as e:
         logger.error(f"Get user detail error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/users/<int:user_id>/coin-log', methods=['GET'])
+@admin_required
+def get_user_coin_log(current_user, user_id):
+    """Every coin an account has gained, newest first (admin only).
+
+    Gains only - sales, playing, staff grants. Purchases and staff deductions
+    are in the audit log.
+    """
+    try:
+        limit, offset = paging.params(default_limit=25)
+        with db.get_db() as session:
+            query = (session.query(CoinLog)
+                     .filter_by(user_id=user_id)
+                     .order_by(CoinLog.created_at.desc(), CoinLog.id.desc()))
+            rows, total = paging.page(query, limit, offset)
+            return jsonify({
+                'log': [dict(r.to_dict(), label=coins.label(r.source)) for r in rows],
+                'pagination': paging.meta(total, limit, offset),
+            }), 200
+    except Exception as e:
+        logger.error(f"Get coin log error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -244,6 +275,55 @@ def remove_user_inventory(current_user, user_id):
                             'removed': len(rows)}), 200
     except Exception as e:
         logger.error(f"Remove user inventory error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/users/<int:user_id>/coins', methods=['POST'])
+@admin_required
+def adjust_user_coins(current_user, user_id):
+    """Give an account coins, or take them away (admin only).
+
+    ``amount`` is signed. A reason is required and reaches the player, so a
+    change to their balance is never unexplained. Taking more than the account
+    holds is refused rather than clamped: the admin should know it did not
+    happen as asked.
+    """
+    data = request.get_json(silent=True) or {}
+    amount = coins.whole_number(data.get('amount'))
+    reason = (data.get('reason') or '').strip() if isinstance(data.get('reason'), str) else ''
+    if amount is None or amount == 0 or abs(amount) > coins.MAX_ADJUSTMENT:
+        return jsonify({'error': f'amount must be a whole number from -{coins.MAX_ADJUSTMENT} '
+                                 f'to {coins.MAX_ADJUSTMENT}, and not 0'}), 400
+    if not reason:
+        return jsonify({'error': 'A reason is required'}), 400
+    reason = reason[:500]
+
+    try:
+        with db.get_db() as session:
+            user = session.query(User).filter_by(id=user_id).first()
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            if amount > 0:
+                coins.earn(session, user_id, amount, CoinLog.SOURCE_ADMIN, detail=reason)
+            elif not coins.debit(session, user_id, -amount):
+                return jsonify({'error': f'{user.username} only has '
+                                         f'{coins.balance(session, user_id)} coin(s)'}), 409
+            balance = coins.balance(session, user_id)
+
+            verb = 'added to' if amount > 0 else 'taken from'
+            audit.record(session, current_user['user_id'], 'coins.adjust',
+                         target=f'user:{user_id}',
+                         detail=f"{abs(amount)} coin(s) {verb} {user.username}, "
+                                f"now {balance}: {reason}")
+            notify.send(session, user_id, Notification.KIND_COINS,
+                        f'{abs(amount)} coin{"" if abs(amount) == 1 else "s"} '
+                        f'{"added to" if amount > 0 else "taken from"} your balance',
+                        body=reason, link='/shop')
+            return jsonify({'message': f'{abs(amount)} coin(s) {verb} {user.username}. '
+                                       f'Balance: {balance}.',
+                            'balance': balance}), 200
+    except Exception as e:
+        logger.error(f"Adjust user coins error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
@@ -1025,6 +1105,37 @@ def get_claims(current_user):
         return jsonify({'error': 'Internal server error'}), 500
 
 
+@admin_bp.route('/characters/<int:character_id>/game', methods=['GET'])
+@moderator_required
+def get_character_game(current_user, character_id):
+    """A linked character's saved game data, as staff see it (moderator/admin).
+
+    The owner's view plus the zombie infection, which players are not shown.
+    Audited: it is another person's character, location included.
+    """
+    try:
+        with db.get_db() as session:
+            character = session.query(Character).filter_by(id=character_id).first()
+            if not character:
+                return jsonify({'error': 'Character not found'}), 404
+            if not character.is_deliverable():
+                return jsonify({'error': 'This character is not linked to the game'}), 404
+            server_id, username = character.server_id, character.in_game_username
+            audit.record(session, current_user['user_id'], 'character.view',
+                         target=username,
+                         detail=f"game data of {username}@server{server_id} "
+                                f"(account #{character.user_id})")
+
+        entry, status = character_info.fetch(server_id, username)
+        if status != 200:
+            return jsonify(entry), status
+        coins.settle_quietly(character_id, coins.reading_from_entry(entry))
+        return jsonify(character_info.respond(entry, character_info.staff_view)), 200
+    except Exception as e:
+        logger.error(f"Get character game data error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
 @admin_bp.route('/claims/<int:claim_id>/revoke', methods=['POST'])
 @moderator_required
 def revoke_claim(current_user, claim_id):
@@ -1621,18 +1732,22 @@ def export_reward_box(current_user):
                     out['commands'] = reward.commands or ''
                 rewards_out.append(out)
 
-        return jsonify({
-            'schema': 'safezone.box-config/v1',
-            'name': name or box.name,
-            'description': description,
-            # Carried so a config describes the whole box, not just its pool: a
-            # three-draw box that round-tripped as a one-draw box was a silent
-            # downgrade nobody would notice until players opened it. Only used
-            # when the config creates a box; importing into an existing box
-            # leaves that box's own draw count alone.
-            'draws': box.draws,
-            'rewards': rewards_out,
-        }), 200
+            # Built inside the block: leaving it commits and closes the session,
+            # which detaches `box`, and reading `box.draws` after that raised -
+            # every export returned a 500.
+            config = {
+                'schema': 'safezone.box-config/v1',
+                'name': name or box.name,
+                'description': description,
+                # Carried so a config describes the whole box, not just its pool: a
+                # three-draw box that round-tripped as a one-draw box was a silent
+                # downgrade nobody would notice until players opened it. Only used
+                # when the config creates a box; importing into an existing box
+                # leaves that box's own draw count alone.
+                'draws': box.draws,
+                'rewards': rewards_out,
+            }
+        return jsonify(config), 200
     except Exception as ex:
         logger.error(f"Export reward box error: {ex}")
         return jsonify({'error': 'Internal server error'}), 500
@@ -1890,6 +2005,116 @@ def queue_installation_app_info(current_user):
     if status not in (200, 201):
         return jsonify({'error': payload.get('error', 'Could not queue the fetch')}), status
     return jsonify({'message': 'Fetch queued', 'task': payload.get('data')}), 202
+
+
+# ---------------------------------------------------------------------------
+# Maintenance (proxied to the game-server API)
+#
+# Checking for game and mod updates and taking every server down to apply them.
+# The game-server's maintenance worker does the work; these record who decided
+# what. Admin-only, like installing - with one exception: a moderator may call
+# off a planned run, because "not now, there is an event on" is a 3am decision
+# that should not need an admin awake.
+# ---------------------------------------------------------------------------
+
+@admin_bp.route('/maintenance', methods=['GET'])
+@moderator_required
+def get_maintenance(current_user):
+    """Policy, the open run, recent runs and the latest checks (moderator/admin)."""
+    payload, status = gs_request('GET', '/api/maintenance')
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not read the maintenance state')}), status
+    return jsonify(payload.get('data') or {}), 200
+
+
+@admin_bp.route('/maintenance/policy', methods=['PUT'])
+@admin_required
+def update_maintenance_policy(current_user):
+    """Change the maintenance policy (admin only)."""
+    data = request.get_json(silent=True) or {}
+    policy = data.get('policy')
+    if not isinstance(policy, dict):
+        return jsonify({'error': 'A policy object is required'}), 400
+
+    payload, status = gs_request('PUT', '/api/maintenance/policy',
+                                 json={'policy': policy, 'actor': current_user['username']})
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not save the policy'),
+                        'errors': payload.get('errors') or {}}), status
+
+    audit.record_standalone(current_user['user_id'], 'maintenance.policy',
+                            detail=f"changed: {', '.join(sorted(policy)) or 'nothing'}")
+    return jsonify({'message': payload.get('message', 'Policy saved'),
+                    'policy': payload.get('data') or {}}), 200
+
+
+@admin_bp.route('/maintenance/check', methods=['POST'])
+@admin_required
+def request_maintenance_check(current_user):
+    """Ask the worker to check for updates now (admin only)."""
+    data = request.get_json(silent=True) or {}
+    kinds = data.get('kinds') or ['game', 'mods']
+    payload, status = gs_request('POST', '/api/maintenance/check',
+                                 json={'kinds': kinds, 'actor': current_user['username']})
+    if status not in (200, 202):
+        return jsonify({'error': payload.get('error', 'Could not request a check')}), status
+    return jsonify({'message': payload.get('message', 'Check requested')}), 202
+
+
+@admin_bp.route('/maintenance/runs', methods=['POST'])
+@admin_required
+def plan_maintenance(current_user):
+    """Plan a maintenance run from what the latest checks found (admin only).
+
+    Body: ``{game: bool, mods: [workshop ids], mode: 'auto' | 'now'}``. The
+    game-server only accepts updates its own checks reported.
+    """
+    data = request.get_json(silent=True) or {}
+    mods = data.get('mods') or []
+    if not isinstance(mods, list):
+        return jsonify({'error': 'mods must be a list of Workshop item ids'}), 400
+    body = {'game': bool(data.get('game')), 'mods': [str(m) for m in mods],
+            'mode': data.get('mode') or 'auto', 'actor': current_user['username']}
+
+    payload, status = gs_request('POST', '/api/maintenance/runs', json=body)
+    if status not in (200, 201):
+        return jsonify({'error': payload.get('error', 'Could not plan the maintenance')}), status
+
+    run = payload.get('data') or {}
+    audit.record_standalone(current_user['user_id'], 'maintenance.plan',
+                            target=f"maintenance:{run.get('id')}",
+                            detail=(f"game: {'yes' if body['game'] else 'no'}; "
+                                    f"mods: {', '.join(body['mods']) or 'none'}; "
+                                    f"mode: {body['mode']}"))
+    return jsonify({'message': payload.get('message', 'Maintenance planned'), 'run': run}), 201
+
+
+@admin_bp.route('/maintenance/runs/<int:run_id>/now', methods=['POST'])
+@admin_required
+def maintenance_run_now(current_user, run_id):
+    """Start a planned run's countdown now instead of waiting (admin only)."""
+    payload, status = gs_request('POST', f'/api/maintenance/runs/{run_id}/now',
+                                 json={'actor': current_user['username']})
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not start the maintenance')}), status
+    audit.record_standalone(current_user['user_id'], 'maintenance.now',
+                            target=f'maintenance:{run_id}')
+    return jsonify({'message': payload.get('message', 'Starting the countdown'),
+                    'run': payload.get('data') or {}}), 200
+
+
+@admin_bp.route('/maintenance/runs/<int:run_id>/cancel', methods=['POST'])
+@moderator_required
+def cancel_maintenance(current_user, run_id):
+    """Call off a planned run before any files change (moderator/admin)."""
+    payload, status = gs_request('POST', f'/api/maintenance/runs/{run_id}/cancel',
+                                 json={'actor': current_user['username']})
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not cancel the maintenance')}), status
+    audit.record_standalone(current_user['user_id'], 'maintenance.cancel',
+                            target=f'maintenance:{run_id}')
+    return jsonify({'message': payload.get('message', 'Maintenance cancelled'),
+                    'run': payload.get('data') or {}}), 200
 
 
 @admin_bp.route('/mods', methods=['GET'])

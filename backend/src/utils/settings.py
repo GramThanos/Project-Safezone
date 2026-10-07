@@ -110,6 +110,15 @@ REGISTRY = {
         'label': 'Audit retention (days)',
         'help': 'How long audit entries are kept. 0 keeps them forever.',
     },
+    'crate_reminder_time': {
+        'config': 'CRATE_REMINDER_TIME',
+        'type': 'str',
+        'label': 'Crate reminder time',
+        'help': "When players who turned on notifications are reminded that today's "
+                "crate is still unclaimed, as 24-hour HH:MM in the primary server's "
+                'timezone. Nothing is sent until the crate_reminder job is switched on.',
+        'validate': lambda value: _validate_clock(value),
+    },
     'staff_alert_retention_days': {
         'config': 'STAFF_ALERT_RETENTION_DAYS',
         'type': 'int',
@@ -117,6 +126,59 @@ REGISTRY = {
         'help': 'How long entries in the staff feed are kept. 0 keeps them forever. '
                 'Unlike the audit log this is a feed rather than a record, so it '
                 'defaults to a month.',
+    },
+
+    # --- Coins --------------------------------------------------------------
+    'coins_enabled': {
+        'config': 'COINS_ENABLED',
+        'type': 'bool',
+        'group': 'coins',
+        'label': 'Coins and the shop',
+        'help': 'When on, discarding an unsent reward sells it for its coin value, '
+                'zombie kills earn coins and the shop is open. Turning it off keeps '
+                'every balance; kills made while it is off are never paid. Switch on '
+                'the settle_coins job (the daily check of every character) and the '
+                'coin_report job (a daily "yesterday you earned" message) under '
+                'Scheduled Jobs.',
+    },
+    'coins_per_kill_step': {
+        'config': 'COINS_PER_KILL_STEP',
+        'type': 'int',
+        'group': 'coins',
+        'label': 'Coins per step of kills',
+        'help': 'How many coins each step of zombie kills below is worth.',
+        'validate': lambda value: _validate_at_least(value, 1),
+    },
+    'kills_per_coin_step': {
+        'config': 'KILLS_PER_COIN_STEP',
+        'type': 'int',
+        'group': 'coins',
+        'label': 'Zombie kills per step',
+        'help': 'Kills a linked character needs for each payment. Kills left over '
+                'carry to the next one. Kills made before a character was linked never '
+                'count. Characters are checked when their data is viewed and by the '
+                'daily settle_coins job.',
+        'validate': lambda value: _validate_at_least(value, 1),
+    },
+    'shop_item_expiry_days': {
+        'config': 'SHOP_ITEM_EXPIRY_DAYS',
+        'type': 'int',
+        'group': 'coins',
+        'label': 'Bought items expire after (days)',
+        'help': 'Applies to shop purchases still waiting to be sent in game. 0 never '
+                'expires. Rewards from boxes follow their own setting under Operations.',
+        'validate': lambda value: _validate_at_least(value, 0),
+    },
+    'coin_log_retention_days': {
+        'config': 'COIN_LOG_RETENTION_DAYS',
+        'type': 'int',
+        'group': 'coins',
+        'label': 'Coin history kept for (days)',
+        'help': 'How long the record of coins gained and of shop purchases is kept, '
+                'trimmed daily by the prune_coin_log job. Balances, character totals and '
+                'listing sales counts are kept regardless. At least 2, since the daily '
+                'summary reads yesterday; 0 keeps everything.',
+        'validate': lambda value: _validate_retention(value, 2),
     },
 
     # --- Mail ---------------------------------------------------------------
@@ -173,9 +235,19 @@ REGISTRY = {
         'config': 'TOKEN_EXPIRY_HOURS',
         'type': 'int',
         'group': 'limits',
-        'label': 'Session length (hours)',
-        'help': 'How long a sign-in lasts. Shortening it does not end sessions '
-                'already issued; "sign out everywhere" does.',
+        'label': 'Website session length (hours)',
+        'help': 'How long a sign-in in a browser lasts after it was last used; '
+                'using the site keeps extending it. A change applies from each '
+                "session's next use; \"sign out everywhere\" ends sessions outright.",
+    },
+    'app_session_days': {
+        'config': 'APP_SESSION_DAYS',
+        'type': 'int',
+        'group': 'limits',
+        'label': 'Installed app session length (days)',
+        'help': 'The same, for the site installed as an app. Longer, since that is '
+                "somebody's own phone. Crate reminders stop when the session "
+                'they were turned on in ends.',
     },
 
     'site_url': {
@@ -301,6 +373,31 @@ _CACHE_TTL_SECONDS = 15
 # down, not about caching an answer.
 _FAILURE_TTL_SECONDS = 2
 _cache = {'values': None, 'at': 0.0}
+
+
+def _validate_clock(value):
+    # Imported here because the push helpers read settings themselves.
+    from src.utils.push import validate_time
+    return validate_time(value)
+
+
+def _validate_at_least(value, minimum):
+    number = _coerce(value, 'int')
+    if number is None:
+        return 'must be a whole number'
+    if number < minimum:
+        return f'must be at least {minimum}'
+    return None
+
+
+def _validate_retention(value, minimum):
+    """0 for "keep forever", otherwise at least ``minimum`` days."""
+    number = _coerce(value, 'int')
+    if number is None:
+        return 'must be a whole number'
+    if number != 0 and number < minimum:
+        return f'must be 0 (keep everything) or at least {minimum}'
+    return None
 
 
 def _coerce(raw, kind):

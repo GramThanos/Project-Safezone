@@ -15,6 +15,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
+import { formatDateTime, parseDate } from '../../utils/dates';
 
 const PAGE_SIZE = 25;
 
@@ -35,8 +36,8 @@ const ICONS = {
 // time is what they need to read the page. Both, rather than choosing.
 const when = (iso) => {
   if (!iso) return { absolute: '', relative: '' };
-  const at = new Date(`${iso.endsWith('Z') ? iso : `${iso}Z`}`);
-  if (Number.isNaN(at.getTime())) return { absolute: iso, relative: '' };
+  const at = parseDate(iso);
+  if (!at) return { absolute: iso, relative: '' };
 
   const seconds = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
   let relative;
@@ -45,7 +46,7 @@ const when = (iso) => {
   else if (seconds < 86400) relative = `${Math.floor(seconds / 3600)}h ago`;
   else relative = `${Math.floor(seconds / 86400)}d ago`;
 
-  return { absolute: at.toLocaleString(), relative };
+  return { absolute: formatDateTime(at), relative };
 };
 
 function StaffFeed() {
@@ -111,7 +112,7 @@ function StaffFeed() {
   // API, but `isoformat()` drops the microseconds when they happen to be zero,
   // and a lexicographic compare across the two shapes is a trap waiting for a
   // whole-second timestamp.
-  const asTime = (iso) => (iso ? Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`) : NaN);
+  const asTime = (iso) => parseDate(iso)?.getTime() ?? NaN;
   const readMark = asTime(readAt);
   const isNew = (alert) => Number.isNaN(readMark) || asTime(alert.created_at) > readMark;
   const pages = Math.ceil(total / PAGE_SIZE) || 1;

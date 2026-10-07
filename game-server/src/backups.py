@@ -96,7 +96,10 @@ def create(server_name, note=None):
 
     suffix = ''
     if note:
-        cleaned = re.sub(r'[^A-Za-z0-9_-]', '', str(note))[:32]
+        # Hyphenate rather than drop, so "before mod update" stays readable -
+        # the same cleaning the admin panel shows as it is typed.
+        cleaned = re.sub(r'[^A-Za-z0-9_-]+', '-', str(note))
+        cleaned = re.sub(r'-{2,}', '-', cleaned).strip('-')[:32].rstrip('-')
         if cleaned:
             suffix = f'-{cleaned}'
 
@@ -107,10 +110,20 @@ def create(server_name, note=None):
         os.makedirs(target_dir, exist_ok=True)
         # Write to a partial name first: a half-written archive that looks like
         # a real one is worse than no archive, because it will be trusted.
-        partial = os.path.join(target_dir, name + '.partial')
-        with tarfile.open(partial, 'w:gz') as archive:
-            archive.add(source, arcname='.')
-        os.replace(partial, os.path.join(target_dir, name))
+        final = os.path.join(target_dir, name)
+        partial = final + '.partial'
+        # Name the archive after the final path, not the file being written:
+        # gzip records that name in its header, and 7-Zip shows the inner tar
+        # under it - as `.tar.gz.partial`, which it will not open as a tar.
+        with open(partial, 'wb') as raw, \
+                tarfile.open(final, 'w:gz', fileobj=raw) as archive:
+            # Add what the save holds rather than the directory itself: stored
+            # as `.`, the root shows in 7-Zip as one nameless folder that looks
+            # empty. Restore extracts into a fresh directory either way, so
+            # archives taken with the old `./` layout still restore.
+            for entry in sorted(os.listdir(source)):
+                archive.add(os.path.join(source, entry), arcname=entry)
+        os.replace(partial, final)
     except Exception as e:
         _log(f"Backup of '{server_name}' failed: {e}")
         return None, f'Backup failed: {e}'

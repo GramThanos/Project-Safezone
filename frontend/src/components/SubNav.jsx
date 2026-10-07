@@ -1,6 +1,8 @@
 // Section navigation
-import React, { useState, useEffect } from 'react';
-import { NavLink, Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
+import useAppMode from '../hooks/useAppMode';
+import { goHome, useSectionHistory } from '../hooks/useAppHistory';
 
 const isUnder = (path, base) => path === base || path.startsWith(`${base}/`);
 
@@ -16,10 +18,32 @@ const groupCount = (group) => (group.links || [])
 function SubNav({ title, titleTo, logo, badge, groups }) {
 	const location = useLocation();
 	const [expanded, setExpanded] = useState(false);
+	const appMode = useAppMode();
+	const ref = useRef(null);
+	const navigate = useNavigate();
+	const openSection = useSectionHistory(appMode);
+
+	// In the installed app these links switch section rather than stack pages,
+	// so back leaves the section instead of retracing it (see
+	// `useSectionHistory`). Outside it they are ordinary links.
+	const sectionClick = (to) => (event) => {
+		if (!appMode) return;
+		event.preventDefault();
+		if (location.pathname !== to) openSection(to);
+	};
 
 	useEffect(() => {
 		setExpanded(false);
 	}, [location.pathname]);
+
+	// In the installed app the rows scroll sideways instead of collapsing (see
+	// index.css), so bring the current group and page into view.
+	useEffect(() => {
+		if (!appMode || !ref.current) return;
+		ref.current.querySelectorAll('.nav-link.active').forEach((el) => {
+			el.scrollIntoView({ block: 'nearest', inline: 'center' });
+		});
+	}, [appMode, location.pathname]);
 
 	// Drop hidden links, then drop groups left empty by that.
 	const visible = groups
@@ -39,7 +63,7 @@ function SubNav({ title, titleTo, logo, badge, groups }) {
 	const linkClass = ({ isActive }) => `nav-link${isActive ? ' active' : ''}`;
 
 	return (
-		<>
+		<div className="subnav" ref={ref}>
 			<nav
 				className="navbar navbar-expand-lg bg-body-tertiary border-bottom py-3"
 				aria-label={`${title} sections`}
@@ -50,9 +74,16 @@ function SubNav({ title, titleTo, logo, badge, groups }) {
 							<Link
 								className="navbar-brand d-flex align-items-center gap-2 text-uppercase font-display fw-bold me-2"
 								to={titleTo}
+								onClick={(event) => {
+									// Out of the panel to Home the way the Home tab goes,
+									// rather than another page on top of it.
+									if (!appMode || titleTo !== '/') return;
+									event.preventDefault();
+									goHome(navigate);
+								}}
 							>
 								{logo && (
-									<img src={`${process.env.PUBLIC_URL}/assets/images/safezone-logo.png`} alt="" width="32" height="32"/>
+									<img src="/assets/images/safezone-logo.png" alt="" width="32" height="32"/>
 								)}
 								{title}
 							</Link>
@@ -81,7 +112,7 @@ function SubNav({ title, titleTo, logo, badge, groups }) {
 							{flat
 								? visible[0].links.map((link) => (
 										<li className="nav-item" key={link.to}>
-											<NavLink to={link.to} className={linkClass}>
+											<NavLink to={link.to} className={linkClass} onClick={sectionClick(link.to)}>
 												{link.icon && <i className={`bi bi-${link.icon} me-1`}></i>}
 												{link.text}
 												{link.count > 0 && (
@@ -95,6 +126,7 @@ function SubNav({ title, titleTo, logo, badge, groups }) {
 											{/* To the group's first page */}
 											<Link
 												to={group.links[0].to}
+												onClick={sectionClick(group.links[0].to)}
 												className={`nav-link${group === activeGroup ? ' active' : ''}`}
 												aria-current={group === activeGroup ? 'page' : undefined}
 											>
@@ -125,7 +157,7 @@ function SubNav({ title, titleTo, logo, badge, groups }) {
 						<ul className="navbar-nav flex-row flex-wrap gap-2 small">
 							{sectionLinks.map((link) => (
 								<li className="nav-item" key={link.to}>
-									<NavLink to={link.to} className={linkClass}>
+									<NavLink to={link.to} className={linkClass} onClick={sectionClick(link.to)}>
 										{link.icon && <i className={`bi bi-${link.icon} me-1`}></i>}
 										{link.text}
 										{link.count > 0 && (
@@ -138,7 +170,7 @@ function SubNav({ title, titleTo, logo, badge, groups }) {
 					</div>
 				</nav>
 			)}
-		</>
+		</div>
 	);
 }
 

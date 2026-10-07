@@ -10,15 +10,17 @@ import { usePlayer } from '../context/PlayerContext';
 import { useToast } from '../context/ToastContext';
 import api from '../services/api';
 import usePageTitle from '../hooks/usePageTitle';
+import { formatDateTime } from '../utils/dates';
 
 const ICONS = {
   reward: 'fa-gift',
   moderation: 'fa-gavel',
   system: 'fa-circle-info',
-  claim: 'fa-user-check'
+  claim: 'fa-user-check',
+  coins: 'fa-coins'
 };
 
-const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : '');
+const fmt = (ts) => formatDateTime(ts);
 
 function Notifications() {
   usePageTitle('Notifications');

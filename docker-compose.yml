@@ -44,6 +44,10 @@ services:
   # Flask Backend API
   backend:
     build: ./backend
+    # Named so the scheduler can run the same image instead of building it a
+    # second time - two services building one context in parallel can hang
+    # Compose's build.
+    image: safezone-backend
     restart: unless-stopped
     environment:
       - TZ=${TZ:-Europe/Athens}
@@ -65,7 +69,10 @@ services:
 
   # Recurring jobs scheduler
   scheduler:
-    build: ./backend
+    # The backend's image (built by the `backend` service), started as the
+    # scheduler instead of the API. Never pulled: it only exists locally.
+    image: safezone-backend
+    pull_policy: never
     restart: unless-stopped
     entrypoint: ["python", "-m", "scheduler"]
     environment:

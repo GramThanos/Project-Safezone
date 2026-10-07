@@ -6,6 +6,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { getStatusBadge, Spinner } from './helpers';
+import { CharacterGameButton } from '../../components/CharacterGameInfo';
+import { formatDateTime } from '../../utils/dates';
 
 function Claims() {
   const { token } = useAuth();
@@ -60,7 +62,7 @@ function Claims() {
     setSubmitting(false);
   };
 
-  const fmt = (ts) => (ts ? new Date(ts).toLocaleString() : '—');
+  const fmt = (ts) => formatDateTime(ts, '—');
 
   return (
     <>
@@ -110,12 +112,20 @@ function Claims() {
                     <td className="text-body-secondary">{claim.reason || '—'}</td>
                     <td>
                       {claim.status === 'approved' ? (
-                        <button
-                          className="btn btn-sm btn-outline-danger"
-                          onClick={() => openRevoke(claim)}
-                        >
-                          <i className="fas fa-unlink"></i> Revoke
-                        </button>
+                        <div className="d-flex gap-2">
+                          {claim.character_id && (
+                            <CharacterGameButton
+                              characterId={claim.character_id}
+                              title={claim.in_game_username}
+                            />
+                          )}
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() => openRevoke(claim)}
+                          >
+                            <i className="fas fa-unlink"></i> Revoke
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-body-secondary">—</span>
                       )}

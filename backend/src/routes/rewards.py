@@ -8,10 +8,12 @@ name) when the reward is actually delivered.
 """
 import logging
 from flask import Blueprint, request, jsonify
+from sqlalchemy import or_
 from src.database import db
 from src.models.reward import Reward
+from src.models.shop_item import ShopItem
 from src.middleware.auth import moderator_required, admin_required
-from src.utils import audit, paging
+from src.utils import audit, coins, paging
 from src.utils.rewards import validate_reward_payload, validate_usable_commands
 
 logger = logging.getLogger(__name__)
@@ -21,14 +23,25 @@ rewards_bp = Blueprint('rewards', __name__, url_prefix='/api/admin/rewards')
 @rewards_bp.route('', methods=['GET'])
 @moderator_required
 def list_rewards(current_user):
-    """List catalog rewards (moderator/admin), optionally filtered by kind."""
+    """List catalog rewards (moderator/admin), optionally filtered by kind and searched.
+
+    ``q`` matches the name, the item id and the description, so a picker can
+    find "Base.Axe" by typing "axe".
+    """
     try:
         limit, offset = paging.params()
         kind = request.args.get('kind')
+        q = (request.args.get('q') or '').strip()[:64]
         with db.get_db() as session:
             query = session.query(Reward)
             if kind:
                 query = query.filter_by(kind=kind)
+            if q:
+                # `!` escapes the wildcards, so a typed % or _ is matched literally.
+                like = '%' + q.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+                query = query.filter(or_(Reward.name.ilike(like, escape='!'),
+                                         Reward.in_game_id.ilike(like, escape='!'),
+                                         Reward.description.ilike(like, escape='!')))
             query = query.order_by(Reward.name.asc())
             rewards, total = paging.page(query, limit, offset)
             return jsonify({
@@ -61,7 +74,8 @@ def create_reward(current_user):
                 icon=data.get('icon', ''),
                 in_game_id=data.get('in_game_id') if not is_usable else None,
                 commands=data.get('commands') if is_usable else None,
-                active=data.get('active', True)
+                active=data.get('active', True),
+                coin_value=data.get('coin_value', 1)
             )
             session.add(reward)
             session.flush()
@@ -98,8 +112,20 @@ def update_reward(current_user, reward_id):
                 if error:
                     return jsonify({'error': error}), status
 
+            # A shop listing may never cost less than what it sells back for,
+            # so a change that would raise the sell value of something listed
+            # above its price is refused rather than quietly opening a way to
+            # make coins.
+            if 'coin_value' in data and data['coin_value'] > (reward.coin_value or 0):
+                under = _listings_under_floor(session, reward_id, data['coin_value'])
+                if under:
+                    return jsonify({
+                        'error': 'That would make this reward sell for more than it costs in the '
+                                 'shop. Raise these prices first: ' + '; '.join(under)
+                    }), 409
+
             fields = ('kind', 'name', 'description', 'icon', 'in_game_id',
-                      'commands', 'action_id', 'action_params', 'active')
+                      'commands', 'action_id', 'action_params', 'active', 'coin_value')
             changed = [f for f in fields if f in data]
             for field in changed:
                 setattr(reward, field, data[field])
@@ -111,6 +137,17 @@ def update_reward(current_user, reward_id):
     except Exception as e:
         logger.error(f"Update reward error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+def _listings_under_floor(session, reward_id, coin_value):
+    """Shop listings of this reward priced below what it would sell back for."""
+    floor = max(1, coin_value)
+    rows = (session.query(ShopItem)
+            .filter(ShopItem.reward_id == reward_id, ShopItem.price < floor)
+            .order_by(ShopItem.id.asc())
+            .all())
+    return [f"listing #{listing.id} (×{listing.count}) at {listing.price}, needs {floor}"
+            for listing in rows]
 
 
 @rewards_bp.route('/<int:reward_id>', methods=['DELETE'])

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import { getRoleBadge, Spinner } from './helpers';
+import { formatDate } from '../../utils/dates';
 
 function Users() {
   const { token, isAdmin } = useAuth();
@@ -171,8 +172,8 @@ function Users() {
                             </span>
                           </div>
                           <div className="text-body-secondary">
-                            {b.created_at ? new Date(b.created_at).toLocaleDateString() : ''}
-                            {b.permanent ? ' · permanent' : ` · until ${new Date(b.expires_at).toLocaleDateString()}`}
+                            {formatDate(b.created_at)}
+                            {b.permanent ? ' · permanent' : ` · until ${formatDate(b.expires_at)}`}
                           </div>
                         </li>
                       ))}
@@ -248,7 +249,7 @@ function Users() {
                         </span>
                       ) : <span className="text-body-secondary">-</span>}
                     </td>
-                    <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</td>
+                    <td>{formatDate(user.created_at, 'N/A')}</td>
                     <td>
                       <div className="d-flex align-items-center justify-content-end gap-2">
                         <select
