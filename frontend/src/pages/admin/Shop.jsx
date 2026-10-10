@@ -326,8 +326,17 @@ function Shop() {
 
   const exportShop = () => {
     const categoryNames = Object.fromEntries((shop?.categories || []).map((category) => [category.id, category.name]));
+    const rewards = new Map();
+    (shop?.items || []).forEach((item) => {
+      if (item.reward) rewards.set(rewardKey(item.reward), item.reward);
+    });
     downloadJson({
       type: 'project-safezone-shop', version: 1,
+      // Include the reward definitions as well as the listings. A shop preset
+      // is then portable on its own instead of silently skipping listings whose
+      // rewards have not yet been created on the destination server.
+      rewards: [...rewards.values()].map(({ kind, name, description, icon, in_game_id, commands, active, coin_value }) =>
+        ({ kind, name, description, icon, in_game_id, commands, active, coin_value })),
       categories: (shop?.categories || []).map(({ name, description, sort_order, active }) =>
         ({ name, description, sort_order, active })),
       items: (shop?.items || []).map((item) => ({
@@ -353,10 +362,23 @@ function Shop() {
           || !Array.isArray(data.categories) || !Array.isArray(data.items)) {
         throw new Error('Choose a Project Safezone shop export file.');
       }
-      if (data.categories.length > 100 || data.items.length > 500) {
+      if ((data.rewards !== undefined && !Array.isArray(data.rewards))
+          || data.categories.length > 100 || data.items.length > 500
+          || (data.rewards || []).length > 500) {
         throw new Error('The import contains too many categories or listings.');
       }
       setTransferBusy(true);
+      const catalog = await api.admin.rewards.search(token, { limit: 500 });
+      const existingRewards = new Set((catalog.rewards || []).map(rewardKey));
+      const incomingRewards = new Set();
+      let addedRewards = 0;
+      for (const reward of data.rewards || []) {
+        const key = rewardKey(reward);
+        if (existingRewards.has(key) || incomingRewards.has(key)) continue;
+        await api.admin.rewards.create(token, reward);
+        incomingRewards.add(key);
+        addedRewards += 1;
+      }
       let current = shop;
       const categoryByName = new Map((current?.categories || []).map((category) => [category.name.toLowerCase(), category]));
       let addedCategories = 0;
@@ -374,11 +396,8 @@ function Shop() {
       current = await api.admin.shop.get(token);
       const freshCategories = new Map(current.categories.map((category) => [category.name.toLowerCase(), category.id]));
       const listed = new Set(current.items.map((item) => rewardKey(item.reward)));
-      const catalog = await api.admin.rewards.search(token, { limit: 500 });
-      const rewardsByKey = new Map((catalog.rewards || []).map((reward) => [rewardKey(reward), reward]));
-      // Listings only contain rewards already in the local reward catalogue.
-      // This makes a shop import safe to run after, rather than before, the
-      // corresponding Rewards import.
+      const refreshedCatalog = await api.admin.rewards.search(token, { limit: 500 });
+      const rewardsByKey = new Map((refreshedCatalog.rewards || []).map((reward) => [rewardKey(reward), reward]));
       let addedListings = 0;
       let skipped = 0;
       for (const item of data.items) {
@@ -397,7 +416,7 @@ function Shop() {
         addedListings += 1;
       }
       await loadData();
-      setNotice(`Imported ${addedCategories} categor${addedCategories === 1 ? 'y' : 'ies'} and ${addedListings} listing(s)`
+      setNotice(`Imported ${addedRewards} reward(s), ${addedCategories} categor${addedCategories === 1 ? 'y' : 'ies'} and ${addedListings} listing(s)`
         + (skipped ? `; skipped ${skipped} already present or missing its reward.` : '.'));
     } catch (err) {
       setError(err.message || 'Could not import the shop.');
@@ -435,7 +454,7 @@ function Shop() {
       <p className="text-body-secondary">
         What players can buy with coins. A price cannot be lower than what the reward
         sells back for; new listings start at {multiplier}× that. Export JSON to move
-        this configuration between servers; import Rewards first when transferring both.
+        this configuration between servers; a shop import includes its required reward definitions.
       </p>
 
       {shop && !shop.enabled && (
