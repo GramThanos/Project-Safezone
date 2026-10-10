@@ -40,12 +40,76 @@ SETTINGS = {
     'PVP': ('bool', 'Allow players to damage each other'),
     'Open': ('bool', 'Allow anyone to join without being whitelisted'),
     'ServerWelcomeMessage': ('text', 'Shown to a player when they connect'),
-    'SafetySystem': ('bool', 'PVP safety toggle'),
-    'DisplayUserName': ('bool', 'Show usernames above characters'),
-    'MinutesPerPage': ('float', 'Reading speed, in minutes per page'),
-    'SaveWorldEveryMinutes': ('int', 'How often the world is written to disk'),
-    'GlobalChat': ('bool', 'Enable global chat'),
-    'AnnounceDeath': ('bool', 'Announce player deaths'),
+    'AutoCreateUserInWhiteList': ('bool', 'Automatically whitelist a new account when it first joins'),
+    'DisplayUserName': ('bool', 'Show usernames above characters and in local chat'),
+    'ShowFirstAndLastName': ('bool', 'Show characters\' first and last names'),
+    'SpawnPoint': ('text', 'Custom spawn point as X,Y,Z coordinates; leave blank for normal spawn regions'),
+    'SafetySystem': ('bool', 'Let players toggle their own PvP safety when PvP is enabled'),
+    'ShowSafety': ('bool', 'Show the skull icon when a player has PvP safety turned off'),
+    'SafetyToggleTimer': ('float', 'Seconds needed to turn PvP safety on or off'),
+    'SafetyCooldownTimer': ('float', 'Seconds before a player can change PvP safety again'),
+    'SpawnItems': ('text', 'Comma-separated item ids given to newly created characters'),
+    'MinutesPerPage': ('float', 'In-game minutes required to read one page'),
+    'SaveWorldEveryMinutes': ('int', 'Automatically save the world every this many real-time minutes; 0 disables it'),
+    'GlobalChat': ('bool', 'Enable the /all chat channel, regardless of distance'),
+    'ChatStreams': ('text', 'Comma-separated chat channels that players may use'),
+    'AnnounceDeath': ('bool', 'Announce player deaths to everyone on the server'),
+    'DoLuaChecksum': ('bool', 'Require clients\' Lua files to match the server\'s'),
+    'DenyLoginOnOverloadedServer': ('bool', 'Refuse new logins while the server is overloaded'),
+    'PingFrequency': ('int', 'How often the server checks player connections'),
+    'PingLimit': ('int', 'Ping threshold in milliseconds before a player may be kicked'),
+    'HoursForLootRespawn': ('int', 'In-game hours before container loot can respawn; 0 disables respawns'),
+    'MaxItemsForLootRespawn': ('int', 'A container must have no more than this many items before loot can respawn'),
+    'ConstructionPreventsLootRespawn': ('bool', 'Prevent loot respawning near player-built structures'),
+    'DropOffWhiteListAfterDeath': ('bool', 'Remove a player from the whitelist when their character dies'),
+    'NoFire': ('bool', 'Disable fires, except campfires'),
+    'PlayerSafehouse': ('bool', 'Allow players to claim safehouses'),
+    'AdminSafehouse': ('bool', 'Allow admins to claim safehouses'),
+    'SafehouseAllowTrepass': ('bool', 'Allow non-members to enter safehouses without an invitation'),
+    'SafehouseAllowFire': ('bool', 'Allow fire to damage safehouses'),
+    'SafehouseAllowLoot': ('bool', 'Allow non-members to take items from safehouses'),
+    'SafehouseAllowRespawn': ('bool', 'Let players respawn in a safehouse they belonged to before death'),
+    'SafehouseDaySurvivedToClaim': ('int', 'Game-world days a player must survive before claiming a safehouse'),
+    'SafeHouseRemovalTime': ('int', 'Real-time hours before an unvisited safehouse removes its owner'),
+    'AllowDestructionBySledgehammer': ('bool', 'Allow sledgehammers to destroy world objects'),
+    'KickFastPlayers': ('bool', 'Kick players who appear to move impossibly fast'),
+    'MaxAccountsPerUser': ('int', 'Maximum accounts a single Steam user may create; 0 means no limit'),
+    'SleepAllowed': ('bool', 'Allow characters to sleep'),
+    'SleepNeeded': ('bool', 'Require exhausted characters to sleep'),
+    'SteamScoreboard': ('text', 'Who can see Steam usernames and avatars: true, false, or admin'),
+    'SteamVAC': ('bool', 'Check joining players for VAC bans'),
+    'VoiceEnable': ('bool', 'Enable in-game voice chat'),
+    'VoiceComplexity': ('int', 'Voice codec complexity; higher values use more CPU'),
+    'VoicePeriod': ('int', 'Voice packet duration in milliseconds'),
+    'VoiceSampleRate': ('int', 'Voice quality sample rate in Hz'),
+    'VoiceBuffering': ('int', 'Voice playback buffer in milliseconds'),
+    'VoiceMinDistance': ('float', 'Distance at which proximity voice starts to fade'),
+    'VoiceMaxDistance': ('float', 'Maximum distance for proximity voice chat'),
+    'Voice3D': ('bool', 'Make voice chat positional'),
+    'UseTCPForMapDownloads': ('bool', 'Use TCP rather than UDP for map downloads'),
+    'PlayerRespawnWithSelf': ('bool', 'Allow a player to respawn at their own death location'),
+    'PlayerRespawnWithOther': ('bool', 'Allow a player to spawn at a split-screen partner\'s location'),
+    'FastForwardMultiplier': ('float', 'Game-speed multiplier while players fast-forward'),
+    'PlayerSaveOnDamage': ('bool', 'Save a player when they take damage'),
+    'Faction': ('bool', 'Allow players to create and use factions'),
+    'FactionDaySurvivedToCreate': ('int', 'Game-world days a player must survive before creating a faction'),
+    'FactionPlayersRequiredForTag': ('int', 'Faction members required before a faction may have a tag'),
+    'AllowTradeUI': ('bool', 'Allow players to trade directly through the trade interface'),
+    'ItemNumbersLimitPerContainer': ('int', 'Maximum item count per container; 0 means no limit'),
+    'BloodSplatLifespanDays': ('int', 'Game-world days before blood splats disappear; 0 means never'),
+    'AllowNonAsciiUsername': ('bool', 'Allow usernames with non-ASCII characters'),
+    'BanKickGlobalSound': ('bool', 'Play a sound for everyone when a player is banned or kicked'),
+    'RemovePlayerCorpsesOnCorpseRemoval': ('bool', 'Remove player corpses when corpse cleanup runs'),
+    'TrashDeleteAll': ('bool', 'Make trash containers delete every item placed in them'),
+    'PVPMeleeWhileHitReaction': ('bool', 'Allow melee PvP damage while the target is in a hit reaction'),
+    'MouseOverToSeeDisplayName': ('bool', 'Show a player\'s display name when the cursor is over them'),
+    'HidePlayersBehindYou': ('bool', 'Hide players positioned behind the camera-facing character'),
+    'PVPMeleeDamageModifier': ('float', 'Melee PvP damage as a percentage of normal damage'),
+    'PVPFirearmDamageModifier': ('float', 'Firearm PvP damage as a percentage of normal damage'),
+    'CarEngineAttractionModifier': ('float', 'Multiplier for zombie attraction caused by vehicle engines'),
+    'PlayerBumpPlayer': ('bool', 'Allow players to bump into one another'),
+    'HoursForWorldItemRemoval': ('float', 'In-game hours before listed items on the ground are removed; 0 disables it'),
+    'WorldItemRemovalList': ('text', 'Comma-separated item ids that may be removed from the ground'),
     # There is no router to ask inside a container, and the discovery attempt is
     # made during boot - the game prints "If the server hangs here, set
     # UPnP=false" immediately before it. Ports are published by Docker, so this
@@ -57,6 +121,27 @@ SETTINGS = {
     'WorkshopItems': ('text', 'Semicolon-separated Workshop ids'),
     'Password': ('secret', 'Server join password'),
     'RCONPassword': ('secret', 'RCON password'),
+}
+
+# Extra context for choices that are easy to misread from their short label.
+# It travels with the setting rather than being duplicated in the React client,
+# so the Settings and Advanced tabs stay in agreement.
+SETTING_DETAILS = {
+    'PauseEmpty': 'When disabled, time continues while nobody is online: crops grow, zombies migrate, and the world ages.',
+    'AutoCreateUserInWhiteList': 'Relevant only when Open is off. Otherwise an admin must add each account to the whitelist manually.',
+    'SpawnPoint': 'Use map coordinates in X,Y,Z order, for example 1,2,0. Leave it empty to use the configured spawn regions.',
+    'SafetySystem': 'This is not a server-wide PvP switch. It gives each player a personal safety toggle when PVP is enabled.',
+    'SpawnItems': 'Use full item ids, for example Base.BaseballBat,Base.WaterBottleFull. Items are given only to newly created characters.',
+    'SaveWorldEveryMinutes': 'This is a real-time interval. A value of 0 means the normal shutdown save is the only automatic save.',
+    'ChatStreams': 'Common values are s (say), r (radio), a (admin), w (whisper), y (yell), sh (safehouse), f (faction), and all (global). Removing one disables it.',
+    'DoLuaChecksum': 'Turning this off can help players join when mods cause a Lua mismatch, but it removes the client-file consistency check.',
+    'PingLimit': 'The game only kicks after repeated readings above this limit. The PZwiki notes that 100 disables the limit.',
+    'HoursForLootRespawn': 'Loot respawn also depends on MaxItemsForLootRespawn and ConstructionPreventsLootRespawn.',
+    'SafeHouseRemovalTime': 'This is measured in real-time hours, unlike most gameplay time settings.',
+    'SteamScoreboard': 'Use admin to restrict Steam usernames and avatars to administrators; true shows them to everyone and false hides them.',
+    'VoiceComplexity': 'A higher codec complexity can improve quality but increases server and client CPU use.',
+    'FastForwardMultiplier': 'This affects the speed while players fast-forward, not the normal passage of time.',
+    'HoursForWorldItemRemoval': 'Only items named in WorldItemRemovalList are affected. This is an in-game-hours setting.',
 }
 
 LINE_RE = re.compile(r'^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$')
@@ -134,7 +219,8 @@ def read(server_name):
 
     out = []
     for key, (kind, help_text) in SETTINGS.items():
-        entry = {'key': key, 'type': kind, 'help': help_text}
+        entry = {'key': key, 'type': kind, 'help': help_text,
+                 'detail': SETTING_DETAILS.get(key)}
         raw = present.get(key)
         if kind == 'secret':
             entry['is_set'] = bool(raw)
@@ -296,6 +382,7 @@ def read_raw(server_name):
                     # view is not strictly worse than the simple one.
                     'type': declared[0] if declared else None,
                     'help': declared[1] if declared else None,
+                    'detail': SETTING_DETAILS.get(key),
                 })
     except OSError as e:
         return None, f'Could not read the config: {e}'

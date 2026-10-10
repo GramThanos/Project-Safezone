@@ -280,6 +280,20 @@ function ServerConfig({ server, onClose }) {
     );
   };
 
+  // The short explanation stays beneath each field. The info icon holds the
+  // extra context for settings whose consequences are less obvious.
+  const settingInfo = (setting) => setting.detail && (
+    <span
+      className="ms-1 align-baseline text-info"
+      title={setting.detail}
+      aria-label={`More information about ${setting.key}: ${setting.detail}`}
+      role="img"
+      tabIndex="0"
+    >
+      <i className="fas fa-info-circle" aria-hidden="true"></i>
+    </span>
+  );
+
   const simpleField = (s) => {
     if (s.type === 'bool') {
       return (
@@ -292,13 +306,15 @@ function ServerConfig({ server, onClose }) {
             checked={!!simpleDraft[s.key]}
             onChange={(e) => setSimpleDraft({ ...simpleDraft, [s.key]: e.target.checked })}
           />
-          <label className="form-check-label" htmlFor={`s-${s.key}`}>{s.key}</label>
+          <label className="form-check-label" htmlFor={`s-${s.key}`}>
+            {s.key}{settingInfo(s)}
+          </label>
         </div>
       );
     }
     return (
       <>
-        <label className="form-label" htmlFor={`s-${s.key}`}>{s.key}</label>
+        <label className="form-label" htmlFor={`s-${s.key}`}>{s.key}{settingInfo(s)}</label>
         {/* These are server settings, not sign-in fields: explicit names and
             autocomplete hints keep credential managers from filling them. */}
         <input
@@ -375,6 +391,14 @@ function ServerConfig({ server, onClose }) {
 
             {tab === 'simple' ? (
               <form onSubmit={saveSimple} autoComplete="off">
+                <p className="text-body-secondary small">
+                  Short guidance is shown below each setting; hover or focus an
+                  <span className="text-info ms-1" title="More context is available for this setting" aria-label="More context is available for this setting" role="img" tabIndex="0">
+                    <i className="fas fa-info-circle" aria-hidden="true"></i>
+                  </span>{' '}
+                  for details. For the full Project Zomboid reference, see{' '}
+                  <a href="https://pzwiki.net/wiki/Server_settings" target="_blank" rel="noreferrer">Server settings on PZwiki</a>.
+                </p>
                 {simple.map((s) => (
                   <div className="mb-3" key={s.key}>
                     {simpleField(s)}
@@ -408,7 +432,7 @@ function ServerConfig({ server, onClose }) {
                       {(raw?.entries || []).map((e) => (
                         <tr key={e.key} className={rawDraft[e.key]?.disabled ? 'opacity-50' : ''}>
                           <td>
-                            <code>{e.key}</code>
+                            <code>{e.key}</code>{settingInfo(e)}
                             {!e.type && (
                               <span className="badge text-bg-secondary ms-2" title="Not a key this panel knows">
                                 unknown
