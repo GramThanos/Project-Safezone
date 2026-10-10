@@ -11,12 +11,14 @@
 // that will reject the save.
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
 import ServerTemplateModal from '../../components/ServerTemplateModal';
 
 function ServerConfig({ server, onClose }) {
   const { token } = useAuth();
+  const { push: pushToast } = useToast();
   const [tab, setTab] = useState('simple');
   const [showTemplates, setShowTemplates] = useState(false);
 
@@ -81,6 +83,14 @@ function ServerConfig({ server, onClose }) {
   const editable = !!raw?.editable;
   const sandboxEditable = !!sandbox?.editable;
 
+  const reportSaveError = (err, fallback) => {
+    const message = err.message || fallback;
+    setError(message);
+    // The inline alert remains for reference, but this dialog scrolls. A toast
+    // makes a failed save visible even when the button is near the bottom.
+    pushToast(message, { kind: 'error' });
+  };
+
   const saveSimple = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -99,7 +109,7 @@ function ServerConfig({ server, onClose }) {
       loadAll();
     } catch (err) {
       console.error('Save config error:', err);
-      setError(err.message || 'Could not save');
+      reportSaveError(err, 'Could not save');
     }
     setSaving(false);
   };
@@ -137,7 +147,7 @@ function ServerConfig({ server, onClose }) {
       loadAll();
     } catch (err) {
       console.error('Save raw config error:', err);
-      setError(err.message || 'Could not save');
+      reportSaveError(err, 'Could not save');
     }
     setSaving(false);
   };
@@ -181,7 +191,7 @@ function ServerConfig({ server, onClose }) {
       loadAll();
     } catch (err) {
       console.error('Save sandbox error:', err);
-      setError(err.message || 'Could not save');
+      reportSaveError(err, 'Could not save');
     }
     setSaving(false);
   };
@@ -285,7 +295,8 @@ function ServerConfig({ server, onClose }) {
         <label className="form-label" htmlFor={`s-${s.key}`}>{s.key}</label>
         <input
           id={`s-${s.key}`}
-          type={s.type === 'secret' ? 'password' : s.type === 'int' ? 'number' : 'text'}
+          type={s.type === 'secret' ? 'password' : (s.type === 'int' || s.type === 'float') ? 'number' : 'text'}
+          step={s.type === 'float' ? 'any' : undefined}
           className="form-control"
           disabled={!editable}
           value={simpleDraft[s.key] ?? ''}
