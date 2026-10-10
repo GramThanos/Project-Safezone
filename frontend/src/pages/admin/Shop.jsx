@@ -7,7 +7,7 @@
 // in at 20 × the reward's sell value until the admin types in it; the server
 // refuses anything below the sell value itself, so buying and selling back can
 // never make coins. Moderators can look; admins can change.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
@@ -15,6 +15,7 @@ import api from '../../services/api';
 import { RewardIcon, Spinner } from './helpers';
 import Coins from '../../components/Coins';
 import RewardPickerModal from '../../components/RewardPickerModal';
+import { downloadJson, readJsonFile } from '../../utils/jsonTransfer';
 
 // Mirrors the server (`coins.min_price` / `coins.suggested_price`): a reward
 // sells for its coin value once, whatever the count.
@@ -232,6 +233,8 @@ function Shop() {
   const [filter, setFilter] = useState('');
   // false = closed; null = creating; a listing = editing it.
   const [editing, setEditing] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const importInput = useRef(null);
 
   useEffect(() => {
     loadData();
@@ -318,6 +321,91 @@ function Shop() {
     run(() => api.admin.shop.deleteItem(token, item.id));
   };
 
+  const rewardKey = (reward) => reward?.kind === 'item'
+    ? `item:${reward.in_game_id || ''}` : `usable:${String(reward?.name || '').trim().toLowerCase()}`;
+
+  const exportShop = () => {
+    const categoryNames = Object.fromEntries((shop?.categories || []).map((category) => [category.id, category.name]));
+    downloadJson({
+      type: 'project-safezone-shop', version: 1,
+      categories: (shop?.categories || []).map(({ name, description, sort_order, active }) =>
+        ({ name, description, sort_order, active })),
+      items: (shop?.items || []).map((item) => ({
+        reward: {
+          kind: item.reward?.kind, name: item.reward?.name, in_game_id: item.reward?.in_game_id
+        },
+        count: item.count, price: item.price, daily_limit: item.daily_limit,
+        sort_order: item.sort_order, active: item.active,
+        categories: (item.category_ids || []).map((id) => categoryNames[id]).filter(Boolean)
+      }))
+    }, 'project-safezone-shop.json');
+  };
+
+  const importShop = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setError('');
+    setNotice('');
+    try {
+      const data = await readJsonFile(file);
+      if (data?.type !== 'project-safezone-shop' || data.version !== 1
+          || !Array.isArray(data.categories) || !Array.isArray(data.items)) {
+        throw new Error('Choose a Project Safezone shop export file.');
+      }
+      if (data.categories.length > 100 || data.items.length > 500) {
+        throw new Error('The import contains too many categories or listings.');
+      }
+      setTransferBusy(true);
+      let current = shop;
+      const categoryByName = new Map((current?.categories || []).map((category) => [category.name.toLowerCase(), category]));
+      let addedCategories = 0;
+      for (const category of data.categories) {
+        if (!category || typeof category.name !== 'string' || !category.name.trim()) {
+          throw new Error('Each imported category needs a name.');
+        }
+        const key = category.name.trim().toLowerCase();
+        if (!categoryByName.has(key)) {
+          const result = await api.admin.shop.createCategory(token, category);
+          categoryByName.set(key, result.category);
+          addedCategories += 1;
+        }
+      }
+      current = await api.admin.shop.get(token);
+      const freshCategories = new Map(current.categories.map((category) => [category.name.toLowerCase(), category.id]));
+      const listed = new Set(current.items.map((item) => rewardKey(item.reward)));
+      const catalog = await api.admin.rewards.search(token, { limit: 500 });
+      const rewardsByKey = new Map((catalog.rewards || []).map((reward) => [rewardKey(reward), reward]));
+      // Listings only contain rewards already in the local reward catalogue.
+      // This makes a shop import safe to run after, rather than before, the
+      // corresponding Rewards import.
+      let addedListings = 0;
+      let skipped = 0;
+      for (const item of data.items) {
+        const key = rewardKey(item.reward || {});
+        if (listed.has(key)) { skipped += 1; continue; }
+        const reward = rewardsByKey.get(key);
+        if (!reward) { skipped += 1; continue; }
+        const category_ids = (item.categories || []).map((name) => freshCategories.get(String(name).toLowerCase()))
+          .filter((id) => id !== undefined);
+        await api.admin.shop.createItem(token, {
+          reward_id: reward.id, count: item.count, price: item.price,
+          daily_limit: item.daily_limit, sort_order: item.sort_order,
+          active: item.active, category_ids
+        });
+        listed.add(key);
+        addedListings += 1;
+      }
+      await loadData();
+      setNotice(`Imported ${addedCategories} categor${addedCategories === 1 ? 'y' : 'ies'} and ${addedListings} listing(s)`
+        + (skipped ? `; skipped ${skipped} already present or missing its reward.` : '.'));
+    } catch (err) {
+      setError(err.message || 'Could not import the shop.');
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
   if (loading) return <Spinner />;
   const categories = shop?.categories || [];
   const items = shop?.items || [];
@@ -331,10 +419,23 @@ function Shop() {
     <>
       <div className="d-flex flex-wrap justify-content-between align-items-baseline gap-2">
         <h4 className="font-display mb-1">Shop</h4>
+        {admin && (
+          <div className="d-flex gap-2">
+            <input ref={importInput} type="file" accept="application/json,.json" className="d-none"
+              onChange={importShop} />
+            <button className="btn btn-sm btn-outline-secondary" onClick={() => importInput.current?.click()} disabled={transferBusy}>
+              <i className="fas fa-upload me-1"></i> Import
+            </button>
+            <button className="btn btn-sm btn-outline-secondary" onClick={exportShop} disabled={transferBusy}>
+              <i className="fas fa-download me-1"></i> Export
+            </button>
+          </div>
+        )}
       </div>
       <p className="text-body-secondary">
         What players can buy with coins. A price cannot be lower than what the reward
-        sells back for; new listings start at {multiplier}× that.
+        sells back for; new listings start at {multiplier}× that. Export JSON to move
+        this configuration between servers; import Rewards first when transferring both.
       </p>
 
       {shop && !shop.enabled && (

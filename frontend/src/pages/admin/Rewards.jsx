@@ -3,13 +3,14 @@
 // The list lives in a card-wrapped table: create a reward from the "Add reward"
 // modal, then edit an existing one from its row's pencil. The add/edit form is
 // owned by RewardModal.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
 import api from '../../services/api';
 import { Spinner } from './helpers';
 import RewardModal from './RewardModal';
 import Coins from '../../components/Coins';
+import { downloadJson, readJsonFile } from '../../utils/jsonTransfer';
 
 // One-line summary of what a usable reward will run, for the table. A sequence
 // can span several lines; the table shows the first, and how many more there are.
@@ -32,8 +33,11 @@ function Rewards() {
   const [rewards, setRewards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   // false = modal closed; null = creating; a reward object = editing that one.
   const [modalReward, setModalReward] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const importInput = useRef(null);
 
   useEffect(() => {
     loadData();
@@ -67,6 +71,7 @@ function Rewards() {
   const handleDeleteReward = async (rewardId) => {
     if (!(await confirm({ title: 'Delete reward?', message: 'Delete this reward?', confirmLabel: 'Delete' }))) return;
     setError('');
+    setNotice('');
     try {
       await api.admin.rewards.delete(token, rewardId);
       loadData();
@@ -76,21 +81,79 @@ function Rewards() {
     }
   };
 
+  const exportRewards = () => {
+    // IDs are intentionally excluded: imported rewards get the local database's
+    // IDs, while item IDs/names provide stable duplicate detection.
+    downloadJson({
+      type: 'project-safezone-rewards', version: 1,
+      rewards: rewards.map(({ kind, name, description, icon, in_game_id, commands, active, coin_value }) =>
+        ({ kind, name, description, icon, in_game_id, commands, active, coin_value }))
+    }, 'project-safezone-rewards.json');
+  };
+
+  const rewardKey = (reward) => reward?.kind === 'item'
+    ? `item:${reward.in_game_id || ''}` : `usable:${String(reward?.name || '').trim().toLowerCase()}`;
+
+  const importRewards = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setError('');
+    try {
+      const data = await readJsonFile(file);
+      if (data?.type !== 'project-safezone-rewards' || data.version !== 1 || !Array.isArray(data.rewards)) {
+        throw new Error('Choose a Project Safezone rewards export file.');
+      }
+      if (data.rewards.length > 500) throw new Error('A rewards import may contain at most 500 rewards.');
+      const existing = new Set(rewards.map(rewardKey));
+      const incoming = new Set();
+      const add = data.rewards.filter((reward) => {
+        const key = rewardKey(reward);
+        if (existing.has(key) || incoming.has(key)) return false;
+        incoming.add(key);
+        return true;
+      });
+      setBusy(true);
+      for (const reward of add) await api.admin.rewards.create(token, reward);
+      await loadData();
+      setError('');
+      const skipped = data.rewards.length - add.length;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setNotice(`Imported ${add.length} reward(s)${skipped ? `; skipped ${skipped} already present.` : '.'}`);
+    } catch (err) {
+      setError(err.message || 'Could not import rewards.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <div className="d-flex flex-wrap justify-content-between align-items-baseline gap-2">
         <h4 className="font-display mb-1">Rewards</h4>
         {admin && (
-          <button className="btn btn-sm btn-danger" onClick={() => setModalReward(null)}>
-            <i className="fas fa-plus me-1"></i> Add reward
-          </button>
+          <div className="d-flex gap-2">
+            <input ref={importInput} type="file" accept="application/json,.json" className="d-none"
+              onChange={importRewards} />
+            <button className="btn btn-sm btn-outline-secondary" onClick={() => importInput.current?.click()} disabled={busy}>
+              <i className="fas fa-upload me-1"></i> Import
+            </button>
+            <button className="btn btn-sm btn-outline-secondary" onClick={exportRewards} disabled={busy}>
+              <i className="fas fa-download me-1"></i> Export
+            </button>
+            <button className="btn btn-sm btn-danger" onClick={() => setModalReward(null)} disabled={busy}>
+              <i className="fas fa-plus me-1"></i> Add reward
+            </button>
+          </div>
         )}
       </div>
       <p className="text-body-secondary">
-        Define the items and actions that loot boxes can drop.
+        Define the items and actions that loot boxes can drop. Export JSON to move
+        the catalogue between servers; imports add missing rewards and leave existing ones unchanged.
       </p>
 
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
+      {notice && <div className="alert alert-success" role="alert">{notice}</div>}
 
       {loading ? <Spinner /> : (
         rewards.length === 0 ? (
