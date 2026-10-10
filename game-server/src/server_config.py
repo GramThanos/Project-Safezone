@@ -20,6 +20,7 @@ Unknown keys already in the file are **preserved untouched** on write. Rewriting
 a config by serialising only what we understand is how you silently delete
 somebody's careful tuning.
 """
+import math
 import os
 import re
 
@@ -28,6 +29,7 @@ import config
 # key -> (type, help). `secret` keys are never returned, only reported as set.
 #   bool  -> true/false
 #   int   -> whole number
+#   float -> decimal number
 #   text  -> single line, no newlines
 SETTINGS = {
     'PublicName': ('text', 'Name shown in the server browser'),
@@ -40,7 +42,7 @@ SETTINGS = {
     'ServerWelcomeMessage': ('text', 'Shown to a player when they connect'),
     'SafetySystem': ('bool', 'PVP safety toggle'),
     'DisplayUserName': ('bool', 'Show usernames above characters'),
-    'MinutesPerPage': ('int', 'Reading speed, minutes per page'),
+    'MinutesPerPage': ('float', 'Reading speed, in minutes per page'),
     'SaveWorldEveryMinutes': ('int', 'How often the world is written to disk'),
     'GlobalChat': ('bool', 'Enable global chat'),
     'AnnounceDeath': ('bool', 'Announce player deaths'),
@@ -77,6 +79,12 @@ def _coerce_out(kind, raw):
             return int(str(raw).strip())
         except (TypeError, ValueError):
             return None
+    if kind == 'float':
+        try:
+            value = float(str(raw).strip())
+            return value if math.isfinite(value) else None
+        except (TypeError, ValueError):
+            return None
     return raw
 
 
@@ -89,6 +97,14 @@ def _coerce_in(kind, value):
             return str(int(value))
         except (TypeError, ValueError):
             raise ValueError('must be a whole number')
+    if kind == 'float':
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError('must be a number')
+        if not math.isfinite(number):
+            raise ValueError('must be a finite number')
+        return str(number)
     text = '' if value is None else str(value)
     if any(ch in text for ch in ('\n', '\r')):
         # A newline would let one setting become two.
