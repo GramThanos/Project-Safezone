@@ -105,7 +105,9 @@ function ServerConfig({ server, onClose }) {
     });
     try {
       const data = await api.admin.servers.saveConfig(token, server.id, payload);
-      setNotice(data.message || 'Saved.');
+      const message = data.message || 'Saved.';
+      setNotice(message);
+      pushToast(message, { kind: 'success' });
       loadAll();
     } catch (err) {
       console.error('Save config error:', err);
@@ -143,7 +145,9 @@ function ServerConfig({ server, onClose }) {
 
     try {
       const data = await api.admin.servers.saveConfigRaw(token, server.id, changes, raw.version);
-      setNotice(`${data.message} (${(data.changed || []).join(', ')})`);
+      const message = `${data.message} (${(data.changed || []).join(', ')})`;
+      setNotice(message);
+      pushToast(message, { kind: 'success' });
       loadAll();
     } catch (err) {
       console.error('Save raw config error:', err);
@@ -187,7 +191,9 @@ function ServerConfig({ server, onClose }) {
 
     try {
       const data = await api.admin.servers.saveSandbox(token, server.id, changes, sandbox.version);
-      setNotice(`${data.message} (${(data.changed || []).join(', ')})`);
+      const message = `${data.message} (${(data.changed || []).join(', ')})`;
+      setNotice(message);
+      pushToast(message, { kind: 'success' });
       loadAll();
     } catch (err) {
       console.error('Save sandbox error:', err);
@@ -293,10 +299,14 @@ function ServerConfig({ server, onClose }) {
     return (
       <>
         <label className="form-label" htmlFor={`s-${s.key}`}>{s.key}</label>
+        {/* These are server settings, not sign-in fields: explicit names and
+            autocomplete hints keep credential managers from filling them. */}
         <input
           id={`s-${s.key}`}
+          name={`server-config-${s.key.toLowerCase()}`}
           type={s.type === 'secret' ? 'password' : (s.type === 'int' || s.type === 'float') ? 'number' : 'text'}
           step={s.type === 'float' ? 'any' : undefined}
+          autoComplete={s.type === 'secret' ? 'new-password' : 'off'}
           className="form-control"
           disabled={!editable}
           value={simpleDraft[s.key] ?? ''}
@@ -364,7 +374,7 @@ function ServerConfig({ server, onClose }) {
             </ul>
 
             {tab === 'simple' ? (
-              <form onSubmit={saveSimple}>
+              <form onSubmit={saveSimple} autoComplete="off">
                 {simple.map((s) => (
                   <div className="mb-3" key={s.key}>
                     {simpleField(s)}
@@ -407,7 +417,9 @@ function ServerConfig({ server, onClose }) {
                           </td>
                           <td>
                             <input
+                              name={`server-config-raw-${e.key.toLowerCase()}`}
                               type={e.secret ? 'password' : 'text'}
+                              autoComplete={e.secret ? 'new-password' : 'off'}
                               className="form-control form-control-sm"
                               disabled={!editable}
                               value={rawDraft[e.key]?.value ?? ''}
@@ -439,7 +451,9 @@ function ServerConfig({ server, onClose }) {
                             <td><code>{key}</code> <span className="badge text-bg-success ms-2">new</span></td>
                             <td>
                               <input
+                                name={`server-config-raw-${key.toLowerCase()}`}
                                 type="text"
+                                autoComplete="off"
                                 className="form-control form-control-sm"
                                 disabled={!editable}
                                 value={draft.value}
