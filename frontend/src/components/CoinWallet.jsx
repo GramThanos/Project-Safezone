@@ -58,9 +58,6 @@ function CoinWallet({ compact = false, className = '' }) {
 						<Link className="btn btn-sm btn-warning" to="/shop">
 							<i className="fas fa-store me-1" aria-hidden="true"></i>Open the shop
 						</Link>
-						<Link className="btn btn-sm btn-outline-light" to="/characters">
-							<i className="fas fa-chart-line me-1" aria-hidden="true"></i>Earning progress
-						</Link>
 					</div>
 				)}
 			</div>
