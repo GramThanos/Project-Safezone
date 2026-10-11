@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A self-hosted web portal for Project Zomboid dedicated servers.</strong><br>
-  Player accounts, daily loot delivered straight into the game, and a staff panel that runs your servers from the browser.
+Player accounts, daily loot and an optional coin shop delivered straight into the game, and a staff panel that runs your servers from the browser.
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 
 ---
 
-Project Safezone puts a website in front of your community's Project Zomboid servers. Players sign up, link their in-game characters, and collect loot crates that are delivered into the running game. Staff start, stop and configure servers, install Workshop mods, take backups, moderate players and get alerts in Discord — all from the browser, without an SSH session.
+Project Safezone puts a website in front of your community's Project Zomboid servers. Players sign up, link their in-game characters, collect loot crates, and can earn and spend coins in an optional shop — all delivered into the running game. Staff start, stop and configure servers, install Workshop mods, take backups, moderate players and get alerts in Discord — all from the browser, without an SSH session.
 
 It is free and open source, runs as a single Docker Compose stack, and suits anything from a handful of friends to a public community with a team of moderators. Everything beyond the basics — the loot economy, alerts, invite-only sign-up — is optional.
 
@@ -42,6 +42,14 @@ It is free and open source, runs as a single Docker Compose stack, and suits any
     <td align="center"><em>Players collect daily crates, track their weekly streak, and send rewards to their character.</em></td>
   </tr>
   <tr>
+    <td width="50%"><img src="docs/images/shop.png" alt="The player shop with reward categories and coin prices"></td>
+    <td width="50%"><img src="docs/images/leaderboards.png" alt="The character leaderboard"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Players spend coins on rewards in a category-based shop.</em></td>
+    <td align="center"><em>The leaderboard ranks surviving characters by their in-game accomplishments.</em></td>
+  </tr>
+  <tr>
     <td colspan="2" align="center"><img src="docs/images/admin-server.png" alt="A server's page in the admin panel" width="70%"></td>
   </tr>
   <tr>
@@ -52,6 +60,7 @@ It is free and open source, runs as a single Docker Compose stack, and suits any
 ## Highlights
 
 - 🎁 **Daily loot, delivered in-game.** Weighted crates, a weekly streak bonus and limited-time events. Rewards go to the player's character, and only count as delivered once the server confirms it — otherwise they return to the player's inventory.
+- 🪙 **An optional player economy.** Players earn coins for playing and by selling unused rewards, then spend them in a category-based shop. Admins set prices, daily purchase limits and reward expiry; purchases enter the same safely delivered inventory flow as loot.
 - 🧟 **Characters are claimed, not typed in.** A player proves they own a character by being online with it. No approval queue for staff.
 - 😴 **Servers that sleep.** An idle server stops the game but stays in the in-game server browser, and starts again when someone tries to join. Several servers can share one modest machine.
 - 🧩 **Workshop mods without the pain.** Paste a mod or collection URL, preview it, install it once for every server, and be told when the load order is wrong.
@@ -130,6 +139,10 @@ In Project Zomboid, open **Join**, add the server's address and port `16261`, an
 **8. Set up loot**
 
 Under **Admin → Rewards → Loot Boxes**, fill each box's pool — **Import config → Community** gives you a ready-made starting set. *A box with an empty pool cannot be opened*, so do this before inviting players.
+
+**Optional: enable the coin shop**
+
+Coins are off by default. To let players earn coins from zombie kills, sell unused rewards, and buy rewards from the shop, turn on **Settings → Coins**, then enable **settle coins** and **coin report** under **Scheduled Jobs**. Create categories and listings under **Admin → Rewards → Shop**. See [Coins and the shop](docs/features.md#coins-and-the-shop) for how pricing, limits and expiry work.
 
 ## Before you open it to the internet
 

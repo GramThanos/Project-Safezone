@@ -6,6 +6,8 @@ Captures shown in the root README's gallery:
 |---|---|
 | `home.png` | The public home page |
 | `rewards.png` | A player's Rewards page: weekly streak, crates and inventory |
+| `shop.png` | The player shop: reward categories and coin prices |
+| `leaderboards.png` | The public character leaderboard |
 | `admin-server.png` | A server's page in the admin panel, with its controls and console |
 
 The README banner is `frontend/public/assets/images/safezone-banner-8.png`, one of the site's own hero images.
