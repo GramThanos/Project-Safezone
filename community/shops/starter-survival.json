@@ -1,0 +1,160 @@
+{
+  "type": "project-safezone-shop",
+  "version": 1,
+  "rewards": [
+    { "kind": "item", "name": "Alcohol Wipes", "description": "A five-use disinfectant pack. Two packs are included per purchase.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/AlcoholWipes.png", "in_game_id": "Base.AlcoholWipes", "commands": null, "active": true, "coin_value": 1 },
+    { "kind": "item", "name": "First Aid Kit", "description": "A compact emergency medical kit.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/FirstAid.png", "in_game_id": "Base.FirstAidKit_New", "commands": null, "active": true, "coin_value": 10 },
+    { "kind": "item", "name": "Crowbar", "description": "A dependable long-blunt weapon and utility tool.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Crowbar.png", "in_game_id": "Base.Crowbar", "commands": null, "active": true, "coin_value": 12 },
+    { "kind": "item", "name": "Hand Axe", "description": "A one-handed axe for practical survival work.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/AxeHand.png", "in_game_id": "Base.HandAxe", "commands": null, "active": true, "coin_value": 15 },
+    { "kind": "item", "name": "Welding Torch", "description": "A welding torch for metalworking and vehicle access.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/WeldingTorch.png", "in_game_id": "Base.WeldingTorch", "commands": null, "active": true, "coin_value": 20 },
+    { "kind": "item", "name": "Propane Tank", "description": "Fuel for welding and other propane-powered equipment.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/PropaneTank.png", "in_game_id": "Base.PropaneTank", "commands": null, "active": true, "coin_value": 20 },
+    { "kind": "item", "name": "Generator", "description": "A generator for keeping a prepared base powered.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Generator.png", "in_game_id": "Base.Generator", "commands": null, "active": true, "coin_value": 50 },
+    { "kind": "item", "name": "Fishing Rod", "description": "A reusable route to food away from populated areas.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/FishingRod.png", "in_game_id": "Base.FishingRod", "commands": null, "active": true, "coin_value": 35 },
+    { "kind": "item", "name": "Big Hiking Backpack", "description": "A 22-capacity backpack for longer supply runs.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Bag_BigHikingBag.png", "in_game_id": "Base.Bag_BigHikingBag_Travel", "commands": null, "active": true, "coin_value": 75 },
+    { "kind": "item", "name": "Sledgehammer", "description": "A rare demolition tool; limited to preserve base-building progression.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Sledgehammer.png", "in_game_id": "Base.Sledgehammer", "commands": null, "active": true, "coin_value": 120 },
+    { "kind": "item", "name": "Machete", "description": "A durable long-blade weapon for experienced survivors.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Machete.png", "in_game_id": "Base.Machete", "commands": null, "active": true, "coin_value": 90 },
+    { "kind": "item", "name": "Spiffo's Baseball Cap", "description": "Show your appreciation for Knox Country's most beloved mascot.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/BaseballCapSpiffo.png", "in_game_id": "Base.Hat_BaseballCap_Spiffos", "commands": null, "active": true, "coin_value": 3 }
+  ],
+  "categories": [
+    {
+      "name": "Essentials",
+      "description": "Medical and everyday survival supplies.",
+      "sort_order": 10,
+      "active": true
+    },
+    {
+      "name": "Tools",
+      "description": "Reliable tools for building, repair, and scavenging.",
+      "sort_order": 20,
+      "active": true
+    },
+    {
+      "name": "Survival",
+      "description": "Long-term survival and self-sufficiency equipment.",
+      "sort_order": 30,
+      "active": true
+    },
+    {
+      "name": "Premium",
+      "description": "Rare, high-impact rewards with strict purchase limits.",
+      "sort_order": 40,
+      "active": true
+    },
+    {
+      "name": "Cosmetics",
+      "description": "Fun items with no material survival advantage.",
+      "sort_order": 50,
+      "active": true
+    }
+  ],
+  "items": [
+    {
+      "reward": { "kind": "item", "name": "Alcohol Wipes", "in_game_id": "Base.AlcoholWipes" },
+      "count": 2,
+      "price": 20,
+      "daily_limit": 2,
+      "sort_order": 10,
+      "active": true,
+      "categories": ["Essentials"]
+    },
+    {
+      "reward": { "kind": "item", "name": "First Aid Kit", "in_game_id": "Base.FirstAidKit_New" },
+      "count": 1,
+      "price": 200,
+      "daily_limit": 1,
+      "sort_order": 20,
+      "active": true,
+      "categories": ["Essentials"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Crowbar", "in_game_id": "Base.Crowbar" },
+      "count": 1,
+      "price": 240,
+      "daily_limit": 1,
+      "sort_order": 10,
+      "active": true,
+      "categories": ["Tools"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Hand Axe", "in_game_id": "Base.HandAxe" },
+      "count": 1,
+      "price": 300,
+      "daily_limit": 1,
+      "sort_order": 20,
+      "active": true,
+      "categories": ["Tools"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Welding Torch", "in_game_id": "Base.WeldingTorch" },
+      "count": 1,
+      "price": 400,
+      "daily_limit": 1,
+      "sort_order": 30,
+      "active": true,
+      "categories": ["Tools"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Propane Tank", "in_game_id": "Base.PropaneTank" },
+      "count": 1,
+      "price": 400,
+      "daily_limit": 1,
+      "sort_order": 40,
+      "active": true,
+      "categories": ["Tools"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Generator", "in_game_id": "Base.Generator" },
+      "count": 1,
+      "price": 1000,
+      "daily_limit": 1,
+      "sort_order": 10,
+      "active": true,
+      "categories": ["Survival"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Fishing Rod", "in_game_id": "Base.FishingRod" },
+      "count": 1,
+      "price": 700,
+      "daily_limit": 1,
+      "sort_order": 20,
+      "active": true,
+      "categories": ["Survival"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Big Hiking Backpack", "in_game_id": "Base.Bag_BigHikingBag_Travel" },
+      "count": 1,
+      "price": 1500,
+      "daily_limit": 1,
+      "sort_order": 30,
+      "active": true,
+      "categories": ["Survival"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Sledgehammer", "in_game_id": "Base.Sledgehammer" },
+      "count": 1,
+      "price": 2400,
+      "daily_limit": 1,
+      "sort_order": 10,
+      "active": true,
+      "categories": ["Premium"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Machete", "in_game_id": "Base.Machete" },
+      "count": 1,
+      "price": 1800,
+      "daily_limit": 1,
+      "sort_order": 20,
+      "active": true,
+      "categories": ["Premium"]
+    },
+    {
+      "reward": { "kind": "item", "name": "Spiffo's Baseball Cap", "in_game_id": "Base.Hat_BaseballCap_Spiffos" },
+      "count": 1,
+      "price": 60,
+      "daily_limit": null,
+      "sort_order": 10,
+      "active": true,
+      "categories": ["Cosmetics"]
+    }
+  ]
+}
