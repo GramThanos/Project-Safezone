@@ -144,7 +144,7 @@ function Servers() {
 											</div>
 
 											{/* Activity over the last 24 hours */}
-											<PlayerActivityChart history={history[server.id] || []} height={80} />
+											<PlayerActivityChart history={history[server.id] || []} height={110} />
 											{/* Online right now */}
 											{typeof server.online_count === 'number' && (
 												<div className="text-body-secondary small mt-1 text-end">

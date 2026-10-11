@@ -40,11 +40,12 @@ function Row({ to, href, icon, children, badge }) {
 
 function Me() {
 	const { user, signout, isModerator } = useAuth();
-	const { brand_name: brand, social, resources, legal } = useSite();
+	const { brand_name: brand, social, resources, legal, leaderboard } = useSite();
 	const { unread, onlineCharacters, coins } = usePlayer();
 	const navigate = useNavigate();
 	const banned = user?.role === 'banned';
 	const links = SOCIAL.filter(([key]) => social?.[key]);
+	const showLeaderboard = leaderboard === 'public' || (leaderboard === 'authenticated' && user && !banned);
 
 	usePageTitle(user ? 'Me' : 'More');
 
@@ -61,7 +62,7 @@ function Me() {
 						<div className="app-avatar rounded-circle bg-body-tertiary border d-flex align-items-center justify-content-center">
 							<i className="fas fa-user" aria-hidden="true"></i>
 						</div>
-						<div style={{ minWidth: 0 }}>
+						<div className="me-auto" style={{ minWidth: 0 }}>
 							<div className="fw-bold text-truncate">{user.username}</div>
 							<div className="small text-body-secondary text-truncate">
 								{onlineCharacters.length > 0 ? (
@@ -72,6 +73,17 @@ function Me() {
 								) : <span className="text-capitalize">{user.role}</span>}
 							</div>
 						</div>
+						{/* The wallet, where the website's account menu shows it */}
+						{!banned && coins.enabled && (
+							<Link
+								to="/shop"
+								className="flex-shrink-0 text-end text-body text-decoration-none"
+								title="Spend your coins in the shop"
+							>
+								<div className="small text-body-secondary">Coins</div>
+								<Coins amount={coins.balance} className="fw-bold" />
+							</Link>
+						)}
 					</div>
 				) : (
 					<Link className="btn btn-danger btn-lg" to="/signin">
@@ -83,9 +95,7 @@ function Me() {
 					<div className="list-group">
 						{!banned && <Row to="/profile" icon="fas fa-id-card">Profile</Row>}
 						{!banned && coins.enabled && (
-							<Row to="/shop" icon="fas fa-store" badge={<Coins amount={coins.balance} className="fw-semibold" />}>
-								Shop
-							</Row>
+							<Row to="/shop" icon="fas fa-store">Shop</Row>
 						)}
 						<Row
 							to="/notifications"
@@ -106,6 +116,12 @@ function Me() {
 				{user && !banned && (
 					<div className="list-group">
 						<NotificationSettings row />
+					</div>
+				)}
+
+				{showLeaderboard && (
+					<div className="list-group">
+						<Row to="/leaderboard" icon="fas fa-trophy">Leaderboard</Row>
 					</div>
 				)}
 

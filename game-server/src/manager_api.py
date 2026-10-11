@@ -78,8 +78,10 @@ def index():
             'clear_tasks': 'DELETE /api/tasks',
             'list_actions': 'GET /api/actions',
             'preview_action': 'POST /api/actions/:id/preview',
+            'list_characters': 'GET /api/servers/:id/characters',
             'get_character': 'GET /api/servers/:id/characters/:username',
             'characters_snapshot': 'POST /api/servers/:id/characters/snapshot',
+            'leaderboard': 'GET /api/servers/:id/leaderboard',
             'installation': 'GET /api/installation',
             'list_items': 'GET /api/items',
             'list_mods': 'GET /api/mods',
@@ -326,6 +328,44 @@ def get_server(server_id):
     except Exception as e:
         _log(f"Error getting server: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/servers/<int:server_id>/characters', methods=['GET'])
+@require_auth
+def list_characters(server_id):
+    """Every account's main character on a server, as of the game's last save.
+
+    The same summary the snapshot returns, without asking the game to save
+    first - this is a listing for staff, not a reading anything is paid from.
+    """
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    try:
+        payload = characters.summaries(server['name'])
+    except characters.Unavailable as e:
+        return jsonify({'error': str(e)}), e.status
+    return jsonify({'data': payload})
+
+
+@app.route('/api/servers/<int:server_id>/leaderboard', methods=['GET'])
+@require_auth
+def leaderboard(server_id):
+    """Every living character on a server, as of the game's last save.
+
+    The owner's username is included for the backend's exclusions; the
+    backend removes it before anything reaches a browser.
+    """
+    server = servers.get(server_id)
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    try:
+        payload = characters.leaderboard(server['name'])
+    except characters.Unavailable as e:
+        return jsonify({'error': str(e)}), e.status
+    return jsonify({'data': payload})
 
 
 @app.route('/api/servers/<int:server_id>/characters/<string:username>', methods=['GET'])

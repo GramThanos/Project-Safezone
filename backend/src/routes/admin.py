@@ -24,8 +24,9 @@ from src.models.notification import Notification
 from src.models.ban import Ban
 from src.models.alert_channel import AlertChannel
 from src.middleware.auth import moderator_required, admin_required
+from src.routes.claims import USERNAME_RE, link_character
 from src.utils.game_server import gs_request, gs_stream
-from src.utils.redis_utils import apply_live_state
+from src.utils.redis_utils import apply_live_state, get_online_players
 from src.utils import (loot, audit, settings, mailer, paging, notify, jobs, moderation,
                        alerting, channels, character_info, coins)
 from src.utils.actions import fetch_catalog, role_allows, validate_action
@@ -125,7 +126,11 @@ def get_user_detail(current_user, user_id):
     """
     try:
         with db.get_db() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
             if not user:
                 return jsonify({'error': 'User not found'}), 404
             now = datetime.utcnow()
@@ -219,7 +224,11 @@ def remove_user_boxes(current_user, user_id):
         return jsonify({'error': error}), 400
     try:
         with db.get_db() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
             if not user:
                 return jsonify({'error': 'User not found'}), 404
             query = (session.query(UserBox)
@@ -256,7 +265,11 @@ def remove_user_inventory(current_user, user_id):
         return jsonify({'error': error}), 400
     try:
         with db.get_db() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
             if not user:
                 return jsonify({'error': 'User not found'}), 404
             query = (session.query(InventoryItem)
@@ -300,7 +313,11 @@ def adjust_user_coins(current_user, user_id):
 
     try:
         with db.get_db() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
             if not user:
                 return jsonify({'error': 'User not found'}), 404
             if amount > 0:
@@ -406,7 +423,11 @@ def update_user_role(current_user, user_id):
     actor_id = current_user['user_id']
     try:
         with db.get_db() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
             if not user:
                 return jsonify({'error': 'User not found'}), 404
 
@@ -500,7 +521,11 @@ def admin_reset_password(current_user, user_id):
 
     try:
         with db.get_db() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
             if not user:
                 return jsonify({'error': 'User not found'}), 404
 
@@ -533,7 +558,11 @@ def admin_disable_2fa(current_user, user_id):
     """
     try:
         with db.get_db() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
             if not user:
                 return jsonify({'error': 'User not found'}), 404
             if not user.totp_enabled and not user.totp_secret:
@@ -574,7 +603,15 @@ def get_servers(current_user):
     payload, status = gs_request('GET', '/api/servers', params=params)
     if status != 200:
         return jsonify({'error': payload.get('error', 'Failed to fetch servers')}), status
-    return jsonify({'servers': apply_live_state(payload.get('data', []))}), 200
+    servers = apply_live_state(payload.get('data', []))
+    # Headcounts for the list's cards: who is on right now (the names stay
+    # behind the roster) and how many characters are linked to each server.
+    linked = dict(db.session.query(Character.server_id, func.count(Character.id))
+                  .group_by(Character.server_id).all())
+    for server in servers:
+        server['online_count'] = len(get_online_players(server['id']))
+        server['character_count'] = linked.get(server['id'], 0)
+    return jsonify({'servers': servers}), 200
 
 
 @admin_bp.route('/servers/<int:server_id>', methods=['GET'])
@@ -1190,6 +1227,135 @@ def revoke_claim(current_user, claim_id):
             return jsonify({'message': 'Link revoked', 'claim': claim.to_dict()}), 200
     except Exception as e:
         logger.error(f"Revoke claim error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/claims/unlinked', methods=['GET'])
+@moderator_required
+def get_unlinked_characters(current_user):
+    """Characters saved on each server that no account is linked to (moderator/admin).
+
+    Read from every server's ``players.db`` as of the game's last save, so it
+    includes characters that are offline - which is what a player cannot claim
+    by themselves. A server whose save cannot be read is reported rather than
+    hiding the others. Each row names the account whose username matches the
+    character's owner, when there is one, as a suggestion for the link.
+    """
+    payload, status = gs_request('GET', '/api/servers')
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not list servers')}), status
+
+    reports, found = [], []
+    for server in payload.get('data') or []:
+        server_id = server.get('id')
+        listing, list_status = gs_request('GET', f'/api/servers/{int(server_id)}/characters')
+        data = listing.get('data') if isinstance(listing, dict) else None
+        if list_status != 200 or not isinstance(data, dict):
+            # 404 is a server that has never saved anyone: nothing to list, not a fault.
+            reports.append({'server_id': server_id, 'name': server.get('name'),
+                            'saved_at': None,
+                            'error': None if list_status == 404 else
+                            (listing or {}).get('error') or 'The save could not be read'})
+            continue
+        reports.append({'server_id': server_id, 'name': server.get('name'),
+                        'saved_at': data.get('saved_at'), 'error': None})
+        for character in data.get('characters') or []:
+            found.append(dict(character, server_id=server_id, server_name=server.get('name')))
+
+    try:
+        with db.get_db() as session:
+            server_ids = {c['server_id'] for c in found}
+            linked = {}
+            if server_ids:
+                for server_id, username in (session.query(Character.server_id,
+                                                          Character.in_game_username)
+                                            .filter(Character.server_id.in_(server_ids),
+                                                    Character.verified.is_(True))):
+                    linked.setdefault(server_id, []).append(username)
+
+            rows = []
+            for server_id in sorted(server_ids):
+                saved = [c for c in found if c['server_id'] == server_id]
+                rows.extend(character_info.unlinked(saved, linked.get(server_id, [])))
+
+            owners = {c['username'].lower() for c in rows}
+            accounts = {}
+            if owners:
+                for user in session.query(User).filter(func.lower(User.username).in_(owners)):
+                    accounts[user.username.lower()] = {'id': user.id, 'username': user.username}
+
+            for row in rows:
+                row['linkable'] = bool(USERNAME_RE.match(row['username']))
+                row['suggested_user'] = accounts.get(row['username'].lower())
+
+            return jsonify({'characters': rows, 'servers': reports}), 200
+    except Exception as e:
+        logger.error(f"Get unlinked characters error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@admin_bp.route('/claims/link', methods=['POST'])
+@admin_required
+def link_claim(current_user):
+    """Link a saved in-game character to an account (admin only).
+
+    The staff counterpart of a player's claim, for a character that cannot be
+    online to prove itself - or a player who cannot work the claim form. The
+    character has to exist in the server's save; the admin's word stands in for
+    the online check, and the audit log records whose word it was.
+    """
+    data = request.get_json(silent=True) or {}
+    username = (data.get('in_game_username') or '').strip()
+    # The account by id, or by its username (without case) as typed in the panel.
+    account = (data.get('username') or '').strip()
+    try:
+        server_id = int(data.get('server_id'))
+        user_id = int(data['user_id']) if data.get('user_id') is not None else None
+    except (TypeError, ValueError):
+        return jsonify({'error': 'server_id and an account are required'}), 400
+    if user_id is None and not account:
+        return jsonify({'error': 'server_id and an account are required'}), 400
+    if not USERNAME_RE.match(username):
+        return jsonify({'error': 'Invalid in-game username'}), 400
+
+    _, status = gs_request('GET', f'/api/servers/{server_id}')
+    if status == 404:
+        return jsonify({'error': 'Server not found'}), 404
+    if status != 200:
+        return jsonify({'error': 'Could not verify server'}), 503
+
+    # The save is the proof that the character exists. It also sets the coin
+    # baseline, as a player's claim does.
+    game_data, game_status = character_info.fetch(server_id, username)
+    if game_status == 404:
+        return jsonify({'error': "That character is not in the server's save"}), 404
+    if game_status != 200:
+        return jsonify({'error': game_data.get('error') or 'Could not read the save'}), 503
+
+    try:
+        with db.get_db() as session:
+            if user_id is not None:
+                user = session.query(User).filter_by(id=user_id).first()
+            else:
+                user = (session.query(User)
+                        .filter(func.lower(User.username) == account.lower()).first())
+            if not user:
+                return jsonify({'error': 'Account not found'}), 404
+            if user.is_banned():
+                return jsonify({'error': 'That account is banned'}), 409
+
+            claim, character, error = link_character(
+                session, user.id, user.username, server_id, username,
+                game_data, game_status, actor_id=current_user['user_id'])
+            if error:
+                return jsonify({'error': error}), 409
+            return jsonify({
+                'message': f'{username} linked to {user.username}',
+                'claim': claim.to_dict(),
+                'character': character.to_dict()
+            }), 201
+    except Exception as e:
+        logger.error(f"Link claim error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 

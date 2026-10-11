@@ -1,5 +1,6 @@
-// Everything about one stack of rewards, over its card: what it is, how many,
-// what it would sell for and when it runs out.
+// Everything about one stack of rewards, over its card: what it is, what one
+// bundle holds and how many bundles there are, what one would sell for and when
+// the next runs out.
 //
 // Opens on hover and keyboard focus, and from the card's info button for
 // touch screens, where nothing hovers. Built here rather than with Bootstrap's
@@ -42,7 +43,9 @@ function RewardTooltip({ details, children }) {
     };
   }, [pinned]);
 
-  const { name, quantity, kind, description, sellValue, coinsOn, sellable, expiresAt, status } = details;
+  const { name, per = 1, bundles = 1, kind, description, sellValue, coinsOn, sellable, expiresAt,
+    status } = details;
+  const usable = kind === 'usable';
 
   return (
     <div
@@ -72,17 +75,30 @@ function RewardTooltip({ details, children }) {
         >
           <div className="fw-semibold">
             {name}
-            {quantity > 1 && <span className="badge text-bg-light text-dark ms-1">×{quantity}</span>}
+            {!usable && per > 1 && <span className="text-body-secondary fw-normal ms-1">×{per}</span>}
           </div>
           <div className="text-body-secondary mb-1">{KIND[kind] || kind}</div>
           {description && <div className="mb-2">{description}</div>}
           <dl className="row g-0 mb-0">
+            {/* The two numbers apart: what one bundle holds, and how many you have. */}
+            {!usable && per > 1 && (
+              <>
+                <dt className="col-5 fw-normal text-body-secondary">Each bundle</dt>
+                <dd className="col-7 mb-1">{per} × {name}</dd>
+              </>
+            )}
+            <dt className="col-5 fw-normal text-body-secondary">{sellable ? 'You have' : 'How many'}</dt>
+            <dd className="col-7 mb-1">
+              {usable ? `${bundles} ${bundles === 1 ? 'use' : 'uses'}`
+                : per > 1 ? `${bundles} ${bundles === 1 ? 'bundle' : 'bundles'} (${bundles * per} in all)`
+                  : bundles}
+            </dd>
             {coinsOn && (
               <>
                 <dt className="col-5 fw-normal text-body-secondary">If sold</dt>
                 <dd className="col-7 mb-1">
                   {sellValue > 0
-                    ? <><Coins amount={sellValue} /> {coinWord(sellValue)}</>
+                    ? <><Coins amount={sellValue} /> {coinWord(sellValue)}{bundles > 1 ? ' each' : ''}</>
                     : sellable ? 'Cannot be sold' : 'Nothing - only unsent rewards sell'}
                 </dd>
               </>
@@ -90,7 +106,7 @@ function RewardTooltip({ details, children }) {
             {/* Only what is still waiting can run out. */}
             {(sellable || status === 'expired') && (
               <>
-                <dt className="col-5 fw-normal text-body-secondary">Expires</dt>
+                <dt className="col-5 fw-normal text-body-secondary">{bundles > 1 ? 'Next expires' : 'Expires'}</dt>
                 <dd className="col-7 mb-0">
                   {status === 'expired' ? 'Expired'
                     : expiresAt ? <span title={formatDateTime(expiresAt)}>{untilText(expiresAt)}</span>

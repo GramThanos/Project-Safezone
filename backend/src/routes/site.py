@@ -13,7 +13,7 @@ import logging
 
 from flask import Blueprint, jsonify
 
-from src.utils import settings
+from src.utils import leaderboard, settings
 
 logger = logging.getLogger(__name__)
 site_bp = Blueprint('site', __name__, url_prefix='/api/site')
@@ -51,6 +51,8 @@ def get_site():
             'resources': RESOURCES,
             'legal': [{'slug': slug, 'title': title}
                       for slug, (_, title) in settings.LEGAL_PAGES.items()],
+            # Who may open the leaderboard, so the menu offers it only to them.
+            'leaderboard': leaderboard.visibility(),
         }), 200
     except Exception as e:
         logger.error(f"Get site content error: {e}")

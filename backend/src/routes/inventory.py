@@ -23,67 +23,114 @@ inventory_bp = Blueprint('inventory', __name__, url_prefix='/api/inventory')
 SENDING_TIMEOUT = timedelta(minutes=5)
 
 
+# How many bundles one send may carry - the game-server's own cap
+# (commands.BUNDLE_MAX / USABLE_BUNDLE_MAX), checked here as well so a player is
+# told before anything is dispatched. A usable runs its whole sequence once per
+# bundle, sleeps included, on the one queue every delivery waits behind.
+SEND_MAX = {Reward.KIND_ITEM: 20, Reward.KIND_USABLE: 5}
+
+
 def _is_stale(item):
     """Whether a 'sending' item has been in flight past the recovery window."""
     started = item.sent_at or item.created_at
     return started is not None and datetime.utcnow() - started > SENDING_TIMEOUT
 
 
-def _describe(session, item):
-    """``(reward name, character name, server id)`` for an alert.
+def _what(reward, items):
+    """How a delivery reads to a person: "Bandage", "Bandage ×5", "3 × Bandage ×5".
+
+    The number after the name is what one bundle holds; the one before it is
+    how many bundles. Kept apart because they mean different things - three
+    drops of five bandages are not one drop of fifteen.
+    """
+    name = reward.name if reward else f'reward {items[0].reward_id}'
+    per = items[0].count or 1
+    if per > 1 and not (reward and reward.kind == Reward.KIND_USABLE):
+        name = f'{name} ×{per}'
+    return f'{len(items)} × {name}' if len(items) > 1 else name
+
+
+def _describe(session, items):
+    """``(what, character name, server id)`` for an alert.
 
     Resolved here rather than in the webhook thread: by the time that runs this
     session is closed, and an alert saying "reward 41 to character 7" is not
     worth sending.
     """
-    reward = session.get(Reward, item.reward_id)
-    character = (session.query(Character).filter_by(id=item.character_id).first()
-                 if item.character_id else None)
-    return (reward.name if reward else f'reward {item.reward_id}',
+    first = items[0]
+    reward = session.get(Reward, first.reward_id)
+    character = (session.query(Character).filter_by(id=first.character_id).first()
+                 if first.character_id else None)
+    return (_what(reward, items),
             character.in_game_username if character else None,
             character.server_id if character else None)
 
 
-def _release(session, item, reason=None):
-    """Return an unresolvable in-flight item to the player's inventory.
+def _release(session, items, reason=None):
+    """Return unresolvable in-flight bundles to the player's inventory.
 
-    Tells the player: this used to fail silently, and they would only find out
-    by reloading and noticing the item had come back.
+    One message for the whole delivery, not one per bundle: the player sent it
+    as one thing. This used to fail silently, and they would only find out by
+    reloading and noticing the item had come back.
     """
-    item.status = InventoryItem.STATUS_HELD
-    item.sent_at = None
-    notify.send(session, item.user_id, Notification.KIND_DELIVERY,
-                'A reward came back to your inventory',
+    for item in items:
+        item.status = InventoryItem.STATUS_HELD
+        item.sent_at = None
+    what, character, server_id = _describe(session, items)
+    notify.send(session, items[0].user_id, Notification.KIND_DELIVERY,
+                f'{what} came back to your inventory',
                 body=reason or 'It could not be delivered. You can try sending it again.',
                 link='/rewards')
-
-    name, character, server_id = _describe(session, item)
-    alerting.emit('reward.failed', f'{name} came back undelivered',
+    alerting.emit('reward.failed', f'{what} came back undelivered',
                   description=reason, server_id=server_id,
-                  fields=[('Reward', name), ('Character', character)])
+                  fields=[('Reward', what), ('Character', character)])
 
 
-def _reconcile(session, item):
-    """Resolve a 'sending' item's status from its game-server delivery task.
+def _deliver(session, items):
+    """Mark in-flight bundles as having arrived in game."""
+    now = datetime.utcnow()
+    for item in items:
+        item.status = InventoryItem.STATUS_DELIVERED
+        item.delivered_at = now
+    what, character, server_id = _describe(session, items)
+    notify.send(session, items[0].user_id, Notification.KIND_DELIVERY,
+                f'{what} was delivered',
+                body="It is in your character's inventory in game.",
+                link='/rewards')
+    alerting.emit('reward.delivered', f'{what} was delivered to {character}',
+                  server_id=server_id,
+                  fields=[('Reward', what), ('Character', character)])
 
+
+def _reconcile(session, items):
+    """Resolve one delivery's in-flight bundles from its game-server task.
+
+    ``items`` are the rows a single task carries (see :func:`_deliveries`).
     Anything that cannot be resolved is left alone until it goes stale, then
     handed back so the player can retry. Waiting for staleness rather than
     releasing immediately avoids refunding a delivery that is merely queued.
+
+    A task that failed part-way reports the bundles that did land
+    (``delivered_refs``); those are delivered and only the rest come back, so a
+    half-finished send can never be sent again in full. A task without the field
+    predates stack deliveries and carried one bundle, which did not arrive.
     """
-    if item.status != InventoryItem.STATUS_SENDING:
+    items = [i for i in items if i.status == InventoryItem.STATUS_SENDING]
+    if not items:
         return
-    if not item.task_id:
+    task_id = items[0].task_id
+    if not task_id:
         # Dispatched but the task id was never recorded - nothing to poll.
-        if _is_stale(item):
-            _release(session, item, 'The delivery was never picked up.')
+        if _is_stale(items[0]):
+            _release(session, items, 'The delivery was never picked up.')
         return
 
-    payload, status = gs_request('GET', f'/api/tasks/{item.task_id}')
+    payload, status = gs_request('GET', f'/api/tasks/{task_id}')
     if status != 200:
         # 404 = the task row was cleared; anything else = game-server trouble.
         # Either way the outcome is now unknowable, so time it out.
-        if _is_stale(item):
-            _release(session, item, 'The server could not confirm the delivery.')
+        if _is_stale(items[0]):
+            _release(session, items, 'The server could not confirm the delivery.')
         return
 
     task = payload.get('data') or {}
@@ -91,25 +138,40 @@ def _reconcile(session, item):
         # Still pending/processing, or stuck: the game-server fails abandoned
         # tasks on its own, but time out here too so a wedged queue can't hold
         # a player's item hostage.
-        if _is_stale(item):
-            _release(session, item, 'The delivery timed out.')
+        if _is_stale(items[0]):
+            _release(session, items, 'The delivery timed out.')
         return
 
-    result = (task.get('data') or {}).get('result')
-    if result == 'success':
-        item.status = InventoryItem.STATUS_DELIVERED
-        item.delivered_at = datetime.utcnow()
-        notify.send(session, item.user_id, Notification.KIND_DELIVERY,
-                    'Your reward was delivered',
-                    body="It is in your character's inventory in game.",
-                    link='/rewards')
-        name, character, server_id = _describe(session, item)
-        alerting.emit('reward.delivered', f'{name} was delivered to {character}',
-                      server_id=server_id,
-                      fields=[('Reward', name), ('Character', character)])
-    else:
+    data = task.get('data') or {}
+    if data.get('result') == 'success':
+        _deliver(session, items)
+        return
+    landed = set(data.get('delivered_refs') or [])
+    arrived = [i for i in items if i.id in landed]
+    back = [i for i in items if i.id not in landed]
+    if arrived:
+        _deliver(session, arrived)
+    if back:
         # Failed (e.g. character went offline) -> return to inventory to retry.
-        _release(session, item, 'The character went offline before it arrived.')
+        _release(session, back,
+                 'Only part of it arrived before the delivery stopped.' if arrived
+                 else 'The character went offline before it arrived.')
+
+
+def _deliveries(items):
+    """Group in-flight rows by the task carrying them.
+
+    A stack send is one task for several rows, and resolving it row by row would
+    tell the player the same news once per bundle. A row with no task id is its
+    own delivery.
+    """
+    groups = {}
+    for item in items:
+        if item.status != InventoryItem.STATUS_SENDING:
+            continue
+        key = ('task', item.task_id) if item.task_id else ('row', item.id)
+        groups.setdefault(key, []).append(item)
+    return list(groups.values())
 
 
 @inventory_bp.route('', methods=['GET'])
@@ -123,125 +185,170 @@ def list_inventory(current_user):
                      .order_by(InventoryItem.created_at.desc())
                      .all())
             # Reconcile any in-flight deliveries before returning.
-            for item in items:
-                _reconcile(session, item)
+            for delivery in _deliveries(items):
+                _reconcile(session, delivery)
 
-            result = []
-            for item in items:
-                reward = session.get(Reward, item.reward_id)
-                result.append(item.to_dict(reward=reward))
-            return jsonify({'inventory': result}), 200
+            reward_ids = {i.reward_id for i in items}
+            rewards = ({r.id: r for r in session.query(Reward).filter(Reward.id.in_(reward_ids))}
+                       if reward_ids else {})
+            return jsonify({
+                'inventory': [i.to_dict(reward=rewards.get(i.reward_id)) for i in items],
+                'send_max': SEND_MAX,
+            }), 200
     except Exception as e:
         logger.error(f"List inventory error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+def _send(user_id, ids, character_id):
+    """Send bundles of one reward to one character, as a single delivery.
+
+    The bundles must be the same reward holding the same amount - one stack as
+    the player sees it - and all still here to send. Everything is checked
+    before anything is dispatched, and one task carries them all, so a send
+    either goes out whole or not at all; there is no half-sent stack to explain.
+    Returns ``(body, status)``.
+    """
+    if not character_id:
+        return {'error': 'character_id is required'}, 400
+    with db.get_db() as session:
+        # Locked so two sends of the same bundle cannot both dispatch it.
+        items = (session.query(InventoryItem)
+                 .filter(InventoryItem.user_id == user_id, InventoryItem.id.in_(ids))
+                 .order_by(InventoryItem.id)
+                 .with_for_update()
+                 .all())
+        if len(items) != len(ids):
+            return {'error': 'Some of those rewards are no longer in your inventory'}, 404
+
+        # Resolve any earlier in-flight delivery first, so a timed-out one can
+        # be retried here without waiting for an inventory listing - the whole
+        # delivery, not only the rows asked for, so it is reported once.
+        task_ids = {i.task_id for i in items
+                    if i.status == InventoryItem.STATUS_SENDING and i.task_id}
+        in_flight = [i for i in items if i.status == InventoryItem.STATUS_SENDING and not i.task_id]
+        if task_ids:
+            in_flight += (session.query(InventoryItem)
+                          .filter(InventoryItem.user_id == user_id,
+                                  InventoryItem.task_id.in_(task_ids))
+                          .with_for_update()
+                          .all())
+        for delivery in _deliveries(in_flight):
+            _reconcile(session, delivery)
+
+        first = items[0]
+        if any(i.reward_id != first.reward_id or (i.count or 1) != (first.count or 1)
+               for i in items):
+            return {'error': 'Only bundles of the same reward can be sent together'}, 400
+        if any(i.status == InventoryItem.STATUS_EXPIRED or expiry.is_expired(i) for i in items):
+            return {'error': 'That reward has expired'}, 409
+        if any(i.status not in InventoryItem.SELLABLE for i in items):
+            return {'error': 'That reward is not available to send'}, 409
+
+        reward = session.get(Reward, first.reward_id)
+        if not reward:
+            return {'error': 'Reward no longer exists'}, 404
+        limit = SEND_MAX.get(reward.kind, SEND_MAX[Reward.KIND_ITEM])
+        if len(items) > limit:
+            return {'error': f'You can send up to {limit} at a time'}, 400
+
+        character = (session.query(Character)
+                     .filter_by(id=character_id, user_id=user_id)
+                     .first())
+        if not character:
+            return {'error': 'Character not found'}, 404
+        if not character.is_deliverable():
+            return {'error': 'That character is not linked/verified'}, 400
+        if not is_player_online(character.server_id, character.in_game_username):
+            return {'error': 'That character is not currently online'}, 409
+
+        payload = {
+            'action': 'give_reward',
+            'server_id': character.server_id,
+            'username': character.in_game_username,
+            'kind': reward.kind,
+            # Each bundle by its row id, which the task echoes back for the ones
+            # that landed. The amount was captured onto the row when it was won
+            # (it lives on the box's pool entry or the listing, not the reward).
+            'bundles': [{'ref': i.id, 'count': i.count or 1} for i in items],
+        }
+        if reward.kind == Reward.KIND_USABLE:
+            # scope stays 'reward': the game-server refuses staff-only actions.
+            if reward.commands:
+                payload['commands'] = reward.commands
+            elif reward.action_id:   # legacy catalog reward, still deliverable
+                payload['action_id'] = reward.action_id
+                payload['action_params'] = reward.action_params or {}
+            else:
+                return {'error': 'That reward is no longer deliverable'}, 409
+        else:
+            payload['in_game_id'] = reward.in_game_id
+
+        resp, status = gs_request('POST', '/api/tasks', json=payload)
+        if status not in (200, 201):
+            return {'error': resp.get('error', 'Failed to dispatch delivery')}, status
+
+        task = resp.get('data') or {}
+        now = datetime.utcnow()
+        for item in items:
+            item.status = InventoryItem.STATUS_SENDING
+            item.character_id = character.id
+            item.task_id = task.get('id')
+            item.sent_at = now
+
+        audit.record(session, user_id, 'inventory.send',
+                     target=character.in_game_username,
+                     detail=f"{reward.kind} {_what(reward, items)} -> "
+                            f"{character.in_game_username}@server{character.server_id}")
+
+        return {'message': 'Delivery dispatched',
+                'items': [i.to_dict(reward=reward) for i in items]}, 200
+
+
+def _ids(raw):
+    """A request's list of inventory ids, or an error message."""
+    if not isinstance(raw, list) or not raw:
+        return None, 'ids is required'
+    if any(isinstance(i, bool) or not isinstance(i, int) for i in raw):
+        return None, 'ids must be whole numbers'
+    if len(set(raw)) != len(raw):
+        return None, 'ids must not repeat'
+    return raw, None
+
+
+@inventory_bp.route('/send', methods=['POST'])
+@token_required
+def send_items(current_user):
+    """Send bundles of one reward to one of the account's online characters."""
+    data = request.get_json(silent=True) or {}
+    ids, error = _ids(data.get('ids'))
+    if error:
+        return jsonify({'error': error}), 400
+    most = max(SEND_MAX.values())
+    if len(ids) > most:
+        return jsonify({'error': f'You can send up to {most} at a time'}), 400
+    try:
+        body, status = _send(current_user['user_id'], ids, data.get('character_id'))
+        return jsonify(body), status
+    except Exception as e:
+        logger.error(f"Send inventory items error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
 @inventory_bp.route('/<int:item_id>/send', methods=['POST'])
 @token_required
 def send_item(current_user, item_id):
-    """Send/activate an inventory item for one of the account's online characters."""
-    data = request.get_json() or {}
-    character_id = data.get('character_id')
-    if not character_id:
-        return jsonify({'error': 'character_id is required'}), 400
-    # Optional: send only part of a holding. The rest stays in the inventory as
-    # its own row, so a stack of ten bandages can go out three at a time.
-    requested = data.get('count')
-    if requested is not None and (isinstance(requested, bool) or not isinstance(requested, int)
-                                  or requested < 1):
-        return jsonify({'error': 'count must be a whole number of at least 1'}), 400
-
+    """Send one bundle. A bundle goes whole: there is no sending part of one."""
+    data = request.get_json(silent=True) or {}
+    if data.get('count') is not None:
+        # A client from before bundles asking for part of one. Refused rather
+        # than ignored, so nobody gets more than they asked for.
+        return jsonify({'error': 'A reward is sent whole - refresh the page and try again'}), 400
     try:
-        with db.get_db() as session:
-            # Locked so two sends of the same holding cannot both dispatch it -
-            # or, now that a send can split it, both split it.
-            item = (session.query(InventoryItem)
-                    .filter_by(id=item_id, user_id=current_user['user_id'])
-                    .with_for_update()
-                    .first())
-            if not item:
-                return jsonify({'error': 'Inventory item not found'}), 404
-            # Resolve any earlier in-flight delivery first, so a timed-out one
-            # can be retried here without waiting for an inventory listing.
-            _reconcile(session, item)
-            if item.status == InventoryItem.STATUS_EXPIRED or expiry.is_expired(item):
-                return jsonify({'error': 'That reward has expired'}), 409
-            if item.status not in (InventoryItem.STATUS_HELD, InventoryItem.STATUS_FAILED):
-                return jsonify({'error': 'Item is not available to send'}), 409
-
-            character = (session.query(Character)
-                         .filter_by(id=character_id, user_id=current_user['user_id'])
-                         .first())
-            if not character:
-                return jsonify({'error': 'Character not found'}), 404
-            if not character.is_deliverable():
-                return jsonify({'error': 'That character is not linked/verified'}), 400
-            if not is_player_online(character.server_id, character.in_game_username):
-                return jsonify({'error': 'That character is not currently online'}), 409
-
-            reward = session.get(Reward, item.reward_id)
-            if not reward:
-                return jsonify({'error': 'Reward no longer exists'}), 404
-
-            held = item.count or 1
-            count = held if requested is None else requested
-            if count > held:
-                return jsonify({'error': f'Only {held} of that reward are here to send'}), 400
-            if count < held and reward.kind == Reward.KIND_USABLE:
-                return jsonify({'error': 'A usable reward cannot be split'}), 400
-
-            payload = {
-                'action': 'give_reward',
-                'server_id': character.server_id,
-                'username': character.in_game_username,
-                'kind': reward.kind
-            }
-            if reward.kind == Reward.KIND_USABLE:
-                # scope stays 'reward': the game-server refuses staff-only actions.
-                if reward.commands:
-                    payload['commands'] = reward.commands
-                elif reward.action_id:   # legacy catalog reward, still deliverable
-                    payload['action_id'] = reward.action_id
-                    payload['action_params'] = reward.action_params or {}
-                else:
-                    return jsonify({'error': 'That reward is no longer deliverable'}), 409
-            else:
-                payload['in_game_id'] = reward.in_game_id
-                # Quantity was captured onto the holding when the box was opened
-                # (it lives on the box's pool entry, not the reward).
-                payload['count'] = count
-
-            resp, status = gs_request('POST', '/api/tasks', json=payload)
-            if status not in (200, 201):
-                return jsonify({'error': resp.get('error', 'Failed to dispatch delivery')}), status
-
-            if count < held:
-                # Split only once the delivery is really on its way: this row
-                # becomes the part in flight, and the remainder stays behind
-                # with the same origin and deadline it had before. The sell
-                # value stays behind too - a reward is worth its coins once,
-                # so the part sent cannot be sold if its delivery comes back.
-                session.add(InventoryItem(
-                    user_id=item.user_id, reward_id=item.reward_id,
-                    count=held - count, source=item.source,
-                    source_box_id=item.source_box_id, status=item.status,
-                    created_at=item.created_at, expires_at=item.expires_at,
-                    sellable=item.sellable is not False))
-                item.count = count
-                item.sellable = False
-
-            task = resp.get('data') or {}
-            item.status = InventoryItem.STATUS_SENDING
-            item.character_id = character_id
-            item.task_id = task.get('id')
-            item.sent_at = datetime.utcnow()
-
-            audit.record(session, current_user['user_id'], 'inventory.send',
-                         target=character.in_game_username,
-                         detail=f"{reward.kind} '{reward.name}' x{count} -> {character.in_game_username}@server{character.server_id}")
-
-            return jsonify({'message': 'Delivery dispatched',
-                            'item': item.to_dict(reward=reward)}), 200
+        body, status = _send(current_user['user_id'], [item_id], data.get('character_id'))
+        if status == 200:
+            body['item'] = body.pop('items')[0]
+        return jsonify(body), status
     except Exception as e:
         logger.error(f"Send inventory item error: {e}")
         return jsonify({'error': 'Internal server error'}), 500

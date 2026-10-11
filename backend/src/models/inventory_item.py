@@ -25,9 +25,11 @@ class InventoryItem(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     reward_id = Column(Integer, ForeignKey('rewards.id', ondelete='CASCADE'), nullable=False, index=True)
-    # How many of the item this holding delivers. Captured from the box's loot
-    # pool entry when the box is opened, because the quantity lives on the pool
-    # (not the reward) and the entry may change afterwards. 1 for usables.
+    # How many of the item this holding - one *bundle* - delivers. Captured from
+    # the box's loot pool entry or the shop listing when it is won, because the
+    # quantity lives there (not on the reward) and may change afterwards. 1 for
+    # usables. A bundle is sent, sold and discarded whole; owning a reward twice
+    # is two rows, which the page shows as one stack of two bundles.
     count = Column(Integer, nullable=False, default=1)
     source = Column(String(16), nullable=False, default=SOURCE_BOX)
     source_box_id = Column(Integer)
@@ -38,11 +40,10 @@ class InventoryItem(Base):
     expires_at = Column(DateTime)    # null = never expires
     sent_at = Column(DateTime)       # when delivery was dispatched (staleness clock)
     delivered_at = Column(DateTime)
-    # Whether this holding still carries its reward's sell value. A reward is
-    # worth its coin value once, however many items it holds, so when a send
-    # splits a holding the value stays with the part left behind and the part
-    # sent loses it - otherwise a split whose delivery failed and came back
-    # would be two holdings to sell instead of one.
+    # Whether this holding still carries its reward's sell value. Only ever
+    # False on rows from when a send could split a holding: the value stayed
+    # with the part left behind, so a split whose delivery came back was not
+    # two holdings to sell. Bundles are never split now, so new rows keep it.
     sellable = Column(Boolean, nullable=False, default=True)
 
     def sell_value(self, reward, now=None):

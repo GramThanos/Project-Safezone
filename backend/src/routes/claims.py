@@ -76,57 +76,11 @@ def create_claim(current_user):
 
     try:
         with db.get_db() as session:
-            # One account per in-game identity. This is the only real gate now
-            # that approval is automatic.
-            already_linked = (session.query(Character)
-                              .filter_by(server_id=server_id, in_game_username=username, verified=True)
-                              .first())
-            if already_linked:
-                return jsonify({'error': 'That character is already linked to an account'}), 409
-
-            character = Character(
-                user_id=current_user['user_id'],
-                name=username,
-                server_id=server_id,
-                in_game_username=username,
-                verified=True
-            )
-            if game_status == 200:
-                # A stale copy is an older save, with lower counts than the
-                # character has now; starting from it would pay for the gap.
-                coins.baseline(character, coins.reading_from_entry(game_data, allow_stale=False))
-            session.add(character)
-            session.flush()  # obtain character.id
-
-            # The claim row is kept as the record of how the link came about.
-            claim = ClaimRequest(
-                user_id=current_user['user_id'],
-                server_id=server_id,
-                in_game_username=username,
-                status=ClaimRequest.STATUS_APPROVED,
-                character_id=character.id,
-                reviewed_at=datetime.utcnow()
-            )
-            session.add(claim)
-            session.flush()
-
-            # actor None = the system decided this, not a staff member.
-            audit.record(session, None, 'claim.auto_approve',
-                         target=f'claim:{claim.id}',
-                         detail=f"linked {username}@server{server_id} to user "
-                                f"{current_user['user_id']} (online check passed)")
-
-            notify.send(session, current_user['user_id'], Notification.KIND_CLAIM,
-                        f'{username} is linked to your account',
-                        body='You can send rewards to this character while it is online.',
-                        link='/characters')
-
-            alerting.emit('character.linked',
-                          f'{username} is now linked to an account',
-                          server_id=server_id,
-                          fields=[('Character', username),
-                                  ('Account', current_user.get('username'))])
-
+            claim, character, error = link_character(
+                session, current_user['user_id'], current_user.get('username'),
+                server_id, username, game_data, game_status)
+            if error:
+                return jsonify({'error': error}), 409
             return jsonify({
                 'message': 'Character linked to your account',
                 'claim': claim.to_dict(),
@@ -135,3 +89,75 @@ def create_claim(current_user):
     except Exception as e:
         logger.error(f"Create claim error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+def link_character(session, user_id, account_name, server_id, username,
+                   game_data, game_status, actor_id=None):
+    """Link an in-game identity to an account: ``(claim, character, error)``.
+
+    Shared by a player's own claim (``actor_id`` None - the online check made
+    the decision) and a staff link (``actor_id`` the admin). ``game_data`` and
+    ``game_status`` are `character_info.fetch` for the identity, read before the
+    transaction since it asks the game-server; it sets the coin baseline, so only
+    what the character does from now on earns coins. Without an answer the first
+    settlement sets the baseline instead.
+    """
+    # One account per in-game identity - the only real gate now that approval
+    # is automatic.
+    already_linked = (session.query(Character)
+                      .filter_by(server_id=server_id, in_game_username=username, verified=True)
+                      .first())
+    if already_linked:
+        return None, None, 'That character is already linked to an account'
+
+    character = Character(
+        user_id=user_id,
+        name=username,
+        server_id=server_id,
+        in_game_username=username,
+        verified=True
+    )
+    if game_status == 200:
+        # A stale copy is an older save, with lower counts than the character
+        # has now; starting from it would pay for the gap.
+        coins.baseline(character, coins.reading_from_entry(game_data, allow_stale=False))
+    session.add(character)
+    session.flush()  # obtain character.id
+
+    # The claim row is kept as the record of how the link came about.
+    claim = ClaimRequest(
+        user_id=user_id,
+        server_id=server_id,
+        in_game_username=username,
+        status=ClaimRequest.STATUS_APPROVED,
+        character_id=character.id,
+        reviewed_by=actor_id,
+        reviewed_at=datetime.utcnow()
+    )
+    session.add(claim)
+    session.flush()
+
+    identity = f"{username}@server{server_id}"
+    if actor_id is None:
+        # actor None = the system decided this, not a staff member.
+        audit.record(session, None, 'claim.auto_approve',
+                     target=f'claim:{claim.id}',
+                     detail=f"linked {identity} to user {user_id} (online check passed)")
+    else:
+        audit.record(session, actor_id, 'claim.staff_link',
+                     target=f'claim:{claim.id}',
+                     detail=f"linked {identity} to user {user_id}")
+
+    notify.send(session, user_id, Notification.KIND_CLAIM,
+                f'{username} is linked to your account',
+                body='You can send rewards to this character while it is online.',
+                link='/characters')
+
+    alerting.emit('character.linked',
+                  f'{username} is now linked to an account',
+                  server_id=server_id,
+                  fields=[('Character', username),
+                          ('Account', account_name),
+                          ('Linked by', 'staff' if actor_id is not None else 'online check')])
+
+    return claim, character, None

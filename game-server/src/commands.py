@@ -35,6 +35,7 @@ __all__ = [
     'parse_reward_commands', 'render_command', 'reward_requires_online',
     'REWARD_MAX_STEPS', 'REWARD_MAX_COMMAND_LEN',
     'SLEEP_MAX_SECONDS', 'SLEEP_TOTAL_MAX_SECONDS',
+    'BUNDLE_MAX', 'USABLE_BUNDLE_MAX', 'parse_bundles', 'pack_item_bundles',
 ]
 
 
@@ -192,3 +193,75 @@ def reward_requires_online(steps):
     """
     return any(step['type'] == 'command' and _PLACEHOLDER_RE.search(step['text'])
                for step in steps)
+
+
+# ---------------------------------------------------------------------------
+# Stack deliveries: several inventory bundles in one task
+# ---------------------------------------------------------------------------
+
+# How many bundles one delivery task may carry. The task worker is a single
+# queue every player's delivery waits behind, so a stack is bounded the same way
+# a reward sequence is. Usables are tighter: each bundle runs the whole
+# sequence, sleeps included, so five of them can already hold the queue for
+# minutes.
+BUNDLE_MAX = 20
+USABLE_BUNDLE_MAX = 5
+
+
+def _whole(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def parse_bundles(bundles, kind):
+    """Validate a stack delivery's bundles into ``[(ref, count), ...]``.
+
+    A bundle is one inventory holding: ``ref`` is the backend's id for it, which
+    is only echoed back (as ``delivered_refs``) and never reaches the console,
+    and ``count`` is how many of the item it holds. A usable bundle runs its
+    sequence once, so its count is always 1 whatever was sent.
+    """
+    if not isinstance(bundles, list) or not bundles:
+        raise CommandError('bundles must be a non-empty list')
+    limit = USABLE_BUNDLE_MAX if kind == 'usable' else BUNDLE_MAX
+    if len(bundles) > limit:
+        raise CommandError(f'at most {limit} bundles per delivery')
+    parsed = []
+    seen = set()
+    for bundle in bundles:
+        if not isinstance(bundle, dict):
+            raise CommandError('invalid bundle')
+        ref = bundle.get('ref')
+        count = bundle.get('count', 1)
+        if not _whole(ref):
+            raise CommandError('invalid bundle ref')
+        if ref in seen:
+            raise CommandError('duplicate bundle ref')
+        if not _whole(count) or count < 1 or count > MAX_COUNT:
+            raise CommandError('bundle count out of range')
+        seen.add(ref)
+        parsed.append((ref, 1 if kind == 'usable' else count))
+    return parsed
+
+
+def pack_item_bundles(bundles, limit=None):
+    """Pack item bundles into console lines of at most ``limit`` items each.
+
+    Takes ``parse_bundles`` output and returns a list of lines, each a list of
+    ``(ref, count)``. A bundle is never split across two lines, so when a line
+    fails to land the bundles in it are exactly the ones that did not arrive -
+    which is what lets a partly delivered stack hand back only what is still
+    owed, instead of all of it.
+    """
+    limit = MAX_COUNT if limit is None else limit
+    lines = []
+    current = []
+    total = 0
+    for ref, count in bundles:
+        if current and total + count > limit:
+            lines.append(current)
+            current, total = [], 0
+        current.append((ref, count))
+        total += count
+    if current:
+        lines.append(current)
+    return lines

@@ -181,6 +181,34 @@ REGISTRY = {
         'validate': lambda value: _validate_retention(value, 2),
     },
 
+    # --- Leaderboard ---------------------------------------------------------
+    # `group: 'leaderboard'` keeps these off the Settings screen: they are
+    # edited beside the leaderboard itself, where their effect is visible.
+    'leaderboard_visibility': {
+        'config': 'LEADERBOARD_VISIBILITY',
+        'type': 'str',
+        'group': 'leaderboard',
+        'label': 'Who can see the leaderboard',
+        'help': 'Public: everyone, signed in or not. Signed in: players with an '
+                'account. Disabled: staff only, here in the admin panel.',
+        'validate': lambda value: _validate_choice(value, LEADERBOARD_VISIBILITIES),
+    },
+    'leaderboard_hide_banned': {
+        'config': 'LEADERBOARD_HIDE_BANNED',
+        'type': 'bool',
+        'group': 'leaderboard',
+        'label': 'Hide banned players',
+        'help': 'Leave out characters linked to a banned account.',
+    },
+    'leaderboard_excluded': {
+        'type': 'text',
+        'default': '',
+        'group': 'leaderboard',
+        'label': 'Excluded usernames',
+        'help': 'One per line. Matches the in-game username a character belongs '
+                'to, or the site account it is linked to, without case.',
+    },
+
     # --- Mail ---------------------------------------------------------------
     # No `config` key: the environment default for these lives in the
     # *game-server* container, which is the one that can reach a mail server.
@@ -373,6 +401,15 @@ _CACHE_TTL_SECONDS = 15
 # down, not about caching an answer.
 _FAILURE_TTL_SECONDS = 2
 _cache = {'values': None, 'at': 0.0}
+
+
+LEADERBOARD_VISIBILITIES = ('public', 'authenticated', 'disabled')
+
+
+def _validate_choice(value, choices):
+    if str(value or '').strip().lower() not in choices:
+        return 'must be one of ' + ', '.join(choices)
+    return None
 
 
 def _validate_clock(value):

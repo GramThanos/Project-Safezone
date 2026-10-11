@@ -9,8 +9,8 @@ The properties worth pinning:
     A counter that drops without a new name, or a name seen before, is a
     restored backup or a rollback: it starts again from where it stands and
     pays nothing - so a restored world is never paid twice.
-  * **A reward sells once.** Its coin value, whatever its count; a split send
-    keeps the value with the part left behind.
+  * **A reward sells once.** Its coin value per bundle, whatever the bundle
+    holds; a bundle is never split, so it cannot be sold in pieces.
   * **Buying and selling back can never make coins**, and a daily limit holds.
   * **Every gain is logged**, and the daily report sums yesterday from the log.
 """
@@ -242,24 +242,10 @@ class TestSelling(RouteCase):
                         json={'ids': [delivered, lapsed, sending]})
         self.assertEqual(res.get_json(), {'removed': 2, 'coins': 0, 'balance': 100})
 
-    def test_a_split_send_keeps_the_value_with_what_stays(self):
-        self.session.add(Character(id=10, user_id=1, name='thanos', server_id=1,
-                                   in_game_username='thanos', verified=True))
-        self.session.commit()
-        item = self.held(count=10)
-        with mock.patch('src.routes.inventory.is_player_online', return_value=True), \
-                mock.patch('src.routes.inventory.gs_request', return_value=({'data': {'id': 7}}, 201)):
-            res = self.call('POST', f'/api/inventory/{item}/send',
-                            json={'character_id': 10, 'count': 3})
-        self.assertEqual(res.status_code, 200, res.get_json())
-        sent = self.session.get(InventoryItem, item)
-        rest = self.session.query(InventoryItem).filter(InventoryItem.id != item).one()
-        self.assertFalse(sent.sellable)
-        self.assertTrue(rest.sellable)
-        # The delivery comes back: the reward is still only worth its value once.
-        sent.status = InventoryItem.STATUS_FAILED
-        self.session.commit()
-        res = self.call('POST', '/api/inventory/remove', json={'ids': [item, rest.id]})
+    def test_a_bundle_that_came_back_still_sells_once(self):
+        """Sent whole and returned: the same holding, worth its value once."""
+        item = self.held(count=10, status=InventoryItem.STATUS_FAILED)
+        res = self.call('POST', '/api/inventory/remove', json={'ids': [item]})
         self.assertEqual(res.get_json()['coins'], 2)
 
     def test_with_coins_off_discarding_is_just_discarding(self):

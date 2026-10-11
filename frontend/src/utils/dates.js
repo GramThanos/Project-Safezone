@@ -53,3 +53,7 @@ export const formatDate = (value, fallback = '') =>
 
 export const formatTime = (value, fallback = '') =>
   format(value, { hour: '2-digit', minute: '2-digit' }, fallback);
+
+// Weekday, day of the month and time, e.g. "Sun 11, 09:15".
+export const formatDayTime = (value, fallback = '') =>
+  format(value, { weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }, fallback);

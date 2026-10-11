@@ -9,6 +9,7 @@ import usePageTitle from '../hooks/usePageTitle';
 import ConfirmDialog from '../components/ConfirmDialog';
 import TwoFactorSettings from '../components/TwoFactorSettings';
 import NotificationSettings from '../components/NotificationSettings';
+import CoinWallet from '../components/CoinWallet';
 import { formatDate } from '../utils/dates';
 
 function Profile() {
@@ -206,6 +207,9 @@ function Profile() {
                 </div>
               </div>
             </div>
+
+            {/* Hidden until the default password is changed, like everything it links to */}
+            {!mustChange && <CoinWallet className="mb-4" />}
 
             <div className="card mb-4">
               <div className="card-body p-4">

@@ -429,6 +429,18 @@ export const api = {
     }
   },
 
+  // The leaderboard of living characters. Public, signed-in only or off, as
+  // the admin sets it - so pass a token if the visitor has one.
+  leaderboard: {
+    get: async (token, serverId) => {
+      const query = serverId ? `?server_id=${encodeURIComponent(serverId)}` : '';
+      const response = await fetch(`${API_URL}/api/leaderboard${query}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      return handleResponse(response);
+    }
+  },
+
   // Loot box endpoints
   boxes: {
     // Public: what each box can contain and how likely each reward is.
@@ -480,18 +492,16 @@ export const api = {
       });
       return handleResponse(response);
     },
-    // `count` sends only part of a holding; the rest stays in the inventory.
-    // Omitted, the whole holding goes.
-    send: async (token, id, characterId, count) => {
-      const response = await fetch(`${API_URL}/api/inventory/${id}/send`, {
+    // Sends whole bundles of one reward - one stack - as a single delivery.
+    // `ids` are the bundles; they must be the same reward in the same amount.
+    send: async (token, ids, characterId) => {
+      const response = await fetch(`${API_URL}/api/inventory/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(
-          count === undefined ? { character_id: characterId } : { character_id: characterId, count }
-        )
+        body: JSON.stringify({ ids, character_id: characterId })
       });
       return handleResponse(response);
     },
@@ -788,6 +798,16 @@ export const api = {
       test: async (token, id) => {
         const response = await fetch(`${API_URL}/api/admin/alerts/channels/${id}/test`, {
           method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      }
+    },
+    // The whole board, hidden characters included and marked why.
+    leaderboard: {
+      get: async (token, serverId) => {
+        const query = serverId ? `?server_id=${encodeURIComponent(serverId)}` : '';
+        const response = await fetch(`${API_URL}/api/admin/leaderboard${query}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         return handleResponse(response);
@@ -1415,6 +1435,25 @@ export const api = {
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({ reason })
+        });
+        return handleResponse(response);
+      },
+      // Characters in the servers' saves that no account is linked to.
+      getUnlinked: async (token) => {
+        const response = await fetch(`${API_URL}/api/admin/claims/unlinked`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return handleResponse(response);
+      },
+      // Admin only: link a saved character to an account, named by its username.
+      link: async (token, serverId, inGameUsername, username) => {
+        const response = await fetch(`${API_URL}/api/admin/claims/link`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ server_id: serverId, in_game_username: inGameUsername, username })
         });
         return handleResponse(response);
       }

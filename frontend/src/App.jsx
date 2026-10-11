@@ -43,6 +43,7 @@ const ForgotPassword = page(() => import('./pages/ForgotPassword'));
 const ResetPassword = page(() => import('./pages/ResetPassword'));
 const VerifyEmail = page(() => import('./pages/VerifyEmail'));
 const Servers = page(() => import('./pages/Servers'));
+const Leaderboard = page(() => import('./pages/Leaderboard'));
 const LegalPage = page(() => import('./pages/LegalPage'));
 const Characters = page(() => import('./pages/Characters'));
 const Rewards = page(() => import('./pages/Rewards'));
@@ -75,6 +76,7 @@ const AdminJobs = page(() => import('./pages/admin/Jobs'));
 const AdminReports = page(() => import('./pages/admin/Reports'));
 const AdminInvitations = page(() => import('./pages/admin/Invitations'));
 const AdminAlerts = page(() => import('./pages/admin/Alerts'));
+const AdminLeaderboard = page(() => import('./pages/admin/Leaderboard'));
 
 
 function App() {
@@ -98,6 +100,8 @@ function App() {
 								<Route path="/reset-password" element={<ResetPassword />} />
 								<Route path="/verify" element={<VerifyEmail />} />
 								<Route path="/servers" element={<Servers />} />
+								{/* Not a ProtectedRoute: whether it needs a sign-in is a setting. */}
+								<Route path="/leaderboard" element={<Leaderboard />} />
 								<Route path="/me" element={<Me />} />
 								{/* One component, three documents. */}
 								<Route path="/rules" element={<LegalPage slug="rules" />} />
@@ -169,6 +173,7 @@ function App() {
 									<Route path="users" element={<AdminUsers />} />
 									<Route path="users/:userId" element={<AdminUserManage />} />
 									<Route path="claims" element={<AdminClaims />} />
+									<Route path="leaderboard" element={<AdminLeaderboard />} />
 									<Route path="rewards" element={<AdminRewards />} />
 									<Route path="boxes" element={<AdminBoxes />} />
 									<Route path="shop" element={<AdminShop />} />

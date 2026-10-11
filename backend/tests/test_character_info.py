@@ -13,6 +13,9 @@ The properties worth pinning:
     marked stale; a 404 is authoritative and replaces the copy.
   * **Only the owner, and staff.** Another player's character is refused, an
     unlinked one has nothing to show, and the staff route is moderator-only.
+  * **Unlinked characters.** Staff see the saved characters nobody is linked
+    to (compared without case); only an admin can link one, only to a real
+    account, and only if the save holds it and nobody has it already.
 """
 import os
 import sys
@@ -199,6 +202,12 @@ class TestFetch(unittest.TestCase):
         self.assertEqual(self.calls, ['/api/servers/1/characters/..%2F..%2Ftasks%3Fx%3D1'])
 
 
+class TestUnlinked(unittest.TestCase):
+    def test_linked_names_are_left_out_without_case(self):
+        saved = [{'username': 'Thanos'}, {'username': 'alice'}, {'username': None}]
+        self.assertEqual(character_info.unlinked(saved, ['thanos']), [{'username': 'alice'}])
+
+
 class TestRoutes(unittest.TestCase):
     def setUp(self):
         engine = create_engine('sqlite://')
@@ -207,7 +216,8 @@ class TestRoutes(unittest.TestCase):
         self.session = sessionmaker(bind=engine, expire_on_commit=False)()
         self.addCleanup(self.session.close)
 
-        for uid, name, role in ((1, 'alice', 'player'), (2, 'bob', 'player'), (3, 'mod', 'moderator')):
+        for uid, name, role in ((1, 'alice', 'player'), (2, 'bob', 'player'), (3, 'mod', 'moderator'),
+                                (4, 'root', 'admin'), (5, 'gone', 'banned')):
             self.session.add(User(id=uid, username=name, email=f'{name}@example.test',
                                   password_hash='x', role=role))
         self.session.add(Character(id=10, user_id=1, name='thanos', server_id=1,
@@ -233,10 +243,29 @@ class TestRoutes(unittest.TestCase):
                 ('src.database.db.get_db', {'side_effect': get_db}),
                 ('src.middleware.auth._apply_live_authorisation', {'return_value': None}),
                 ('src.utils.settings.get', {'side_effect': RuntimeError('no db')}),
-                ('src.utils.character_info.fetch', {'return_value': (entry, 200)})):
+                ('src.utils.character_info.fetch', {'return_value': (entry, 200)}),
+                ('src.utils.alerting.emit', {'return_value': None}),
+                ('src.routes.admin.gs_request', {'side_effect': self.game_server})):
             patcher = mock.patch(target, **kwargs)
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def game_server(self, method, path, **kwargs):
+        if path == '/api/servers':
+            return {'data': [{'id': 1, 'name': 'one'}, {'id': 2, 'name': 'two'}]}, 200
+        if path == '/api/servers/1/characters':
+            return {'data': {'saved_at': 's', 'characters': [
+                {'username': 'THANOS', 'name': 'Da Sheep'},
+                {'username': 'bob', 'name': 'Bobby'},
+                {'username': 'odd name', 'name': 'Spaced'}]}}, 200
+        if path == '/api/servers/2/characters':
+            return {'error': 'The server has no saved characters yet'}, 404
+        return {'data': {}}, 200
+
+    def post(self, url, body, user_id, username, role):
+        with self.app.test_request_context():
+            token = auth.generate_token(user_id, username, role, 0)
+        return self.client.post(url, json=body, headers={'Authorization': f'Bearer {token}'})
 
     def get(self, url, user_id, username, role):
         with self.app.test_request_context():
@@ -268,6 +297,65 @@ class TestRoutes(unittest.TestCase):
     def test_the_staff_route_refuses_players(self):
         response = self.get('/api/admin/characters/10/game', 1, 'alice', 'player')
         self.assertEqual(response.status_code, 403)
+
+    def test_staff_see_the_unlinked_characters(self):
+        response = self.get('/api/admin/claims/unlinked', 3, 'mod', 'moderator')
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        rows = {c['username']: c for c in body['characters']}
+        self.assertEqual(set(rows), {'bob', 'odd name'})
+        self.assertEqual(rows['bob']['suggested_user'], {'id': 2, 'username': 'bob'})
+        self.assertTrue(rows['bob']['linkable'])
+        self.assertFalse(rows['odd name']['linkable'])
+        self.assertIsNone(rows['odd name']['suggested_user'])
+        self.assertEqual([s['error'] for s in body['servers']], [None, None])
+
+    def test_an_admin_links_a_saved_character(self):
+        from src.models.audit_log import AuditLog
+        from src.models.claim_request import ClaimRequest
+        response = self.post('/api/admin/claims/link',
+                             {'server_id': 1, 'in_game_username': 'bob', 'user_id': 2},
+                             4, 'root', 'admin')
+        self.assertEqual(response.status_code, 201)
+        character = self.session.query(Character).filter_by(in_game_username='bob').one()
+        self.assertTrue(character.verified)
+        self.assertEqual(character.user_id, 2)
+        claim = self.session.query(ClaimRequest).filter_by(character_id=character.id).one()
+        self.assertEqual(claim.reviewed_by, 4)
+        self.assertEqual(self.session.query(AuditLog).filter_by(action='claim.staff_link').count(), 1)
+
+    def test_the_account_can_be_named_by_username(self):
+        response = self.post('/api/admin/claims/link',
+                             {'server_id': 1, 'in_game_username': 'bob', 'username': 'BOB'},
+                             4, 'root', 'admin')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.get_json()['character']['user_id'], 2)
+
+    def test_linking_is_admin_only(self):
+        response = self.post('/api/admin/claims/link',
+                             {'server_id': 1, 'in_game_username': 'bob', 'user_id': 2},
+                             3, 'mod', 'moderator')
+        self.assertEqual(response.status_code, 403)
+
+    def test_a_linked_character_cannot_be_linked_again(self):
+        response = self.post('/api/admin/claims/link',
+                             {'server_id': 1, 'in_game_username': 'thanos', 'user_id': 2},
+                             4, 'root', 'admin')
+        self.assertEqual(response.status_code, 409)
+
+    def test_a_banned_or_missing_account_is_refused(self):
+        for user_id, status in ((5, 409), (99, 404)):
+            response = self.post('/api/admin/claims/link',
+                                 {'server_id': 1, 'in_game_username': 'bob', 'user_id': user_id},
+                                 4, 'root', 'admin')
+            self.assertEqual(response.status_code, status)
+
+    def test_a_character_missing_from_the_save_is_refused(self):
+        with mock.patch('src.utils.character_info.fetch', return_value=({'error': 'no'}, 404)):
+            response = self.post('/api/admin/claims/link',
+                                 {'server_id': 1, 'in_game_username': 'bob', 'user_id': 2},
+                                 4, 'root', 'admin')
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == '__main__':

@@ -26,6 +26,7 @@ from src.routes.reports import reports_bp
 from src.routes.push import push_bp
 from src.routes.shop import coins_bp, shop_bp
 from src.routes.shop_admin import shop_admin_bp
+from src.routes.leaderboard import leaderboard_bp, leaderboard_admin_bp
 from src.database import db
 from src.utils.redis_utils import get_redis_connection
 from src.utils.game_server import gs_request
@@ -98,6 +99,8 @@ app.register_blueprint(push_bp)
 app.register_blueprint(coins_bp)
 app.register_blueprint(shop_bp)
 app.register_blueprint(shop_admin_bp)
+app.register_blueprint(leaderboard_bp)
+app.register_blueprint(leaderboard_admin_bp)
 
 
 @app.route('/')

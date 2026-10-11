@@ -195,13 +195,22 @@ def record_player_count(server_id, count):
 def get_player_history(server_id, hours=24, bucket_minutes=15):
     """Return the online-player history for a server as time buckets.
 
-    Samples are averaged into fixed-width buckets so the chart has a stable
-    number of points regardless of how often the roster worker polled. Returns
-    a list of ``{'t': iso_timestamp, 'count': int}`` ordered oldest first.
+    Every bucket in the window is returned, oldest first, as
+    ``{'t': iso_timestamp_utc, 'count': int}`` - so the chart spans the whole
+    window at true spacing. A bucket with no samples is 0: samples are only
+    written while the game is running, so a stopped or sleeping server has
+    nobody on it. A bucket's count is the peak seen in it rather than the
+    average, so a player on for five minutes still shows.
+
+    ``created_at`` is naive, in the database's clock, which compose sets to
+    the same ``TZ`` as this container; ``timestamp()`` reads it in that zone.
+    The output carries an explicit UTC offset so the browser can show it in
+    the viewer's own zone.
     """
     hours = max(1, min(int(hours), 24 * 7))
     bucket_minutes = max(1, int(bucket_minutes))
-    since = datetime.datetime.now() - datetime.timedelta(hours=hours)
+    now = datetime.datetime.now()
+    since = now - datetime.timedelta(hours=hours)
 
     with database.get_context_session() as session:
         rows = session.query(
@@ -212,23 +221,32 @@ def get_player_history(server_id, hours=24, bucket_minutes=15):
             models.ServerPlayerCount.created_at >= since
         ).order_by(models.ServerPlayerCount.created_at.asc()).all()
 
+    return bucket_player_counts(rows, since, now, bucket_minutes)
+
+
+def bucket_player_counts(rows, since, now, bucket_minutes):
+    """Snap ``(count, created_at)`` samples into every bucket from ``since``
+    to ``now`` (naive, local), taking each bucket's peak; empty ones are 0."""
     bucket_seconds = bucket_minutes * 60
-    buckets = {}
+
+    def bucket_of(moment):
+        epoch = int(moment.timestamp())
+        return epoch - (epoch % bucket_seconds)
+
+    peaks = {}
     for count, created_at in rows:
         if not created_at:
             continue
-        # Snap each sample to the start of its bucket.
-        epoch = int(created_at.timestamp())
-        start = epoch - (epoch % bucket_seconds)
-        total, n = buckets.get(start, (0, 0))
-        buckets[start] = (total + (count or 0), n + 1)
+        start = bucket_of(created_at)
+        peaks[start] = max(peaks.get(start, 0), count or 0)
 
+    first, last = bucket_of(since), bucket_of(now)
     return [
         {
-            't': datetime.datetime.fromtimestamp(start).isoformat(),
-            'count': round(total / n)
+            't': datetime.datetime.fromtimestamp(start, tz=datetime.timezone.utc).isoformat(),
+            'count': peaks.get(start, 0)
         }
-        for start, (total, n) in sorted(buckets.items())
+        for start in range(first, last + bucket_seconds, bucket_seconds)
     ]
 
 

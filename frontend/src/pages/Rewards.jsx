@@ -35,6 +35,33 @@ const STATUS = {
 // the player should not have to reload to learn it landed.
 const DELIVERY_POLL_MS = 4000;
 
+// How many bundles one send may carry, until the server says otherwise.
+const SEND_MAX = { item: 20, usable: 5 };
+
+// What one bundle holds. A usable runs once, whatever its row says.
+const perBundle = (item) => (item.reward?.kind === 'usable' ? 1 : (item.count || 1));
+
+// How a number of bundles reads: "Bandage", "Bandage ×5", "3 × Bandage ×5".
+// The number after the name is what one bundle holds and the one before it is
+// how many bundles - the same words the server uses in its messages, because
+// three drops of five bandages are not one drop of fifteen.
+const bundleLabel = (reward, per, n = 1) => {
+  const name = `${reward?.name || 'Reward'}${per > 1 ? ` ×${per}` : ''}`;
+  return n > 1 ? `${n} × ${name}` : name;
+};
+
+// Soonest deadline first, then oldest: the order bundles are sent and sold in,
+// so what stays behind is what lasts longest.
+const bySoonest = (a, b) => {
+  if (a.expires_at && b.expires_at) {
+    const diff = parseDate(a.expires_at) - parseDate(b.expires_at);
+    if (diff) return diff;
+  } else if (a.expires_at || b.expires_at) {
+    return a.expires_at ? -1 : 1;
+  }
+  return a.id - b.id;
+};
+
 // A deadline is only useful if it reads like one.
 const expiresIn = (iso) => {
   const ms = parseDate(iso).getTime() - Date.now();
@@ -52,8 +79,9 @@ function Rewards() {
   const { boxes, streak, coins, refresh, refreshCounts, setBalance } = usePlayer();
 
   const [inventory, setInventory] = useState([]);
+  const [sendMax, setSendMax] = useState(SEND_MAX);
   const [sending, setSending] = useState(null);       // the group whose send modal is open
-  const [discarding, setDiscarding] = useState(null); // the group awaiting a discard confirm
+  const [discarding, setDiscarding] = useState(null); // the group whose next bundle awaits a sell/discard confirm
   const [reveal, setReveal] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -68,6 +96,7 @@ function Rewards() {
     try {
       const data = await api.inventory.list(token);
       setInventory(data.inventory || []);
+      if (data.send_max) setSendMax(data.send_max);
       setError('');
     } catch (err) {
       console.error('Load inventory error:', err);
@@ -90,18 +119,26 @@ function Rewards() {
   }, [inFlight]);
 
   // Announce arrivals: compare each reload against what was in flight before.
+  // One toast per delivery and outcome, not per bundle - a stack of five sent
+  // together is one thing to the player, and a delivery that stopped part-way
+  // says both what arrived and what came back.
   const [wasSending, setWasSending] = useState([]);
   useEffect(() => {
-    const sending = inventory.filter((i) => i.status === 'sending').map((i) => i.id);
-    const landed = wasSending.filter((id) => !sending.includes(id));
-    landed.forEach((id) => {
+    const sending = new Set(inventory.filter((i) => i.status === 'sending').map((i) => i.id));
+    const outcomes = new Map();
+    wasSending.filter((id) => !sending.has(id)).forEach((id) => {
       const item = inventory.find((i) => i.id === id);
       if (!item) return;
-      const name = item.reward?.name || 'Your reward';
-      if (item.status === 'delivered') push(`${name} arrived in game.`, { kind: 'success' });
-      if (item.status === 'failed') push(`${name} could not be delivered.`, { kind: 'error' });
+      const key = `${item.task_id ?? `row${item.id}`}|${item.status}`;
+      if (!outcomes.has(key)) outcomes.set(key, []);
+      outcomes.get(key).push(item);
     });
-    setWasSending(sending);
+    outcomes.forEach((items) => {
+      const what = bundleLabel(items[0].reward, perBundle(items[0]), items.length);
+      if (items[0].status === 'delivered') push(`${what} arrived in game.`, { kind: 'success' });
+      else push(`${what} came back to your inventory - it could not be delivered.`, { kind: 'error' });
+    });
+    setWasSending([...sending]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inventory]);
 
@@ -123,106 +160,71 @@ function Rewards() {
     setBusy(null);
   };
 
-  const sendOne = async (itemId, characterId, count) => {
-    await api.inventory.send(token, itemId, parseInt(characterId, 10), count);
-  };
-
-  // Stack identical rewards. Two items are "the same" when they are the same
-  // reward in the same state — a pile of three held axes reads as one box ×3,
-  // not three near-duplicate rows. Status is part of the key so a delivered
-  // axe never merges with one still waiting to send.
+  // Stack identical bundles. Two holdings are "the same" when they are the same
+  // reward, holding the same amount, in the same state - three drops of five
+  // bandages are one stack of three bundles, while a drop of ten is a stack of
+  // its own, because sending "one" of each means different things. Status is
+  // part of the key so a delivered axe never merges with one still waiting.
   const inventoryGroups = React.useMemo(() => {
     const map = new Map();
     for (const item of inventory) {
-      const key = `${item.reward_id}|${item.status}`;
+      const per = perBundle(item);
+      const key = `${item.reward_id}|${per}|${item.status}`;
       if (!map.has(key)) {
         map.set(key, {
           key, status: item.status, reward: item.reward,
-          reward_id: item.reward_id, items: [], quantity: 0, soonest: null
+          reward_id: item.reward_id, per, items: []
         });
       }
-      const group = map.get(key);
-      group.items.push(item);
-      // What the player actually receives, which is not the number of rows: a
-      // single holding can deliver five of an item, because the quantity lives
-      // on the box's loot pool entry and was captured here when the box was
-      // opened. Counting rows showed five bandages as "×1".
-      group.quantity += item.count || 1;
-      // Surface the nearest deadline so a stack warns as early as its most
-      // urgent member would have.
-      if (item.expires_at && item.status === 'held'
-        && (!group.soonest || parseDate(item.expires_at) < parseDate(group.soonest))) {
-        group.soonest = item.expires_at;
-      }
+      map.get(key).items.push(item);
     }
-    return Array.from(map.values());
+    return Array.from(map.values()).map((group) => {
+      const items = group.items.sort(bySoonest);
+      // The nearest deadline, so a stack warns as early as its most urgent
+      // bundle would have.
+      const soonest = group.status === 'held' ? items.find((i) => i.expires_at)?.expires_at : null;
+      return { ...group, bundles: items.length, soonest: soonest || null };
+    });
   }, [inventory]);
 
-  // How many of a holding arrive in game. A usable runs once per holding,
-  // whatever its count says.
-  const unitsOf = (item) => (item.reward?.kind === 'usable' ? 1 : (item.count || 1));
-
-  // Sends `amount` units out of a stack, which may be fewer than it holds.
-  // Whole holdings go first, the one that would overshoot is split (the
-  // server keeps the remainder as its own row), and the soonest to expire go
-  // first so what stays behind is what lasts longest. The sent part leaves
-  // 'held' and reappears under 'sending'; anything that failed stays here.
+  // Sends `amount` bundles out of a stack as one delivery: the soonest to
+  // expire go, so what stays behind is what lasts longest. The server checks
+  // every bundle before dispatching any, so it all goes or none of it does.
   const handleSendGroup = async (group, target, amount) => {
     setError('');
     setBusy(group.key);
-    const items = [...group.items].sort((a, b) => {
-      if (!a.expires_at || !b.expires_at) return (a.expires_at ? -1 : 0) + (b.expires_at ? 1 : 0);
-      return parseDate(a.expires_at) - parseDate(b.expires_at);
-    });
-    // Counted in units delivered, not holdings sent: one holding can carry
-    // several of an item, and "Sending 2 × Bandage" for six bandages is wrong.
-    let remaining = amount;
-    let quantity = 0;
-    let lastError = null;
-    for (const item of items) {
-      if (remaining <= 0) break;
-      const units = unitsOf(item);
-      const take = Math.min(units, remaining);
-      try {
-        await sendOne(item.id, target, take < units ? take : undefined);
-        quantity += take;
-      } catch (err) {
-        console.error('Send item error:', err);
-        lastError = err;
-      }
-      remaining -= take;
+    const what = bundleLabel(group.reward, group.per, amount);
+    try {
+      await api.inventory.send(token, group.items.slice(0, amount).map((i) => i.id),
+        parseInt(target, 10));
+      push(`Sending ${what}…`, { kind: 'info' });
+    } catch (err) {
+      console.error('Send items error:', err);
+      push(err.message || `Could not send ${what}.`, { kind: 'error' });
     }
-    const name = group.reward?.name || 'your reward';
-    push(quantity === amount
-      ? (quantity === 1 ? `Sending ${name}…` : `Sending ${quantity} × ${name}…`)
-      : quantity === 0
-        ? (lastError?.message || `Could not send ${name}.`)
-        : `Sent ${quantity} of ${amount} ${name}. The rest are still here.`,
-    { kind: quantity === amount ? 'info' : 'error' });
     setBusy(null);
     setSending(null);
     loadInventory();
     refreshCounts();
   };
 
-  // What a stack sells back for, as the server worked it out. Zero when coins
+  // A bundle's worth when sold, as the server worked it out. Zero when coins
   // are off or the reward has no value, and then discarding is just that.
-  const sellValueOf = (group) => (coins.enabled
-    ? group.items.reduce((sum, item) => sum + (item.sell_value || 0), 0)
-    : 0);
+  const sellValueOf = (item) => (coins.enabled && item ? item.sell_value || 0 : 0);
 
-  // Unsent rewards are thrown away - or sold, with coins on - after a confirm;
-  // used and expired ones are just cleared off the page. All the same call.
-  const removeGroup = async (group) => {
+  // Selling or discarding takes one bundle - the next to expire - after a
+  // confirm that says exactly which and what is left. Used and expired ones
+  // are only cleared off the page, all of a stack at once, with no confirm.
+  const removeItems = async (group, items) => {
     setError('');
     setBusy(`x:${group.key}`);
     try {
-      const data = await api.inventory.remove(token, group.items.map((i) => i.id));
-      const gone = new Set(group.items.map((i) => i.id));
+      const data = await api.inventory.remove(token, items.map((i) => i.id));
+      const gone = new Set(items.map((i) => i.id));
       setInventory((current) => current.filter((i) => !gone.has(i.id)));
       setBalance(data.balance);
       if (data.coins > 0) {
-        push(`Sold ${group.reward?.name || 'reward'} for ${data.coins} ${coinWord(data.coins)}.`,
+        push(`Sold ${bundleLabel(group.reward, group.per, items.length)} for ${data.coins} ${coinWord(data.coins)}.`,
           { kind: 'success' });
       }
     } catch (err) {
@@ -235,7 +237,7 @@ function Rewards() {
 
   const onRemove = (group) => {
     if (group.status === 'held' || group.status === 'failed') setDiscarding(group);
-    else removeGroup(group);
+    else removeItems(group, group.items);
   };
 
   return (
@@ -365,21 +367,17 @@ function Rewards() {
               const status = STATUS[group.status] || { label: group.status, badge: 'secondary' };
               const deadline = group.soonest ? expiresIn(group.soonest) : null;
               const canSend = group.status === 'held' || group.status === 'failed';
-              // `holdings` is how many separate sends this button makes;
-              // `quantity` is how many of the item arrive in game. They differ
-              // whenever a box drops an item in multiples.
-              const holdings = group.items.length;
               const name = group.reward?.name || `Reward #${group.reward_id}`;
               const isUsable = group.reward?.kind === 'usable';
-              // A usable runs once per holding, so its quantity is its holdings.
-              const quantity = isUsable ? holdings : group.quantity;
-              const selling = canSend && sellValueOf(group) > 0;
+              // What goes on a sell or discard: the next bundle, never the stack.
+              const next = canSend ? group.items[0] : null;
+              const value = sellValueOf(next);
               const details = {
-                name, quantity, kind: group.reward?.kind, description: group.reward?.description,
-                sellValue: canSend ? sellValueOf(group) : 0, coinsOn: coins.enabled,
+                name, per: group.per, bundles: group.bundles, kind: group.reward?.kind,
+                description: group.reward?.description, sellValue: value, coinsOn: coins.enabled,
                 sellable: canSend, expiresAt: group.soonest, status: group.status
               };
-              const removeLabel = selling ? 'Sell' : canSend ? 'Discard' : 'Clear';
+              const removeLabel = value > 0 ? 'Sell one' : canSend ? 'Discard one' : 'Clear';
               return (
                 <div key={group.key} className="col-6 col-md-3">
                   <RewardTooltip details={details}>
@@ -390,11 +388,20 @@ function Rewards() {
                         type="button"
                         className="btn-close position-absolute top-0 end-0 m-2"
                         style={{ fontSize: '.65rem' }}
-                        aria-label={`${removeLabel} ${name}`}
-                        title={selling ? `Sell for ${sellValueOf(group)} ${coinWord(sellValueOf(group))}` : removeLabel}
+                        aria-label={`${removeLabel}: ${bundleLabel(group.reward, group.per)}`}
+                        title={value > 0 ? `Sell one for ${value} ${coinWord(value)}` : removeLabel}
                         onClick={() => onRemove(group)}
                         disabled={busy === `x:${group.key}`}
                       ></button>
+                    )}
+                    {group.bundles > 1 && (
+                      <span
+                        className="badge rounded-pill text-bg-danger position-absolute"
+                        style={{ top: '2.25rem', right: '.5rem' }}
+                        title={`You have ${group.bundles} of these`}
+                      >
+                        ×{group.bundles}
+                      </span>
                     )}
                     <div className="card-body d-flex flex-column align-items-center">
                       {group.reward?.icon ? (
@@ -407,16 +414,21 @@ function Rewards() {
                       ) : (
                         <i className="fas fa-gift fa-2x mb-2"></i>
                       )}
-                      <div className="fw-semibold mb-1">
-                        {name}
-                        {quantity > 1 && (
-                          <span className="badge text-bg-light text-dark ms-1">×{quantity}</span>
-                        )}
+                      <div className="fw-semibold">{name}</div>
+                      {/* The two numbers, said apart: what one holds, and how many there are. */}
+                      <div className="small text-body-secondary mb-2">
+                        {isUsable
+                          ? (group.bundles > 1 ? `${group.bundles} uses` : 'One use')
+                          : group.per > 1
+                            ? (group.bundles > 1
+                              ? `${group.bundles} bundles of ${group.per} · ${group.bundles * group.per} in all`
+                              : `Bundle of ${group.per}`)
+                            : (group.bundles > 1 ? `${group.bundles} in all` : 'Single item')}
                       </div>
                       <span className={`badge text-bg-${status.badge} mb-2`}>{status.label}</span>
                       {deadline && (
                         <div className={`small mb-2 ${deadline.urgent ? 'text-danger' : 'text-body-secondary'}`}>
-                          {deadline.text}
+                          {group.bundles > 1 ? `Next: ${deadline.text.toLowerCase()}` : deadline.text}
                         </div>
                       )}
                       {canSend && (
@@ -451,7 +463,11 @@ function Rewards() {
         <SendRewardModal
           title={`${sending.reward?.kind === 'usable' ? 'Activate' : 'Send'} ${sending.reward?.name || 'reward'}`}
           actionLabel={sending.reward?.kind === 'usable' ? 'Activate' : 'Send'}
-          max={sending.items.reduce((sum, item) => sum + unitsOf(item), 0)}
+          max={sending.bundles}
+          limit={sendMax[sending.reward?.kind] ?? SEND_MAX.item}
+          per={sending.per}
+          usable={sending.reward?.kind === 'usable'}
+          itemName={sending.reward?.name || 'reward'}
           busy={busy === sending.key}
           onSend={(target, amount) => handleSendGroup(sending, target, amount)}
           onCancel={() => setSending(null)}
@@ -459,23 +475,42 @@ function Rewards() {
       )}
 
       {discarding && (() => {
-        const value = sellValueOf(discarding);
-        const what = discarding.items.length > 1
-          ? `All ${discarding.items.length} × ${discarding.reward?.name || 'this reward'}`
-          : (discarding.reward?.name || 'This reward');
+        const bundle = discarding.items[0];
+        const value = sellValueOf(bundle);
+        const left = discarding.bundles - 1;
+        const isUsable = discarding.reward?.kind === 'usable';
+        const name = discarding.reward?.name || 'this reward';
         return (
           <ConfirmDialog
-            title={value > 0 ? 'Sell reward?' : 'Discard reward?'}
+            title={value > 0 ? 'Sell one?' : 'Discard one?'}
             confirmLabel={value > 0 ? `Sell for ${value} ${coinWord(value)}` : 'Discard'}
             danger={value === 0}
             busy={busy === `x:${discarding.key}`}
-            onConfirm={() => removeGroup(discarding)}
+            onConfirm={() => removeItems(discarding, [bundle])}
             onCancel={() => setDiscarding(null)}
           >
-            {value > 0
-              ? `${what} will be removed from your inventory and you will receive ${value} ${coinWord(value)}.`
-              : `${what} will be thrown away.`}
-            {' '}It has not been sent yet, and this cannot be undone.
+            <div className="d-flex align-items-center gap-3 p-2 mb-3 border rounded">
+              {discarding.reward?.icon
+                ? <img src={discarding.reward.icon} alt="" style={{ width: 40, height: 40, objectFit: 'contain' }} />
+                : <i className="fas fa-gift fa-2x"></i>}
+              <div className="flex-grow-1">
+                <div className="fw-semibold">{bundleLabel(discarding.reward, discarding.per)}</div>
+                <div className="small text-body-secondary">
+                  {isUsable ? 'One use' : discarding.per > 1 ? `One bundle of ${discarding.per} ${name}` : `One ${name}`}
+                  {bundle.expires_at && ` · ${expiresIn(bundle.expires_at).text.toLowerCase()}`}
+                </div>
+              </div>
+              {value > 0 && <Coins amount={value} className="fw-semibold" />}
+            </div>
+            <div>
+              {value > 0
+                ? `It will be removed from your inventory and you will receive ${value} ${coinWord(value)}.`
+                : 'It will be thrown away.'}
+              {' '}It has not been sent yet, and this cannot be undone.
+            </div>
+            <div className="mt-2 text-body-secondary">
+              {left > 0 ? `You will still have ${left} more.` : 'It is the last one you have.'}
+            </div>
           </ConfirmDialog>
         );
       })()}

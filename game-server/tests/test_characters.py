@@ -145,5 +145,52 @@ class LoadTests(unittest.TestCase):
         self.assertIn('saved_at', payload)
 
 
+class LeaderboardTests(unittest.TestCase):
+    """Every living, owned character - split-screen slots included, the dead
+    and single-player rows left out, and one bad row not hiding the rest."""
+
+    class Ranked:
+        def __init__(self, owner, name, kills, slot=1, broken=False):
+            self.owner, self.name, self.kills, self.slot, self.broken = owner, name, kills, slot, broken
+
+        def getOwner(self):
+            return self.owner
+
+        def getName(self):
+            return self.name
+
+        def getTimeAlive(self):
+            return '1 day'
+
+        def getState(self):
+            if self.broken:
+                raise ValueError('undecodable')
+            descriptor = mock.Mock(profession='base:fireofficer')
+            return mock.Mock(descriptor=descriptor, zombie_kills=self.kills,
+                             survivor_kills=0, hours_survived=24.0)
+
+    def run_with(self, alive):
+        db = mock.Mock()
+        db.getAlivePlayers.return_value = alive
+        with mock.patch.object(characters, 'load', return_value=(db, 'saved')):
+            return characters.leaderboard('alpha')
+
+    def test_lists_every_living_owned_character(self):
+        payload = self.run_with([self.Ranked('thanos', 'Da Sheep', 5),
+                                 self.Ranked('thanos', 'Couch Guest', 2, slot=2),
+                                 self.Ranked(None, 'Local Hero', 99)])
+        self.assertEqual([c['name'] for c in payload['characters']], ['Da Sheep', 'Couch Guest'])
+        self.assertEqual(payload['saved_at'], 'saved')
+        row = payload['characters'][0]
+        self.assertEqual((row['zombie_kills'], row['profession'], row['hours_survived']),
+                         (5, 'base:fireofficer', 24.0))
+
+    def test_an_unreadable_character_does_not_hide_the_rest(self):
+        with mock.patch.object(characters, '_log'):
+            payload = self.run_with([self.Ranked('a', 'Bad', 1, broken=True),
+                                     self.Ranked('b', 'Good', 2)])
+        self.assertEqual([c['name'] for c in payload['characters']], ['Good'])
+
+
 if __name__ == '__main__':
     unittest.main()

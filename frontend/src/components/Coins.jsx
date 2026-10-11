@@ -1,5 +1,5 @@
 // A coin amount, drawn the same way wherever one appears: the balance in the
-// navbar, a price in the shop, what a sale pays.
+// account menu, a price in the shop, what a sale pays.
 import React from 'react';
 
 export const coinWord = (n) => `coin${n === 1 ? '' : 's'}`;

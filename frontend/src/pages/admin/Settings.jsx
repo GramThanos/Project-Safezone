@@ -43,6 +43,10 @@ const GROUPS = [
   }
 ];
 
+// Groups edited on their own screens rather than here.
+const ELSEWHERE = ['site', 'leaderboard'];
+const isOperational = (s) => !ELSEWHERE.includes(s.group);
+
 function Settings() {
   const { token } = useAuth();
   const [settings, setSettings] = useState([]);
@@ -64,8 +68,9 @@ function Settings() {
       const data = await api.admin.settings.getAll(token);
       // Operational settings only. The `site` group is the public wording and
       // links, edited on Site › Branding and Site › Legal Pages - a paragraph
-      // of Markdown does not belong in a list of retention windows.
-      const operational = (data.settings || []).filter((s) => s.group !== 'site');
+      // of Markdown does not belong in a list of retention windows. The
+      // `leaderboard` group is edited beside the leaderboard it shapes.
+      const operational = (data.settings || []).filter(isOperational);
       setSettings(operational);
       // Secrets come back as "is it set", never as a value, so their draft
       // starts empty and only a typed value is ever submitted.
@@ -97,7 +102,7 @@ function Settings() {
 
     try {
       const data = await api.admin.settings.update(token, payload);
-      setSettings((data.settings || []).filter((s) => s.group !== 'site'));
+      setSettings((data.settings || []).filter(isOperational));
       setNotice('Settings saved.');
       loadData();
     } catch (err) {

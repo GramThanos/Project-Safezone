@@ -262,8 +262,6 @@ function Installations() {
         </div>
       )}
 
-      <MaintenancePanel />
-
       {/* ------------------------------------------------ Game files ----- */}
       <div className="card mb-4">
         <div className="card-header d-flex align-items-center">
@@ -705,6 +703,8 @@ function Installations() {
           )}
         </div>
       </div>
+
+      <MaintenancePanel />
 
       <p className="text-body-secondary">
         Everything here runs as a background task.{' '}

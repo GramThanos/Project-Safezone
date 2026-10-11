@@ -10,9 +10,11 @@ import Coins from './Coins';
 
 function Navbar() {
 	const { user, signout, isModerator } = useAuth();
-	const { brand_name: brand } = useSite();
+	const { brand_name: brand, leaderboard } = useSite();
 	const { unread, boxes, onlineCharacters, coins } = usePlayer();
 	const banned = user?.role === 'banned';
+	// Offered only to who the setting lets in; a disabled one is in the admin panel.
+	const showLeaderboard = leaderboard === 'public' || (leaderboard === 'authenticated' && user && !banned);
 	const navigate = useNavigate();
 	const location = useLocation();
 	const inAdmin = location.pathname.startsWith('/admin');
@@ -62,6 +64,13 @@ function Navbar() {
 								<i className="fas fa-server me-1" aria-hidden="true"></i>Servers
 							</Link>
 						</li>
+						{showLeaderboard && (
+							<li className="nav-item">
+								<Link className="nav-link" to="/leaderboard">
+									<i className="fas fa-trophy me-1" aria-hidden="true"></i>Leaderboard
+								</Link>
+							</li>
+						)}
 						{user && (
 							<>
 								{!banned && (
@@ -88,12 +97,8 @@ function Navbar() {
 										</li>
 										{coins.enabled && (
 											<li className="nav-item">
-												<Link className="nav-link" to="/shop" title="Your coins - spend them in the shop">
-													<i className="fas fa-store me-1" aria-hidden="true"></i>
-													Shop
-													<span className="badge rounded-pill text-bg-dark border ms-1">
-														<Coins amount={coins.balance} />
-													</span>
+												<Link className="nav-link" to="/shop">
+													<i className="fas fa-store me-1" aria-hidden="true"></i>Shop
 												</Link>
 											</li>
 										)}
@@ -129,6 +134,22 @@ function Navbar() {
 										{user.username}
 									</button>
 									<ul className="dropdown-menu dropdown-menu-end">
+										{/* The wallet: the balance, with the way to spend it */}
+										{!banned && coins.enabled && (
+											<>
+												<li>
+													<Link
+														className="dropdown-item d-flex align-items-center gap-3"
+														to="/shop"
+														title="Spend your coins in the shop"
+													>
+														<span className="small text-body-secondary me-auto">Coins</span>
+														<Coins amount={coins.balance} className="fw-semibold" />
+													</Link>
+												</li>
+												<li><hr className="dropdown-divider" /></li>
+											</>
+										)}
 										{!banned && (
 											<li>
 												<Link className="dropdown-item" to="/profile">

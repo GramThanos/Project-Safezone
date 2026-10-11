@@ -17,12 +17,18 @@ const readLast = () => {
 	}
 };
 
-// `max` is how many the stack holds. Above one, the player picks how many of
-// them go; it starts at all of them, which is what a send used to do.
-function SendRewardModal({ title, actionLabel, max = 1, busy = false, onSend, onCancel }) {
+// `max` is how many bundles the stack holds, and `limit` how many one send may
+// carry. Above one, the player picks how many go; it starts at as many as can,
+// which is what a send used to do. `per` is what one bundle holds, so the
+// dialog can say what will actually arrive.
+function SendRewardModal({
+	title, actionLabel, max = 1, limit = max, per = 1, usable = false, itemName = 'reward',
+	busy = false, onSend, onCancel
+}) {
 	const { onlineCharacters, characters, refreshCharacters } = usePlayer();
+	const most = Math.max(1, Math.min(max, limit));
 	const [target, setTarget] = useState(readLast);
-	const [amount, setAmount] = useState(String(max));
+	const [amount, setAmount] = useState(String(most));
 	const [checking, setChecking] = useState(true);
 	const cancelRef = useRef(null);
 
@@ -53,8 +59,10 @@ function SendRewardModal({ title, actionLabel, max = 1, busy = false, onSend, on
 	// Kept as typed text so the field can be cleared while editing; it only has
 	// to be a whole number in range by the time it is sent.
 	const count = Number(amount);
-	const amountValid = Number.isInteger(count) && count >= 1 && count <= max;
-	const step = (by) => setAmount(String(Math.min(max, Math.max(1, (amountValid ? count : max) + by))));
+	const amountValid = Number.isInteger(count) && count >= 1 && count <= most;
+	const step = (by) => setAmount(String(Math.min(most, Math.max(1, (amountValid ? count : most) + by))));
+	// What the picker counts, in the words the stack's card uses.
+	const unit = usable ? 'use' : per > 1 ? 'bundle' : 'item';
 
 	const send = () => {
 		if (!targetValid || !amountValid) return;
@@ -124,10 +132,11 @@ function SendRewardModal({ title, actionLabel, max = 1, busy = false, onSend, on
 										</label>
 									))}
 								</div>
-								{max > 1 && (
+								{max > 1 ? (
 									<div className="mt-3">
 										<label htmlFor="send-amount" className="form-label text-body-secondary small">
-											How many? You have {max}.
+											How many {unit}s? You have {max}
+											{per > 1 && !usable ? ` (each holds ${per} × ${itemName})` : ''}.
 										</label>
 										<div className="input-group" style={{ maxWidth: '16rem' }}>
 											<button
@@ -144,7 +153,7 @@ function SendRewardModal({ title, actionLabel, max = 1, busy = false, onSend, on
 												type="number"
 												className={`form-control text-center ${amountValid ? '' : 'is-invalid'}`}
 												min={1}
-												max={max}
+												max={most}
 												step={1}
 												value={amount}
 												onChange={(e) => setAmount(e.target.value)}
@@ -155,23 +164,36 @@ function SendRewardModal({ title, actionLabel, max = 1, busy = false, onSend, on
 												className="btn btn-outline-secondary"
 												aria-label="One more"
 												onClick={() => step(1)}
-												disabled={busy || (amountValid && count >= max)}
+												disabled={busy || (amountValid && count >= most)}
 											>
 												<i className="fas fa-plus"></i>
 											</button>
 											<button
 												type="button"
 												className="btn btn-outline-secondary"
-												onClick={() => setAmount(String(max))}
-												disabled={busy || count === max}
+												onClick={() => setAmount(String(most))}
+												disabled={busy || count === most}
 											>
-												All
+												{most < max ? 'Most' : 'All'}
 											</button>
 										</div>
-										{!amountValid && (
-											<div className="text-danger small mt-1">Pick a number from 1 to {max}.</div>
+										{!amountValid ? (
+											<div className="text-danger small mt-1">Pick a number from 1 to {most}.</div>
+										) : per > 1 && !usable && (
+											<div className="small mt-1">
+												<strong>{count * per} × {itemName}</strong> will arrive in game.
+											</div>
+										)}
+										{most < max && (
+											<div className="form-text">
+												Up to {most} at a time - the rest stay here for another send.
+											</div>
 										)}
 									</div>
+								) : per > 1 && !usable && (
+									<p className="small mt-3 mb-0">
+										<strong>{per} × {itemName}</strong> will arrive in game.
+									</p>
 								)}
 							</>
 						)}

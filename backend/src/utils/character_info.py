@@ -201,3 +201,16 @@ def respond(entry, view):
         'fetched_at': entry.get('fetched_at'),
         'stale': bool(entry.get('stale')),
     }
+
+
+def unlinked(saved, linked_usernames):
+    """The saved characters no account is linked to, in save order.
+
+    ``saved`` is a server's character summaries (each with the owning
+    ``username``); ``linked_usernames`` the in-game usernames linked on that
+    server. Compared without case, as the database's collation compares them
+    when a claim checks for an existing link.
+    """
+    linked = {(name or '').lower() for name in linked_usernames}
+    return [c for c in saved
+            if c.get('username') and c['username'].lower() not in linked]

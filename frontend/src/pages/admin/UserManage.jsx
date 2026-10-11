@@ -121,7 +121,8 @@ const REWARD_COLUMNS = [
     )
   },
   { label: 'Kind', render: (i) => i.reward?.kind || '-' },
-  { label: 'Qty', render: (i) => `×${i.count}` },
+  // Each row is one bundle; this is what the bundle holds. A usable has no amount.
+  { label: 'Bundle of', render: (i) => (i.reward?.kind === 'usable' ? '-' : `×${i.count}`) },
   { label: 'Status', render: (i) => <span className={`badge text-bg-${getStatusBadge(i.status)}`}>{i.status}</span> },
   { label: 'Won', render: (i) => formatDate(i.created_at) },
   { label: 'Expires', render: (i) => (i.expires_at ? formatDate(i.expires_at) : 'never') }

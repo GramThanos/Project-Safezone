@@ -16,8 +16,11 @@ class Config:
     DATABASE_USER = os.getenv('DATABASE_USER', 'safezone')
     DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD', 'safezone')
     
-    # Build database URL for SQLAlchemy
-    SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://{DATABASE_USER}:{DATABASE_PASSWORD}@{DATABASE_HOST}/{DATABASE_NAME}"
+    # Build database URL for SQLAlchemy. The charset is spelled out rather than
+    # left to the driver's default: names and descriptions may carry emoji,
+    # which need the four-byte utf8mb4 on the connection as well as the table.
+    SQLALCHEMY_DATABASE_URI = (f"mysql+pymysql://{DATABASE_USER}:{DATABASE_PASSWORD}"
+                               f"@{DATABASE_HOST}/{DATABASE_NAME}?charset=utf8mb4")
     
     # JWT Configuration
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -81,6 +84,10 @@ class Config:
     KILLS_PER_COIN_STEP = int(os.getenv('KILLS_PER_COIN_STEP', '10'))
     SHOP_ITEM_EXPIRY_DAYS = int(os.getenv('SHOP_ITEM_EXPIRY_DAYS', '0'))
     COIN_LOG_RETENTION_DAYS = int(os.getenv('COIN_LOG_RETENTION_DAYS', '90'))
+    # The leaderboard of living characters: 'public', 'authenticated' (signed-in
+    # players only) or 'disabled' (staff see it in the admin panel only).
+    LEADERBOARD_VISIBILITY = os.getenv('LEADERBOARD_VISIBILITY', 'authenticated').strip().lower()
+    LEADERBOARD_HIDE_BANNED = os.getenv('LEADERBOARD_HIDE_BANNED', 'true').lower() == 'true'
 
     # --- Site content -------------------------------------------------------
     # What the public pages say. Same mechanism as the settings above: these are

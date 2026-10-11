@@ -160,6 +160,42 @@ def summaries(server_name):
     return {'characters': out, 'saved_at': saved_at}
 
 
+def standing(player):
+    """One leaderboard row. ``username`` is for the backend's exclusions only -
+    it never reaches a browser, which sees the character and not the account."""
+    state = player.getState()
+    descriptor = state.descriptor
+    return {
+        'username': player.getOwner(),
+        'name': player.getName(),
+        'profession': descriptor.profession if descriptor else None,
+        'zombie_kills': state.zombie_kills,
+        'survivor_kills': state.survivor_kills,
+        'hours_survived': state.hours_survived,
+        'time_alive': player.getTimeAlive(),
+    }
+
+
+def leaderboard(server_name):
+    """``{'characters': [...], 'saved_at': ...}``: every living character on a
+    server, split-screen slots included; raises `Unavailable`.
+
+    Unlike `summaries` this is every row rather than one per account, and the
+    dead are left out - a dead character keeps its row until its owner makes a
+    new one. Unsorted: ordering is the reader's business.
+    """
+    db, saved_at = load(server_name)
+    out = []
+    for player in db.getAlivePlayers():
+        if not player.getOwner():
+            continue
+        try:
+            out.append(standing(player))
+        except Exception as e:  # one unreadable character must not hide the rest
+            _log(f'Could not rank {player.getOwner()} on {server_name}: {e}')
+    return {'characters': out, 'saved_at': saved_at}
+
+
 def report(server_name, username):
     """``{'character': ..., 'saved_at': ...}`` for one account's character; raises `Unavailable`."""
     db, saved_at = load(server_name)

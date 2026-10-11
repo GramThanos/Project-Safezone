@@ -166,6 +166,52 @@ def get_app_info(data):
     data['message'] = f"App: {common.get('name')}"
     return True
 
+def _reward_plan(data, username, kind, action_id, staff):
+    """Resolve a delivery into ``(units, needs_online)``.
+
+    A unit is ``(refs, steps)``: the bundles it delivers (None outside a stack
+    delivery) and its ordered steps - console commands and, for free-text
+    rewards, executor-side sleeps. A unit lands or it does not, and the units
+    before it stay landed, which is what ``delivered_refs`` reports.
+    Player-targeted commands are no-ops for a disconnected player; server-wide
+    actions (weather, bans, save) run regardless, so only the former need the
+    recipient online.
+    """
+    bundles = data.get('bundles')
+    if bundles is not None:
+        bundles = commands.parse_bundles(bundles, kind)
+
+    if kind == 'usable':
+        if data.get('commands'):
+            parsed = commands.parse_reward_commands(data.get('commands'))
+            steps = [step if step['type'] == 'sleep'
+                     else {'type': 'command',
+                           'text': commands.render_command(step['text'], username)}
+                     for step in parsed]
+            needs_online = commands.reward_requires_online(parsed)
+        elif action_id:
+            steps = [{'type': 'command', 'text': commands.build_action_command(
+                username, action_id, data.get('action_params'), droppable_only=not staff)}]
+            needs_online = commands.action_requires_online(action_id)
+        else:
+            raise commands.CommandError('usable rewards require commands or an action_id')
+        if bundles is None:
+            return [(None, steps)], needs_online
+        # Each bundle runs the whole sequence once.
+        return [([ref], steps) for ref, _ in bundles], needs_online
+
+    in_game_id = data.get('in_game_id')
+    if bundles is None:
+        return [(None, [{'type': 'command', 'text': commands.build_item_command(
+            username, in_game_id, data.get('count', 1))}])], True
+    # Whole bundles packed into as few `additem` lines as the per-line cap
+    # allows, so a stack of twenty is a handful of lines rather than twenty.
+    return [([ref for ref, _ in line],
+             [{'type': 'command', 'text': commands.build_item_command(
+                 username, in_game_id, sum(count for _, count in line))}])
+            for line in commands.pack_item_bundles(bundles)], True
+
+
 def give_reward(data):
     """Deliver a reward, or run a catalog action, via a server console command.
 
@@ -176,6 +222,12 @@ def give_reward(data):
     ``scope`` is 'reward' (default, loot-safe actions only) or 'staff' (the whole
     catalog; the backend gates this on the operator's role).
 
+    A stack delivery adds ``bundles``: ``[{'ref': id, 'count': n}, ...]``, the
+    player's inventory holdings sent together (``count`` is then ignored). Items
+    go out as whole bundles packed into `additem` lines; a usable runs once per
+    bundle. ``delivered_refs`` records the bundles that landed, in full or in
+    part, so a delivery that fails half-way hands back only what is still owed.
+
     A free-text ``commands`` sequence may interleave `sleep`/`wait` steps, which
     are honoured here (between console writes) and never sent to the server.
     """
@@ -184,34 +236,19 @@ def give_reward(data):
     kind = data.get('kind', 'item')
     action_id = data.get('action_id')
     staff = data.get('scope') == 'staff'
+    stacked = data.get('bundles') is not None
+    if stacked:
+        # Set before anything can fail: a failure that never reached the
+        # console delivered nothing, and the backend reads it that way.
+        data['delivered_refs'] = []
 
     server = servers.get(server_id)
     if not server:
         data['delivery_message'] = 'Server not found'
         return False
 
-    # Resolve the delivery into an ordered plan of steps (console commands and,
-    # for free-text rewards, executor-side sleeps) and whether it needs the
-    # recipient online. Player-targeted commands are no-ops for a disconnected
-    # player; server-wide actions (weather, bans, save) run regardless.
     try:
-        if kind == 'usable' and data.get('commands'):
-            parsed = commands.parse_reward_commands(data.get('commands'))
-            steps = [step if step['type'] == 'sleep'
-                     else {'type': 'command',
-                           'text': commands.render_command(step['text'], username)}
-                     for step in parsed]
-            needs_online = commands.reward_requires_online(parsed)
-        elif kind == 'usable' and action_id:
-            steps = [{'type': 'command', 'text': commands.build_action_command(
-                username, action_id, data.get('action_params'), droppable_only=not staff)}]
-            needs_online = commands.action_requires_online(action_id)
-        elif kind == 'usable':
-            raise commands.CommandError('usable rewards require commands or an action_id')
-        else:
-            steps = [{'type': 'command', 'text': commands.build_item_command(
-                username, data.get('in_game_id'), data.get('count', 1))}]
-            needs_online = True
+        units, needs_online = _reward_plan(data, username, kind, action_id, staff)
     except commands.CommandError as e:
         data['delivery_message'] = f'Invalid reward: {e}'
         return False
@@ -230,19 +267,27 @@ def give_reward(data):
     # a publish succeeds even with no manager listening - the ack is what proves
     # the line reached the server's stdin. A sleep step just pauses the worker.
     sent = []
-    for step in steps:
-        if step['type'] == 'sleep':
-            time.sleep(step['seconds'])
-            continue
-        ok, detail = send_console(server, step['text'])
-        if not ok:
-            data['command'] = '; '.join(sent + [step['text']])
-            data['delivery_message'] = f"Command not delivered ({detail or 'unknown reason'})"
-            return False
-        sent.append(step['text'])
+    delivered = []
+    for refs, steps in units:
+        for step in steps:
+            if step['type'] == 'sleep':
+                time.sleep(step['seconds'])
+                continue
+            ok, detail = send_console(server, step['text'])
+            if not ok:
+                data['command'] = '; '.join(sent + [step['text']])
+                data['delivery_message'] = f"Command not delivered ({detail or 'unknown reason'})"
+                if stacked:
+                    data['delivered_refs'] = delivered
+                return False
+            sent.append(step['text'])
+        if refs:
+            delivered.extend(refs)
 
     data['command'] = '; '.join(sent)
     data['delivery_message'] = 'Reward delivered'
+    if stacked:
+        data['delivered_refs'] = delivered
     return True
 
 

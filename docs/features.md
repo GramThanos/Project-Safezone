@@ -22,7 +22,7 @@ The full tour. The [README](../README.md) has the highlights; this page has the 
 - **Sessions that last while used**: a sign-in stays alive as long as it keeps being used, and expires a set time after it was last used: a day on the website, a month in the installed app, both adjustable
 - **Revocable sessions**: changing a password ends every other session, and "sign out everywhere" is one click. A ban or a demotion takes effect on the very next request
 - **Your data is yours**: players can download everything held about their account, or close it permanently
-- **Character claims**: a player claims an in-game character by name while that character is online. Being online *is* the proof of ownership, so the link is made immediately instead of waiting for review. Characters exist only through a claim. Removing one is an *unlink* that frees the name for someone else, and staff can revoke a link with a reason the player sees
+- **Character claims**: a player claims an in-game character by name while that character is online. Being online *is* the proof of ownership, so the link is made immediately instead of waiting for review. Characters exist only through a claim. Removing one is an *unlink* that frees the name for someone else, and staff can revoke a link with a reason the player sees. Staff also see the characters saved on each server that nobody has linked, and an admin can link one to an account by hand, for a character that cannot be online to claim
 - **Character sheet**: a linked character's card shows what the game last saved about it - alive or dead, time survived, kills, profession, top skills and where it is, with a map link - and a details dialog with every skill and its health. Read from the server's save and cached for a minute, so it is as fresh as the game's last save; when the game server cannot answer, the last copy is shown marked as possibly out of date. Only the owner sees it, and staff from the character links and user pages. A zombie infection is shown to staff only, since in the game a player does not know until the symptoms show
 - **Notifications**: character links, deliveries, bonuses and moderation decisions reach the player in-app
 
@@ -38,8 +38,8 @@ The full tour. The [README](../README.md) has the highlights; this page has the 
 - **Item picker**: rewards and direct gives are chosen from a searchable list of every base-game item — icon, name and id — instead of typed from memory. The list comes from PZwiki's item list and is refreshed weekly. Modded items are not in it, so their ids are typed by hand
 - **Drop weights** per reward in each box, and the number of draws per box, tuned in the panel rather than in code
 - **Published odds**: players can see what each box contains and how likely each reward is, and review what they have already received
-- **Inventory**: opened rewards wait until the player sends them to one of their own linked characters, which must be online at the time
-- **Confirmed delivery**: the manager confirms each command actually reached the running server. If it did not, the item goes back to the player's inventory
+- **Inventory**: opened rewards wait until the player sends them to one of their own linked characters, which must be online at the time. Each reward is a bundle - the amount it was won in - and getting the same one again stacks it, showing both numbers apart ("3 bundles of 5"). The player picks how many bundles to send, up to 20 at a time (5 for usables), and they go out as one delivery
+- **Confirmed delivery**: the manager confirms each command actually reached the running server. If it did not, the item goes back to the player's inventory - and if a delivery stopped part-way, only the bundles that did not arrive come back
 - **Optional expiry** for unopened boxes and unsent rewards, off by default
 - **Taking loot back**: an admin can remove unopened boxes and held rewards from an account, for mistakes and abuse
 
@@ -47,11 +47,15 @@ The full tour. The [README](../README.md) has the highlights; this page has the 
 
 Off by default; switch it on under **Settings → Coins**, and switch on the `settle_coins` and `coin_report` jobs under **Scheduled Jobs**.
 
-- **Selling back**: every reward has a sell value in coins (1 by default, 0 means it cannot be sold), paid once per reward however many items it holds. With coins on, discarding an unsent reward sells it, and the confirmation says how much it pays. Hovering a reward in the inventory (or tapping its info button) shows what it is, how many, what it sells for and when it expires
+- **Selling back**: every reward has a sell value in coins (1 by default, 0 means it cannot be sold), paid once per bundle however many items it holds. With coins on, discarding an unsent reward sells it one bundle at a time, and the confirmation shows exactly which bundle, what it pays and how many are left. Hovering a reward in the inventory (or tapping its info button) shows what it is, what each bundle holds, how many bundles there are, what one sells for and when the next expires
 - **Coins from playing**: a linked character earns coins for the zombies it kills, at a rate the admin sets (1 coin per 10 kills by default). Kills made before the character was linked never count, and kills left over carry to the next payment. A death is noticed by the character's new name and the new character counts from zero; restoring a world backup never pays its kills again. Kills come from the server's save: characters are checked whenever their data is viewed, and once a day every server with players online is told to save first and all its characters are read in one go. The Characters page shows each character's progress to its next coin and when it was last checked
 - **A daily summary**: instead of a message per payment, each player gets one message a day with what they earned the day before and where it came from
 - **The shop**: categories of rewards for sale, set up by an admin under **Rewards → Shop**. A listing can appear in several categories and can have a daily limit per player. A new listing's price starts at 20 times what the reward sells back for; the admin can change it, but never below the sell value, so buying and selling back cannot make coins. What a player buys goes to their inventory and is sent like any other reward, with its own expiry setting, which the shop page states
 - **The balance** shows in the navbar, on the Rewards page and on the app's Me tab. An admin can add or take coins, with a reason the player sees, from the account's manage page, which also lists every coin the account has gained and each linked character's progress. The coin history and purchase records are trimmed daily to a retention window (90 days by default); balances and totals are unaffected
+
+## Leaderboard
+
+Every living character in a server's save, linked or not, ranked by zombie kills and then by time alive (in-game time). Players see each character's name, profession, kills and time alive, never the account it belongs to; a dead character drops off. An admin decides under **Users → Leaderboard** who can see it - everyone, signed-in players only, or nobody but staff - keeps a list of usernames to leave out, and can hide characters linked to banned accounts (on by default). Staff see the whole board there, hidden characters included and marked why.
 
 ## Server management
 
@@ -122,7 +126,7 @@ Grouped under `/admin`:
 | Group | Screens |
 |---|---|
 | **Servers** | Servers (status, control, console, logs, settings, backups, mods), Installations (maintenance, game files and the mod library), Tasks (the work queue and its output) |
-| **Users** | Users, Character Links, Invitations, Reports & Appeals |
+| **Users** | Users, Character Links, Leaderboard, Invitations, Reports & Appeals |
 | **Rewards** | Rewards, Loot Boxes, Shop, Events, Give Item |
 | **Site** | Branding, Pages (rules and legal documents) |
 | **System** | About, Staff Feed, Audit Log, Scheduled Jobs, Alerts, Settings |
@@ -138,7 +142,7 @@ Grouped under `/admin`:
 | `banned` | File an appeal. Everything else is refused |
 | `player` | Claim characters, collect and send loot, invite others (if allowed), file reports, manage their own account |
 | `moderator` | Everything a player can, plus: start, stop and sleep servers; **use the free-text server console**; read logs, settings and backups; switch already-downloaded mods on and off; watch and cancel tasks; cancel a planned maintenance; revoke character links and view a linked character's game data; give items and run catalog actions; handle reports; read the staff feed and audit log |
-| `admin` | Everything, plus: roles and bans; creating, editing and deleting servers; server settings, backups and restores; installing the game and mods; the maintenance policy and planning updates; rewards, loot boxes, the shop and events; players' coin balances; branding and pages; alerts, scheduled jobs and settings |
+| `admin` | Everything, plus: roles and bans; linking a saved character to an account by hand; creating, editing and deleting servers; server settings, backups and restores; installing the game and mods; the maintenance policy and planning updates; rewards, loot boxes, the shop and events; players' coin balances; branding and pages; alerts, scheduled jobs and settings |
 
 The server console accepts any command, so **making someone a moderator gives them full control of the running game**. Every command they run is recorded in the audit log with its text, but treat the role as the trust decision it is.
 

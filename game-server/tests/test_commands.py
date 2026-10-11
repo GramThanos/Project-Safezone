@@ -123,5 +123,42 @@ class TestRewardRequiresOnline(unittest.TestCase):
         self.assertFalse(commands.reward_requires_online(steps))
 
 
+class TestBundles(unittest.TestCase):
+    def test_parses_refs_and_counts(self):
+        self.assertEqual(
+            commands.parse_bundles([{'ref': 7, 'count': 5}, {'ref': 9, 'count': 10}], 'item'),
+            [(7, 5), (9, 10)])
+
+    def test_a_usable_bundle_runs_once_whatever_its_count(self):
+        self.assertEqual(commands.parse_bundles([{'ref': 1, 'count': 4}], 'usable'), [(1, 1)])
+
+    def test_rejects_malformed_bundles(self):
+        for bad in [None, [], 'x', [1], [{'ref': 'a'}], [{'ref': True}], [{'ref': 1, 'count': 0}],
+                    [{'ref': 1, 'count': commands.MAX_COUNT + 1}], [{'ref': 1, 'count': 2.5}],
+                    [{'ref': 1}, {'ref': 1}]]:
+            with self.assertRaises(commands.CommandError, msg=repr(bad)):
+                commands.parse_bundles(bad, 'item')
+
+    def test_caps_how_many_bundles_one_task_carries(self):
+        items = [{'ref': i} for i in range(commands.BUNDLE_MAX + 1)]
+        with self.assertRaises(commands.CommandError):
+            commands.parse_bundles(items, 'item')
+        commands.parse_bundles(items[:commands.BUNDLE_MAX], 'item')
+        usables = [{'ref': i} for i in range(commands.USABLE_BUNDLE_MAX + 1)]
+        with self.assertRaises(commands.CommandError):
+            commands.parse_bundles(usables, 'usable')
+
+    def test_packs_whole_bundles_under_the_line_cap(self):
+        lines = commands.pack_item_bundles([(1, 40), (2, 40), (3, 40), (4, 100), (5, 1)], limit=100)
+        self.assertEqual(lines, [[(1, 40), (2, 40)], [(3, 40)], [(4, 100)], [(5, 1)]])
+
+    def test_never_splits_a_bundle_and_never_overfills_a_line(self):
+        bundles = [(i, (i * 37) % 100 + 1) for i in range(20)]
+        lines = commands.pack_item_bundles(bundles)
+        self.assertEqual([b for line in lines for b in line], bundles)
+        for line in lines:
+            self.assertLessEqual(sum(c for _, c in line), commands.MAX_COUNT)
+
+
 if __name__ == '__main__':
     unittest.main()

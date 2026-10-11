@@ -37,6 +37,7 @@ const NAV_GROUPS = [
     links: [
       { to: '/admin/users', text: 'Users', icon: 'person-gear', adminOnly: true },
       { to: '/admin/claims', text: 'Character Links', icon: 'person-badge' },
+      { to: '/admin/leaderboard', text: 'Leaderboard', icon: 'trophy' },
       { to: '/admin/invitations', text: 'Invitations', icon: 'envelope-paper' },
       { to: '/admin/reports', text: 'Reports & Appeals', icon: 'flag' }
     ]
