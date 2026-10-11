@@ -27,10 +27,13 @@ const PERKS = [
 
 function Home() {
 	usePageTitle(null);
-	const { user } = useAuth();
-	const { hero_title: heroTitle, hero_subtitle: heroSubtitle } = useSite();
+	const { user, token } = useAuth();
+	const { hero_title: heroTitle, hero_subtitle: heroSubtitle, leaderboard } = useSite();
 	const { boxes } = usePlayer();
 	const [servers, setServers] = useState([]);
+	const [top, setTop] = useState(null);
+	const banned = user?.role === 'banned';
+	const showLeaderboard = leaderboard === 'public' || (leaderboard === 'authenticated' && user && !banned);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -39,6 +42,24 @@ function Home() {
 			.catch((err) => console.error('Connection error:', err));
 		return () => { cancelled = true; };
 	}, []);
+
+	// The primary server's top five, when this visitor may see the board.
+	useEffect(() => {
+		if (!showLeaderboard) {
+			setTop(null);
+			return undefined;
+		}
+		let cancelled = false;
+		api.leaderboard.get(token)
+			.then((data) => {
+				if (cancelled) return;
+				const name = (data.servers || []).find((s) => s.id === data.server_id)?.name;
+				setTop({ server: data.servers?.length > 1 ? name : null, rows: (data.characters || []).slice(0, 5) });
+			})
+			// A preview is not worth an error on the front page.
+			.catch((err) => console.error('Load leaderboard error:', err));
+		return () => { cancelled = true; };
+	}, [showLeaderboard, token]);
 
 	const online = servers.reduce((sum, s) => sum + (s.online_count || 0), 0);
 	const running = servers.filter((s) => (s.state || s.default_state) === 'running');
@@ -100,6 +121,42 @@ function Home() {
 												</p>
 											)}
 										</div>
+									</div>
+								</div>
+							))}
+						</div>
+					</div>
+				</section>
+			)}
+
+			{/* LEADERBOARD — the top five, for whoever may see the board */}
+			{top && top.rows.length > 0 && (
+				<section className="py-5 border-top">
+					<div className="container">
+						<div className="d-flex justify-content-between align-items-baseline mb-3 gap-3">
+							<h3 className="text-uppercase font-display mb-0">
+								Top survivors
+								{top.server && <span className="fs-6 text-body-secondary ms-2" style={{ textTransform: 'none' }}>{top.server}</span>}
+							</h3>
+							<Link to="/leaderboard" className="text-nowrap">
+								Full leaderboard<i className="fas fa-arrow-right ms-1" aria-hidden="true"></i>
+							</Link>
+						</div>
+						<div className="list-group">
+							{top.rows.map((row, index) => (
+								<div key={`${row.name}:${index}`} className="list-group-item d-flex align-items-center gap-3">
+									<span className="font-display fs-4 lh-1 text-danger" style={{ minWidth: '2ch' }}>{row.rank}</span>
+									<div className="me-auto" style={{ minWidth: 0 }}>
+										<div className="fw-semibold text-truncate">{row.name || '—'}</div>
+										{row.time_alive && (
+											<div className="small text-body-secondary text-truncate">Alive {row.time_alive}</div>
+										)}
+									</div>
+									<div className="text-end">
+										<div className="font-display fs-5 lh-1">
+											{typeof row.zombie_kills === 'number' ? row.zombie_kills.toLocaleString() : '—'}
+										</div>
+										<div className="small text-body-secondary">kills</div>
 									</div>
 								</div>
 							))}

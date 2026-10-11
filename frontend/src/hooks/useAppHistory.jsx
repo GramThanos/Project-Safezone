@@ -23,7 +23,7 @@ import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 export const TAB_ROOTS = ['/', '/servers', '/characters', '/rewards', '/me', '/signin'];
 
 // Pages reached from Me, which keep the Me tab lit and go back up to it.
-export const ME_PAGES = ['/profile', '/notifications', '/reports', '/rules', '/terms', '/privacy', '/cookies'];
+export const ME_PAGES = ['/profile', '/notifications', '/reports', '/leaderboard','/rules', '/terms', '/privacy', '/cookies'];
 
 export const isUnder = (path, base) => path === base || path.startsWith(`${base}/`);
 

@@ -606,8 +606,9 @@ def get_servers(current_user):
     servers = apply_live_state(payload.get('data', []))
     # Headcounts for the list's cards: who is on right now (the names stay
     # behind the roster) and how many characters are linked to each server.
-    linked = dict(db.session.query(Character.server_id, func.count(Character.id))
-                  .group_by(Character.server_id).all())
+    with db.get_db() as session:
+        linked = dict(session.query(Character.server_id, func.count(Character.id))
+                      .group_by(Character.server_id).all())
     for server in servers:
         server['online_count'] = len(get_online_players(server['id']))
         server['character_count'] = linked.get(server['id'], 0)
