@@ -6,7 +6,7 @@
     { "kind": "item", "name": "First Aid Kit", "description": "A compact emergency medical kit.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/FirstAid.png", "in_game_id": "Base.FirstAidKit_New", "commands": null, "active": true, "coin_value": 10 },
     { "kind": "item", "name": "Crowbar", "description": "A dependable long-blunt weapon and utility tool.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Crowbar.png", "in_game_id": "Base.Crowbar", "commands": null, "active": true, "coin_value": 12 },
     { "kind": "item", "name": "Hand Axe", "description": "A one-handed axe for practical survival work.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/AxeHand.png", "in_game_id": "Base.HandAxe", "commands": null, "active": true, "coin_value": 15 },
-    { "kind": "item", "name": "Welding Torch", "description": "A welding torch for metalworking and vehicle access.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/WeldingTorch.png", "in_game_id": "Base.WeldingTorch", "commands": null, "active": true, "coin_value": 20 },
+    { "kind": "item", "name": "Welding Torch", "description": "A welding torch for metalworking and vehicle access.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/WeldingTorch.png", "in_game_id": "Base.BlowTorch", "commands": null, "active": true, "coin_value": 20 },
     { "kind": "item", "name": "Propane Tank", "description": "Fuel for welding and other propane-powered equipment.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/PropaneTank.png", "in_game_id": "Base.PropaneTank", "commands": null, "active": true, "coin_value": 20 },
     { "kind": "item", "name": "Generator", "description": "A generator for keeping a prepared base powered.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/Generator.png", "in_game_id": "Base.Generator", "commands": null, "active": true, "coin_value": 50 },
     { "kind": "item", "name": "Fishing Rod", "description": "A reusable route to food away from populated areas.", "icon": "https://pzwiki.net/w/index.php?title=Special:FilePath/FishingRod.png", "in_game_id": "Base.FishingRod", "commands": null, "active": true, "coin_value": 35 },
@@ -85,7 +85,7 @@
       "categories": ["Tools"]
     },
     {
-      "reward": { "kind": "item", "name": "Welding Torch", "in_game_id": "Base.WeldingTorch" },
+      "reward": { "kind": "item", "name": "Welding Torch", "in_game_id": "Base.BlowTorch" },
       "count": 1,
       "price": 400,
       "daily_limit": 1,
