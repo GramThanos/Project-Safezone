@@ -369,12 +369,24 @@ function Shop() {
       }
       setTransferBusy(true);
       const catalog = await api.admin.rewards.search(token, { limit: 500 });
-      const existingRewards = new Set((catalog.rewards || []).map(rewardKey));
+      const existingRewards = new Map((catalog.rewards || []).map((reward) => [rewardKey(reward), reward]));
       const incomingRewards = new Set();
       let addedRewards = 0;
+      let addedIcons = 0;
       for (const reward of data.rewards || []) {
         const key = rewardKey(reward);
-        if (existingRewards.has(key) || incomingRewards.has(key)) continue;
+        const existing = existingRewards.get(key);
+        // Presets created before icons were bundled left empty icon fields.
+        // Fill only that blank field; never overwrite an administrator's chosen
+        // image, description, sell value, or enabled state.
+        if (existing) {
+          if (!existing.icon && reward.icon) {
+            await api.admin.rewards.update(token, existing.id, { icon: reward.icon });
+            addedIcons += 1;
+          }
+          continue;
+        }
+        if (incomingRewards.has(key)) continue;
         await api.admin.rewards.create(token, reward);
         incomingRewards.add(key);
         addedRewards += 1;
@@ -416,7 +428,7 @@ function Shop() {
         addedListings += 1;
       }
       await loadData();
-      setNotice(`Imported ${addedRewards} reward(s), ${addedCategories} categor${addedCategories === 1 ? 'y' : 'ies'} and ${addedListings} listing(s)`
+      setNotice(`Imported ${addedRewards} reward(s), ${addedIcons} icon${addedIcons === 1 ? '' : 's'}, ${addedCategories} categor${addedCategories === 1 ? 'y' : 'ies'} and ${addedListings} listing(s)`
         + (skipped ? `; skipped ${skipped} already present or missing its reward.` : '.'));
     } catch (err) {
       setError(err.message || 'Could not import the shop.');
