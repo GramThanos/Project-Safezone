@@ -64,6 +64,9 @@ function ServerDetail() {
 
   const [command, setCommand] = useState('');
   const [commandOutput, setCommandOutput] = useState(null);
+  const [commandSuggestions, setCommandSuggestions] = useState([]);
+  const [commandSuggestionsError, setCommandSuggestionsError] = useState('');
+  const [commandFocused, setCommandFocused] = useState(false);
 
   // Backups.
   const [backupList, setBackupList] = useState([]);
@@ -79,9 +82,26 @@ function ServerDetail() {
   useEffect(() => {
     setCommandOutput(null);
     loadServer();
+    loadCommandSuggestions();
     if (isAdmin()) fetchBackups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
+
+  // The catalog is supplied by the manager, then filtered by the backend for
+  // this staff member's role. Keeping suggestions on that same source means a
+  // moderator is never prompted with a command they cannot otherwise run.
+  const loadCommandSuggestions = async () => {
+    try {
+      const data = await api.admin.actions.getAll(token);
+      setCommandSuggestions(data.actions || []);
+      setCommandSuggestionsError('');
+    } catch (err) {
+      console.error('Load console command suggestions error:', err);
+      // The console remains useful if the catalog cannot be reached. Do not
+      // surface a distracting page-level error for an optional convenience.
+      setCommandSuggestionsError('Command suggestions are unavailable.');
+    }
+  };
 
   // Default the backup label to the server's name, so a downloaded archive says
   // which server it came from. Keyed on the name rather than every reload, so a
@@ -131,6 +151,20 @@ function ServerDetail() {
       console.error('Send command error:', err);
       setError(err.message || 'Failed to send command');
     }
+  };
+
+  const commandTerms = command.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const matchingCommands = commandTerms.length === 0 ? [] : commandSuggestions
+    .filter((action) => {
+      const haystack = [action.command, action.template, action.label, action.description]
+        .filter(Boolean).join(' ').toLowerCase();
+      return commandTerms.every((term) => haystack.includes(term));
+    })
+    .slice(0, 7);
+
+  const chooseCommandSuggestion = (action) => {
+    setCommand(action.template || action.command);
+    setCommandFocused(true);
   };
 
   const handleDelete = async () => {
@@ -374,16 +408,54 @@ function ServerDetail() {
       <div className="card mb-3">
         <div className="card-body">
           <h5 className="card-title font-display mb-3">Console</h5>
-          <div className="input-group">
-            <input
-              type="text"
-              className="form-control"
-              placeholder="Console command"
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSendCommand(); }}
-            />
-            <button className="btn btn-danger" onClick={handleSendCommand}>Send</button>
+          <div className="position-relative">
+            <div className="input-group">
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Console command"
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                onFocus={() => setCommandFocused(true)}
+                onBlur={() => setTimeout(() => setCommandFocused(false), 150)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSendCommand(); }}
+                aria-autocomplete="list"
+                aria-expanded={commandFocused && matchingCommands.length > 0}
+                aria-controls="console-command-suggestions"
+              />
+              <button className="btn btn-danger" onClick={handleSendCommand}>Send</button>
+            </div>
+            {commandFocused && matchingCommands.length > 0 && (
+              <div
+                id="console-command-suggestions"
+                className="list-group position-absolute w-100 shadow"
+                style={{ zIndex: 2 }}
+                role="listbox"
+              >
+                {matchingCommands.map((action) => (
+                  <button
+                    type="button"
+                    key={action.id}
+                    className="list-group-item list-group-item-action text-start"
+                    role="option"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => chooseCommandSuggestion(action)}
+                  >
+                    <span className="fw-semibold">{action.label}</span>
+                    <code className="small text-body-secondary ms-2">
+                      {action.template || action.command}
+                    </code>
+                    {action.description && (
+                      <span className="small text-body-secondary d-block">{action.description}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="form-text">
+            Start typing to search commands available to your role; choosing one fills in its editable template.
+            {commandSuggestionsError && ` ${commandSuggestionsError}`}
           </div>
           {commandOutput && (
             <div className="mt-2">
