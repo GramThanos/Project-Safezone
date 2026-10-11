@@ -16,6 +16,9 @@ function ServerModsEditor({ serverId, serverName, serverState, admin }) {
   const { token } = useAuth();
 
   const [mods, setMods] = useState([]);
+  // Uploaded on Installations. No Workshop id, so enabling one is only a name
+  // in `Mods`.
+  const [localMods, setLocalMods] = useState([]);
   const [collections, setCollections] = useState([]);
   const [serverMods, setServerMods] = useState(null);
   const [modsDirty, setModsDirty] = useState(false);
@@ -38,6 +41,7 @@ function ServerModsEditor({ serverId, serverName, serverState, admin }) {
         api.admin.servers.mods(token, serverId)
       ]);
       setMods(modData.mods || []);
+      setLocalMods(modData.local || []);
       setCollections(collectionData.collections || []);
       // Kept in the configured order: `Mods` is a load order, and rebuilding it
       // from a set would quietly reorder somebody's carefully sequenced list.
@@ -129,6 +133,21 @@ function ServerModsEditor({ serverId, serverName, serverState, admin }) {
     setModsDirty(true);
   };
 
+  // An uploaded mod is switched by name alone; both names it answers to are
+  // recognised when switching it off, as for a Workshop item.
+  const toggleLocal = (mod, enabled) => {
+    setServerMods((current) => {
+      if (!current) return current;
+      const names = enabled
+        ? (current.mod_names.includes(mod.id) || current.mod_names.includes(mod.folder)
+          ? current.mod_names
+          : current.mod_names.concat([mod.id]))
+        : current.mod_names.filter((n) => n !== mod.id && n !== mod.folder);
+      return { workshop_ids: current.workshop_ids, mod_names: names };
+    });
+    setModsDirty(true);
+  };
+
   // Move one mod in the load order. `Mods` is read in order and some mods only
   // work when they come after what they extend, so the order is a real setting
   // and not a presentation detail. Up/down rather than drag-and-drop: it needs
@@ -155,7 +174,7 @@ function ServerModsEditor({ serverId, serverName, serverState, admin }) {
       );
       if (found) return found;
     }
-    return null;
+    return localMods.find((m) => m.id === modId || m.folder === modId) || null;
   };
   const modLabel = (modId) => (modEntry(modId) || {}).name || null;
 
@@ -311,9 +330,9 @@ function ServerModsEditor({ serverId, serverName, serverState, admin }) {
             </div>
           )}
 
-          {mods.length === 0 ? (
+          {mods.length === 0 && localMods.length === 0 ? (
             <p className="text-body-secondary">
-              No Workshop items downloaded, so there is nothing to load yet.{' '}
+              No mods downloaded or uploaded, so there is nothing to load yet.{' '}
               {admin
                 ? <>Install some on <Link to="/admin/installations">Installations</Link>.</>
                 : 'An admin installs them on Installations.'}
@@ -377,6 +396,30 @@ function ServerModsEditor({ serverId, serverName, serverState, admin }) {
                       </React.Fragment>
                     );
                   })}
+                  {localMods.map((mod) => (
+                    <tr key={`local:${mod.folder}`}>
+                      <td style={{ width: '2rem' }}>
+                        <input
+                          type="checkbox"
+                          className="form-check-input"
+                          checked={serverMods.mod_names.includes(mod.id)
+                            || serverMods.mod_names.includes(mod.folder)}
+                          onChange={(e) => toggleLocal(mod, e.target.checked)}
+                          aria-label={`Use uploaded mod ${mod.id}`}
+                        />
+                      </td>
+                      <td>
+                        {mod.name}
+                        <code className="small ms-2">{mod.id}</code>
+                        <span
+                          className="badge text-bg-info ms-2"
+                          title="Not from the Workshop - players need it installed themselves"
+                        >
+                          uploaded
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

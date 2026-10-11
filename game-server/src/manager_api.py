@@ -22,6 +22,7 @@ import backups
 import server_config
 import sandbox_config
 import mods
+import local_mods
 import characters
 import workshop
 import items
@@ -88,7 +89,9 @@ def index():
             'preview_mods': 'POST /api/mods/preview',
             'list_collections': 'GET /api/mods/collections',
             'delete_collection': 'DELETE /api/mods/collections/:id',
-            'delete_mod': 'DELETE /api/mods/:item_id'
+            'delete_mod': 'DELETE /api/mods/:item_id',
+            'upload_local_mod': 'POST /api/mods/local',
+            'delete_local_mod': 'DELETE /api/mods/local/:folder'
         },
         'authentication': 'Required - Use Authorization header with Bearer token'
     })
@@ -847,6 +850,7 @@ def get_server_mods(server_id):
     return jsonify({'data': mods.status(
         mods.parse_list(values.get('WorkshopItems')),
         mods.parse_list(values.get('Mods')),
+        local=local_mods.installed(),
     )})
 
 
@@ -894,6 +898,9 @@ def update_server_mods(server_id):
         available = set()
         for item in on_disk:
             available.update(mods.mods_in_item(item))
+        # Uploaded mods are on disk too; they just have no Workshop id.
+        for mod in local_mods.installed():
+            available.update((mod['id'], mod['folder']))
 
         added_items = [i for i in item_ids if i not in existing_items and i not in on_disk]
         added_names = [n for n in mod_names if n not in existing_names and n not in available]
@@ -910,7 +917,7 @@ def update_server_mods(server_id):
         return jsonify({'error': error}), 400
 
     return jsonify({
-        'data': mods.status(item_ids, mod_names),
+        'data': mods.status(item_ids, mod_names, local=local_mods.installed()),
         'message': 'Mod list saved. Download them, then restart the server.'
     })
 
@@ -1060,6 +1067,9 @@ def list_mods():
 
     return jsonify({
         'data': entries + missing,
+        # Uploaded through the panel rather than downloaded - no Workshop id,
+        # so they are a list of their own rather than rows keyed by one.
+        'local': local_mods.library(name_usage),
         'mod_usage': name_usage,
         'count': len(entries) + len(missing),
         # Reported rather than swallowed: "no title shown" because Steam was
@@ -1201,6 +1211,58 @@ def delete_mod(item_id):
     # re-download shows fresh details rather than a day-old copy.
     workshop.forget(item_id)
     return jsonify({'message': f'Workshop item {item_id} removed'})
+
+
+@app.route('/api/mods/local', methods=['POST'])
+@require_auth
+def upload_local_mod():
+    """Install the mods in an uploaded .zip into the game's local mods folder.
+
+    Form field `replace=1` overwrites folders already uploaded; without it they
+    come back as a 409 with `conflicts`, so the panel can ask first. Like a
+    Workshop download this only puts files on disk - a server loads the mod once
+    it is enabled in that server's mod list.
+    """
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'error': 'No file uploaded'}), 400
+
+    reserved = set()
+    for item_id in mods.installed():
+        reserved.update(mods.mods_in_item(item_id))
+
+    replace = str(request.form.get('replace') or '').lower() in ('1', 'true', 'yes')
+    installed, error, conflicts = local_mods.upload(
+        upload.stream, upload.filename, replace=replace, reserved=reserved)
+    if conflicts:
+        return jsonify({'error': error, 'conflicts': conflicts}), 409
+    if error:
+        # Part of a multi-mod archive may already be in place; say which.
+        return jsonify({'error': error, 'data': {'mods': installed or []}}), 400
+
+    names = ', '.join(m['id'] for m in installed)
+    return jsonify({'data': {'mods': installed},
+                    'message': f'Uploaded {names}'}), 201
+
+
+@app.route('/api/mods/local/<string:folder>', methods=['DELETE'])
+@require_auth
+def delete_local_mod(folder):
+    """Delete an uploaded mod, refused while a server's `Mods` line names it."""
+    mod = local_mods.describe(folder)
+    if not mod:
+        return jsonify({'error': 'That mod is not uploaded'}), 404
+
+    _item_usage, name_usage = servers.mod_usage()
+    used_by = set(name_usage.get(mod['id']) or []) | set(name_usage.get(mod['folder']) or [])
+    if used_by:
+        return jsonify({'error': 'Still used by: ' + ', '.join(sorted(used_by))
+                                 + '. Remove it from those servers first.'}), 409
+
+    ok, error = local_mods.remove(folder)
+    if not ok:
+        return jsonify({'error': error}), 400
+    return jsonify({'message': f"Uploaded mod {mod['id']} removed"})
 
 
 @app.route('/api/servers/<int:server_id>/config', methods=['GET'])

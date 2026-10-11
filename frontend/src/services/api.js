@@ -1622,6 +1622,27 @@ export const api = {
         });
         return handleResponse(response);
       },
+      // A mod as a .zip, into the game's local mods folder. A 409 means some of
+      // its folders are already uploaded (`error.data.conflicts`); send again
+      // with `replace` to overwrite them.
+      uploadLocal: async (token, file, replace = false) => {
+        const body = new FormData();
+        body.append('file', file);
+        if (replace) body.append('replace', '1');
+        const response = await fetch(`${API_URL}/api/admin/mods/local`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body
+        });
+        return handleResponse(response);
+      },
+      removeLocal: async (token, folder) => {
+        const response = await fetch(
+          `${API_URL}/api/admin/mods/local/${encodeURIComponent(folder)}`,
+          { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        return handleResponse(response);
+      },
       // Collections installed from, each carrying the order its author chose.
       // That order is the whole point of the record.
       collections: async (token) => {

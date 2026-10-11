@@ -32,6 +32,10 @@ WORKSHOP_APP_ID = '108600'
 ITEM_ID_RE = re.compile(r'^[0-9]{1,20}\Z')
 # Mod names are folder names inside a Workshop item.
 MOD_NAME_RE = re.compile(r'^[A-Za-z0-9_.\- ]{1,96}\Z')
+# Build 42 keeps a mod's files under a version folder (`42`, `42.3`) beside
+# `common/`, with `mod.info` inside the version folder. Build 41 puts `mod.info`
+# at the top of the mod folder. Both are recognised.
+VERSION_DIR_RE = re.compile(r'^[0-9]+(\.[0-9]+)*\Z')
 
 
 def parse_list(raw):
@@ -100,20 +104,53 @@ def read_mod_info(path):
     INI. Only the first occurrence of a key wins, and values keep their spaces
     because mod titles contain them.
     """
-    values = {}
     try:
         with open(path, 'r', encoding='utf-8', errors='replace') as handle:
-            for line in handle:
-                line = line.strip()
-                if not line or line.startswith('#') or '=' not in line:
-                    continue
-                key, _, value = line.partition('=')
-                key = key.strip().lower()
-                if key and key not in values:
-                    values[key] = value.strip()
+            return parse_mod_info(handle)
     except OSError:
         return {}
+
+
+def parse_mod_info(lines):
+    """`read_mod_info` for text already in hand - an upload not yet unpacked."""
+    values = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        key = key.strip().lower()
+        if key and key not in values:
+            values[key] = value.strip()
     return values
+
+
+def version_key(name):
+    """Sort key for a Build 42 version folder name: `42.10` after `42.9`."""
+    return tuple(int(part) for part in name.split('.'))
+
+
+def find_mod_info(path):
+    """The `mod.info` describing the mod folder at ``path``, or None.
+
+    The newest Build 42 version folder's wins, because that is what a Build 42
+    server reads; a mod that still supports Build 41 keeps that build's copy at
+    the top, which is the fallback, then `common/` as a last resort. A Build
+    42-only mod has nothing at the top, so looking there alone would report it
+    as no mod at all.
+    """
+    try:
+        entries = os.listdir(path)
+    except OSError:
+        return None
+    versions = sorted((e for e in entries if VERSION_DIR_RE.match(e)),
+                      key=version_key, reverse=True)
+    for candidate in ([os.path.join(path, name, 'mod.info') for name in versions]
+                      + [os.path.join(path, 'mod.info'),
+                         os.path.join(path, 'common', 'mod.info')]):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def parse_requires(raw):
@@ -199,7 +236,9 @@ def item_mods(item_id):
 
     found = {}
     # Layouts vary: <item>/mods/<Mod>/mod.info and <item>/<Mod>/mod.info both
-    # occur in the wild, so look one level down as well as at the top.
+    # occur in the wild, so look one level down as well as at the top - and
+    # inside each mod folder, Build 42 keeps it under <Mod>/42/ instead.
+    # `folder` stays the mod folder either way: that is the name the game knows.
     for base in (root, os.path.join(root, 'mods')):
         if not os.path.isdir(base):
             continue
@@ -208,8 +247,8 @@ def item_mods(item_id):
         except OSError:
             continue
         for folder in entries:
-            info_path = os.path.join(base, folder, 'mod.info')
-            if not os.path.isfile(info_path):
+            info_path = find_mod_info(os.path.join(base, folder))
+            if not info_path:
                 continue
             info = read_mod_info(info_path)
             mod_id = info.get('id') or folder
@@ -247,11 +286,15 @@ def mods_in_item(item_id):
     return sorted(names)
 
 
-def status(workshop_ids, mod_names):
+def status(workshop_ids, mod_names, local=None):
     """Compare what is configured against what is on disk.
 
     The point of this is the mismatch: a server whose ids downloaded but whose
     mod names are wrong looks completely healthy until nobody can connect.
+
+    ``local`` is the uploaded mods (`local_mods.installed()`), passed in so this
+    module stays ignorant of where they live. They need no Workshop id, so they
+    only count towards the names a server may load.
     """
     on_disk = set(installed())
     configured = set(str(i) for i in workshop_ids)
@@ -266,6 +309,10 @@ def status(workshop_ids, mod_names):
         for mod in item_mods(item):
             provided.setdefault(mod['id'], mod)
             provided.setdefault(mod['folder'], mod)
+    for mod in local or []:
+        available.update((mod['id'], mod['folder']))
+        provided.setdefault(mod['id'], mod)
+        provided.setdefault(mod['folder'], mod)
 
     return {
         'workshop_ids': sorted(configured),

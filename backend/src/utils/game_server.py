@@ -44,7 +44,7 @@ def gs_request(method, path, json=None, params=None, timeout=DEFAULT_TIMEOUT):
     return payload, response.status_code
 
 
-def gs_stream(method, path, files=None, timeout=None):
+def gs_stream(method, path, files=None, timeout=None, data=None):
     """Forward a request and return the raw streaming ``requests.Response``.
 
     For endpoints whose body is not JSON: a backup download (bytes coming back)
@@ -63,7 +63,8 @@ def gs_stream(method, path, files=None, timeout=None):
 
     try:
         response = requests.request(
-            method, url, headers=headers, files=files, stream=True, timeout=timeout
+            method, url, headers=headers, files=files, data=data, stream=True,
+            timeout=timeout
         )
     except requests.RequestException as e:
         logger.error(f"Game server stream to {method} {path} failed: {e}")

@@ -191,6 +191,44 @@ class TestNewlineRejection(ModsTestCase):
         self.assertIsNone(mods.item_dir('123' + chr(10)))
 
 
+class TestBuild42Layout(ModsTestCase):
+    """Build 42 keeps `mod.info` under a version folder, not at the top."""
+
+    def write_info(self, item_id, *parts, mod_id):
+        path = os.path.join(self.root, 'steamapps', 'workshop', 'content',
+                            mods.WORKSHOP_APP_ID, str(item_id), 'mods', *parts)
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, 'mod.info'), 'w', encoding='utf-8') as handle:
+            handle.write(f'id={mod_id}\nname={mod_id} title\n')
+
+    def test_version_folder_is_found(self):
+        self.write_info(100, 'MyMod', '42', mod_id='MyModB42')
+        found = mods.item_mods(100)
+        self.assertEqual([(m['id'], m['folder']) for m in found],
+                         [('MyModB42', 'MyMod')])
+
+    def test_newest_version_folder_wins(self):
+        self.write_info(100, 'MyMod', '42', mod_id='Old')
+        self.write_info(100, 'MyMod', '42.10', mod_id='New')
+        self.write_info(100, 'MyMod', '42.9', mod_id='Middle')
+        self.assertEqual([m['id'] for m in mods.item_mods(100)], ['New'])
+
+    def test_version_folder_wins_over_the_build_41_copy(self):
+        self.write_info(100, 'MyMod', mod_id='B41')
+        self.write_info(100, 'MyMod', '42', mod_id='B42')
+        self.assertEqual([m['id'] for m in mods.item_mods(100)], ['B42'])
+
+    def test_common_is_the_last_resort(self):
+        self.write_info(100, 'MyMod', 'common', mod_id='FromCommon')
+        self.assertEqual([m['id'] for m in mods.item_mods(100)], ['FromCommon'])
+
+    def test_counts_as_available_to_a_server(self):
+        self.write_info(100, 'MyMod', '42', mod_id='MyModB42')
+        result = mods.status(['100'], ['MyModB42'])
+        self.assertEqual(result['unknown_mod_names'], [])
+        self.assertIn('MyMod', result['available_mod_names'])
+
+
 class TestFolderNameAliasing(ModsTestCase):
     """A server may name a mod by its declared id or by its folder.
 

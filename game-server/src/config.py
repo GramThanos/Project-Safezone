@@ -28,6 +28,13 @@ STEAM_INSTALL_DIR = os.getenv('STEAM_INSTALL_DIR', '/opt/steam-apps')
 # likely to differ between installs.
 ZOMBOID_DATA_DIR = os.getenv('ZOMBOID_DATA_DIR', '/home/steam/Zomboid')
 
+# Limits on a mod uploaded through the panel (`local_mods.py`): the archive as
+# sent, and everything it unpacks to. The second is the one that matters - a zip
+# is allowed to claim a tiny size and expand to fill the disk.
+MOD_UPLOAD_MAX_BYTES = int(os.getenv('MOD_UPLOAD_MAX_BYTES', str(1024 ** 3)))
+MOD_UPLOAD_MAX_EXTRACTED_BYTES = int(os.getenv('MOD_UPLOAD_MAX_EXTRACTED_BYTES',
+                                               str(4 * 1024 ** 3)))
+
 # Game version reported by the sleeping-server emulator to the Steam/PZ server
 # browser (in the A2S_INFO and RakNet-pong replies). A wrong or missing value
 # shows as ping -1 / no player count and the client will not attempt to join,

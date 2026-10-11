@@ -7,7 +7,7 @@
 // belongs here. Only the *selection* — which of the downloaded mods a given
 // server loads, and in what order — is per-server, and that lives on the
 // server's own page (`ServerModsEditor`), next to the server it configures.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
@@ -42,6 +42,10 @@ function Installations() {
 
   const [installation, setInstallation] = useState(null);
   const [mods, setMods] = useState([]);
+  // Uploaded as a .zip rather than downloaded: no Workshop id, keyed by folder.
+  const [localMods, setLocalMods] = useState([]);
+  const [modFile, setModFile] = useState(null);
+  const modFileInput = useRef(null);
   const [servers, setServers] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -92,6 +96,7 @@ function Installations() {
       ]);
       setInstallation(inst);
       setMods(modData.mods || []);
+      setLocalMods(modData.local || []);
       setMetadataError(modData.metadata_error || null);
       setServers(serverData.servers || []);
       setTasks(taskData.tasks || []);
@@ -228,6 +233,61 @@ function Installations() {
       confirmLabel: 'Delete'
     }))) return;
     run(() => api.admin.mods.remove(token, item.id), 'Workshop item removed');
+  };
+
+  const clearModFile = () => {
+    setModFile(null);
+    if (modFileInput.current) modFileInput.current.value = '';
+  };
+
+  // Not `run`: a 409 here is a question rather than a failure - the archive
+  // holds folders that are already uploaded - and the answer resends it.
+  const handleUploadMod = async (e) => {
+    e.preventDefault();
+    if (!modFile) {
+      setError('Choose a .zip to upload');
+      return;
+    }
+    setError('');
+    setNotice('');
+    setBusy(true);
+    try {
+      let data;
+      try {
+        data = await api.admin.mods.uploadLocal(token, modFile);
+      } catch (err) {
+        const conflicts = (err.status === 409 && err.data && err.data.conflicts) || [];
+        if (!conflicts.length) throw err;
+        const replace = await confirm({
+          title: 'Replace uploaded mod?',
+          message: `Already uploaded: ${conflicts.join(', ')}.\n\n`
+            + 'Replace those folders with the ones in this archive? A server '
+            + 'already running picks the new files up on its next restart.',
+          confirmLabel: 'Replace'
+        });
+        if (!replace) return;
+        data = await api.admin.mods.uploadLocal(token, modFile, true);
+      }
+      setNotice((data && data.message) || 'Mod uploaded');
+      clearModFile();
+      await loadAll({ quiet: true });
+    } catch (err) {
+      console.error('Upload mod error:', err);
+      setError(err.message || 'Upload failed');
+      // Part of a several-mod archive may have landed anyway.
+      await loadAll({ quiet: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemoveLocalMod = async (mod) => {
+    if (!(await confirm({
+      title: 'Delete uploaded mod?',
+      message: `Delete ${mod.name} (folder ${mod.folder}) from the server?`,
+      confirmLabel: 'Delete'
+    }))) return;
+    run(() => api.admin.mods.removeLocal(token, mod.folder), 'Uploaded mod removed');
   };
 
   if (loading) return <Spinner />;
@@ -693,6 +753,123 @@ function Installations() {
                               <i className="fas fa-trash"></i>
                             </button>
                           )}
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ---------------------------------------------- Uploaded mods ---- */}
+      <div className="card mb-4">
+        <div className="card-header font-display">
+          Uploaded mods
+          <span className="text-body-secondary ms-2 fw-normal">
+            {localMods.length} mod(s),{' '}
+            {fmtBytes(localMods.reduce((sum, mod) => sum + (mod.size || 0), 0))}
+          </span>
+        </div>
+        <div className="card-body">
+          <p className="text-body-secondary">
+            Mods that are not on the Workshop — your own, or a private build —
+            uploaded as a <code>.zip</code> into the game&rsquo;s local mods
+            folder. Like a Workshop mod, a server loads one only once it is
+            enabled on that server&rsquo;s page.
+          </p>
+          <div className="alert alert-warning" role="alert">
+            Players do not get an uploaded mod automatically: the game only hands
+            out Workshop mods. A mod with anything players need must be installed
+            on their side too, or they cannot join. Server-side-only mods are
+            fine.
+          </div>
+
+          {admin && (
+            <form className="row g-2 align-items-start mb-3" onSubmit={handleUploadMod}>
+              <div className="col-md">
+                <input
+                  ref={modFileInput}
+                  type="file"
+                  className="form-control"
+                  accept=".zip,application/zip"
+                  onChange={(e) => setModFile(e.target.files[0] || null)}
+                  disabled={busy}
+                />
+                <div className="form-text">
+                  A zip of the mod folder — the one with <code>mod.info</code> in
+                  it, or in its <code>42</code> folder for Build 42. A zip holding
+                  several mod folders, or a Workshop upload&rsquo;s{' '}
+                  <code>Contents/mods/</code> layout, works too.
+                </div>
+              </div>
+              <div className="col-md-auto">
+                <button className="btn btn-primary" type="submit" disabled={busy || !modFile}>
+                  <i className="fas fa-upload"></i> Upload
+                </button>
+              </div>
+            </form>
+          )}
+
+          {localMods.length === 0 ? (
+            <p className="text-body-secondary mb-0">No mods uploaded.</p>
+          ) : (
+            <div className="table-responsive">
+              <table className="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Mod</th>
+                    <th className="text-nowrap">Size</th>
+                    <th>Used by</th>
+                    {admin && <th></th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {localMods.map((mod) => (
+                    <tr key={mod.folder}>
+                      <td>
+                        <div>
+                          {mod.name} <code className="small">{mod.id}</code>
+                          {mod.version && (
+                            <span className="text-body-secondary small ms-2">
+                              v{mod.version}
+                            </span>
+                          )}
+                        </div>
+                        <div className="small text-body-secondary">
+                          {mod.folder !== mod.id && <>folder <code>{mod.folder}</code> · </>}
+                          {fmtUnix(mod.updated_at)}
+                        </div>
+                        {mod.description && (
+                          <div className="small text-body-secondary">{mod.description}</div>
+                        )}
+                      </td>
+                      <td className="text-nowrap">{fmtBytes(mod.size)}</td>
+                      <td>
+                        {(mod.used_by || []).length === 0 ? (
+                          <span className="text-body-secondary">nobody</span>
+                        ) : (
+                          mod.used_by.map((name) => (
+                            <span key={name} className="badge text-bg-secondary me-1">
+                              {name}
+                            </span>
+                          ))
+                        )}
+                      </td>
+                      {admin && (
+                        <td className="text-end text-nowrap">
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() => handleRemoveLocalMod(mod)}
+                            disabled={busy || (mod.used_by || []).length > 0}
+                            title={(mod.used_by || []).length > 0
+                              ? 'Remove it from those servers first'
+                              : 'Delete the uploaded files'}
+                          >
+                            <i className="fas fa-trash"></i>
+                          </button>
                         </td>
                       )}
                     </tr>

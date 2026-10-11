@@ -6,6 +6,7 @@ task operations are proxied to the game-server API, which owns those tables.
 import logging
 from datetime import datetime, timedelta
 from sqlalchemy import func, or_
+from urllib.parse import quote
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from src.database import db
 from src.models.user import User
@@ -2293,6 +2294,8 @@ def get_mods(current_user):
         return jsonify({'error': payload.get('error', 'Could not read the mod library')}), status
     return jsonify({
         'mods': payload.get('data') or [],
+        # Uploaded through the panel, so keyed by folder rather than item id.
+        'local': payload.get('local') or [],
         'mod_usage': payload.get('mod_usage') or {},
         # Null unless Steam could not be reached. "No title shown" because the
         # lookup failed is a different thing from "this item has no title".
@@ -2398,6 +2401,67 @@ def delete_mod(current_user, item_id):
     audit.record_standalone(current_user['user_id'], 'mods.delete',
                             target=f'workshop:{item_id}')
     return jsonify({'message': payload.get('message', 'Workshop item removed')}), 200
+
+
+@admin_bp.route('/mods/local', methods=['POST'])
+@admin_required
+def upload_local_mod(current_user):
+    """Upload a mod as a .zip into the game's local mods folder (admin only).
+
+    Admin only for the same reason as a Workshop download: it puts code on the
+    server that every server can then be told to run. Streamed through to the
+    manager, which owns the files and every rule about what an archive may hold.
+    A 409 carries `conflicts` - folders already uploaded - and the panel asks
+    before sending again with `replace`.
+    """
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'error': 'No file uploaded'}), 400
+    replace = str(request.form.get('replace') or '').lower() in ('1', 'true', 'yes')
+
+    response, error = gs_stream(
+        'POST', '/api/mods/local',
+        files={'file': (upload.filename, upload.stream,
+                        upload.mimetype or 'application/zip')},
+        data={'replace': '1' if replace else '0'},
+    )
+    if error:
+        return jsonify(error[0]), error[1]
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return jsonify({'error': 'Invalid response from game server'}), 502
+    finally:
+        response.close()
+
+    installed = [m.get('id') for m in (payload.get('data') or {}).get('mods') or []]
+    if response.status_code not in (200, 201):
+        # A multi-mod archive can fail part way; what did land is still audited.
+        if installed:
+            audit.record_standalone(current_user['user_id'], 'mods.upload',
+                                    detail=f"{upload.filename} (partial): {', '.join(installed)}")
+        return jsonify({'error': payload.get('error', 'Upload failed'),
+                        'conflicts': payload.get('conflicts') or []}), response.status_code
+
+    audit.record_standalone(current_user['user_id'], 'mods.upload',
+                            detail=f"{upload.filename}{' (replace)' if replace else ''}: "
+                                   f"{', '.join(installed)}")
+    return jsonify({'message': payload.get('message', 'Mod uploaded'),
+                    'mods': (payload.get('data') or {}).get('mods') or []}), 201
+
+
+@admin_bp.route('/mods/local/<string:folder>', methods=['DELETE'])
+@admin_required
+def delete_local_mod(current_user, folder):
+    """Delete an uploaded mod (admin only). Refused while a server loads it."""
+    payload, status = gs_request('DELETE', f"/api/mods/local/{quote(folder, safe='')}")
+    if status != 200:
+        return jsonify({'error': payload.get('error', 'Could not remove the mod')}), status
+
+    audit.record_standalone(current_user['user_id'], 'mods.local_delete',
+                            target=f'local_mod:{folder}')
+    return jsonify({'message': payload.get('message', 'Uploaded mod removed')}), 200
 
 
 # Comfortably above the manager's own 30s wiki timeout, so a slow first fetch
